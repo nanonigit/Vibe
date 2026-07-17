@@ -338,6 +338,10 @@ struct ContentView: View {
                             model.deletePlaylist(id: playlist.id)
                         }
                     }
+                    .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+                        handleDroppedProviders(providers, playlistID: playlist.id)
+                        return true
+                    }
                 }
             } header: {
                 HStack {
@@ -396,6 +400,10 @@ struct ContentView: View {
             if [.running, .paused].contains(model.scanProgress.state) { scanStatus }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+            handleDroppedProviders(providers)
+            return true
+        }
     }
 
     private var alphabetIndexRail: some View {
@@ -1368,6 +1376,24 @@ struct ContentView: View {
     private func formatDuration(_ seconds: Double) -> String {
         guard seconds.isFinite, seconds >= 0 else { return "--:--" }
         return String(format: "%d:%02d", Int(seconds) / 60, Int(seconds) % 60)
+    }
+
+    private func handleDroppedProviders(_ providers: [NSItemProvider], playlistID: Int64? = nil) {
+        let group = DispatchGroup()
+        var urls: [URL] = []
+        for provider in providers {
+            group.enter()
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                if let url = url {
+                    urls.append(url)
+                }
+                group.leave()
+            }
+        }
+        group.notify(queue: .main) {
+            guard !urls.isEmpty else { return }
+            model.importURLs(urls, toPlaylist: playlistID)
+        }
     }
 }
 

@@ -80,16 +80,16 @@ actor StorageCoordinator {
         try? fileManager.createDirectory(at: inbox, withIntermediateDirectories: true)
     }
 
-    func stage(_ sources: [URL]) throws -> [PendingImport] {
+    func stage(_ sources: [URL], convertFlac: Bool = true) throws -> [PendingImport] {
         for source in sources {
             let scoped = source.startAccessingSecurityScopedResource()
             defer { if scoped { source.stopAccessingSecurityScopedResource() } }
             
             let isFlac = source.pathExtension.lowercased() == "flac"
-            let targetFilename = isFlac ? source.deletingPathExtension().appendingPathExtension("mp3").lastPathComponent : source.lastPathComponent
+            let targetFilename = (isFlac && convertFlac) ? source.deletingPathExtension().appendingPathExtension("mp3").lastPathComponent : source.lastPathComponent
             let destination = uniqueURL(for: targetFilename, in: inbox)
             
-            if isFlac {
+            if isFlac && convertFlac {
                 try convertFlacToMp3(source: source, destination: destination)
             } else {
                 try fileManager.copyItem(at: source, to: destination)

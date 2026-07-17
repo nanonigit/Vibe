@@ -1434,75 +1434,112 @@ final class LibraryViewModel: ObservableObject {
         }
         panel.allowedContentTypes = allowedTypes
         guard panel.runModal() == .OK else { return }
+        
+        importURLs(panel.urls)
+    }
+
+    func importURLs(_ urls: [URL], toPlaylist playlistID: Int64? = nil) {
+        let hasFlac = urls.contains { $0.pathExtension.lowercased() == "flac" }
+        if hasFlac {
+            let alert = NSAlert()
+            alert.messageText = text("FLACファイルをMP3に変換しますか？", "Convert FLAC files to MP3?")
+            alert.informativeText = text(
+                "取り込むファイルにFLACが含まれています。MP3に変換して取り込みますか？\n「そのまま取り込む」を選択した場合は元のFLAC形式で追加します。",
+                "The imported files contain FLAC. Would you like to convert them to MP3?\nSelecting 'Import As-Is' will add them in their original FLAC format."
+            )
+            alert.addButton(withTitle: text("MP3に変換する", "Convert to MP3"))
+            alert.addButton(withTitle: text("そのまま取り込む", "Import As-Is"))
+            alert.addButton(withTitle: text("キャンセル", "Cancel"))
+            
+            let response = alert.runModal()
+            if response == .alertFirstButtonReturn {
+                performImport(urls: urls, convertFlac: true, playlistID: playlistID)
+            } else if response == .alertSecondButtonReturn {
+                performImport(urls: urls, convertFlac: false, playlistID: playlistID)
+            }
+        } else {
+            performImport(urls: urls, convertFlac: false, playlistID: playlistID)
+        }
+    }
+
+    private func performImport(urls: [URL], convertFlac: Bool, playlistID: Int64?) {
         Task {
             do {
-                let staged = try await storage.stage(panel.urls)
-                if let primary = storageDestinations.first(where: \.isPrimary), primary.isAvailable {
-                    // SSD is connected! Move them automatically.
-                    for item in staged {
-                        try await storage.move(item, to: primary)
+                let staged = try await storage.stage(urls, convertFlac: convertFlac)
+                var importedTrackIDs: [Int64] = []
+                let primary = storageDestinations.first(where: \.isPrimary)
+                let primaryAvailable = primary?.isAvailable == true
+                
+                for item in staged {
+                    let localURL = URL(filePath: item.localPath)
+                    let metadata = await AudioMetadataReader.read(url: localURL)
+                    
+                    let primaryRootID: Int64
+                    if let root = try? database.scanRoots().first(where: { $0.lastKnownPath == primary?.path }) {
+                        primaryRootID = root.id
+                    } else if let firstRoot = try? database.scanRoots().first {
+                        primaryRootID = firstRoot.id
+                    } else {
+                        primaryRootID = 1
                     }
-                    startScan(url: URL(filePath: primary.path))
-                } else {
-                    // SSD is NOT connected! Keep them locally in cache/inbox and register them in database.
-                    for item in staged {
-                        let localURL = URL(filePath: item.localPath)
-                        let metadata = await AudioMetadataReader.read(url: localURL)
+                    
+                    let relativePath = item.filename
+                    let format = localURL.pathExtension.uppercased()
+                    let fileSize = (try? localURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) } ?? 0
+                    let identityKey = "\(primaryRootID):\(relativePath)"
+                    
+                    let track = Track(
+                        id: 0,
+                        rootID: primaryRootID,
+                        relativePath: relativePath,
+                        filename: item.filename,
+                        title: metadata.title,
+                        artist: metadata.artist,
+                        album: metadata.album,
+                        albumArtist: metadata.albumArtist,
+                        genre: metadata.genre,
+                        discNumber: metadata.discNumber,
+                        trackNumber: metadata.trackNumber,
+                        duration: metadata.duration,
+                        fileSize: fileSize,
+                        modifiedAt: Date(),
+                        format: format,
+                        bitrate: metadata.bitrate,
+                        hasArtwork: metadata.hasArtwork,
+                        isAvailable: true,
+                        addedAt: Date()
+                    )
+                    
+                    let trackImport = TrackImport(identityKey: identityKey, fileResourceID: nil, track: track)
+                    let sessionID = try database.createScanSession(rootID: primaryRootID)
+                    _ = try database.commitScanBatch(imports: [trackImport], unchangedIdentityKeys: [], sessionID: sessionID)
+                    try database.updateScanSession(id: sessionID, state: .completed, cursor: nil, discovered: 1, processed: 1, changed: 1, skipped: 0, errors: 0, finished: true)
+                    
+                    if let trackID = try? database.trackID(forIdentityKey: identityKey) {
+                        importedTrackIDs.append(trackID)
                         
-                        // Find or fallback to primary scan root ID
-                        let primaryRootID: Int64
-                        if let root = try? database.scanRoots().first(where: { $0.lastKnownPath == storageDestinations.first(where: \.isPrimary)?.path }) {
-                            primaryRootID = root.id
-                        } else if let firstRoot = try? database.scanRoots().first {
-                            primaryRootID = firstRoot.id
+                        if primaryAvailable, let primaryDest = primary {
+                            try await storage.move(item, to: primaryDest)
                         } else {
-                            primaryRootID = 1
-                        }
-                        
-                        let relativePath = item.filename
-                        let format = localURL.pathExtension.uppercased()
-                        let fileSize = (try? localURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) } ?? 0
-                        let identityKey = "\(primaryRootID):\(relativePath)"
-                        
-                        let track = Track(
-                            id: 0,
-                            rootID: primaryRootID,
-                            relativePath: relativePath,
-                            filename: item.filename,
-                            title: metadata.title,
-                            artist: metadata.artist,
-                            album: metadata.album,
-                            albumArtist: metadata.albumArtist,
-                            genre: metadata.genre,
-                            discNumber: metadata.discNumber,
-                            trackNumber: metadata.trackNumber,
-                            duration: metadata.duration,
-                            fileSize: fileSize,
-                            modifiedAt: Date(),
-                            format: format,
-                            bitrate: metadata.bitrate,
-                            hasArtwork: metadata.hasArtwork,
-                            isAvailable: true,
-                            addedAt: Date()
-                        )
-                        
-                        let trackImport = TrackImport(identityKey: identityKey, fileResourceID: nil, track: track)
-                        let sessionID = try database.createScanSession(rootID: primaryRootID)
-                        _ = try database.commitScanBatch(imports: [trackImport], unchangedIdentityKeys: [], sessionID: sessionID)
-                        try database.updateScanSession(id: sessionID, state: .completed, cursor: nil, discovered: 1, processed: 1, changed: 1, skipped: 0, errors: 0, finished: true)
-                        
-                        // Fetch the newly inserted track's ID and copy to cache so it is playable offline
-                        if let trackID = try? database.trackID(forIdentityKey: identityKey) {
                             let cacheURL = OfflineCacheManager.cacheDirectoryURL().appending(path: "\(trackID).\(format.lowercased())")
                             if !FileManager.default.fileExists(atPath: cacheURL.path) {
                                 try? FileManager.default.copyItem(at: localURL, to: cacheURL)
                             }
                             try? database.recordCachedTrack(trackID: trackID, path: cacheURL.path, fileSize: fileSize, pinned: true)
+                            try? database.updatePendingImport(id: item.id, state: .keptLocal, localPath: localURL.path)
                         }
-                        
-                        try? database.updatePendingImport(id: item.id, state: .keptLocal, localPath: localURL.path)
                     }
                 }
+                
+                if primaryAvailable, let primaryDest = primary {
+                    startScan(url: URL(filePath: primaryDest.path))
+                }
+                
+                if let playlistID = playlistID, !importedTrackIDs.isEmpty {
+                    _ = try database.addTracks(importedTrackIDs, toPlaylist: playlistID)
+                    refreshPlaylists()
+                }
+                
                 refreshStorage()
                 loadCurrentPage(reset: true)
             } catch {

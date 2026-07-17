@@ -118,7 +118,7 @@ public actor LibraryScanner {
             }
 
             let ext = fileURL.pathExtension.lowercased()
-            guard ["mp3", "m4a", "wav"].contains(ext) else { continue }
+            guard ["mp3", "m4a", "wav", "flac"].contains(ext) else { continue }
             var relativePath = String(fileURL.path.dropFirst(rootURL.path.count))
             if relativePath.hasPrefix("/") { relativePath.removeFirst() }
             discovered += 1
