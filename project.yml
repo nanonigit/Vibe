@@ -1,0 +1,107 @@
+name: MassiveMusic
+options:
+  bundleIdPrefix: com.local
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+  defaultConfig: Debug
+packages:
+  GRDB:
+    url: https://github.com/groue/GRDB.swift.git
+    exactVersion: 7.10.0
+settings:
+  base:
+    ARCHS: arm64
+    ONLY_ACTIVE_ARCH: YES
+    SWIFT_VERSION: 6.0
+    SWIFT_STRICT_CONCURRENCY: complete
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
+targets:
+  MassiveMusicCore:
+    type: framework
+    platform: macOS
+    sources: Sources/MassiveMusicCore
+    dependencies:
+      - package: GRDB
+        product: GRDB
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.local.MassiveMusicCore
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/MassiveMusicCore/MassiveMusicCore-Bridging-Header.h
+  MassiveMusic:
+    type: application
+    platform: macOS
+    sources:
+      - Sources/MassiveMusic
+      - path: Resources/Assets.xcassets
+        buildPhase: resources
+    info:
+      path: Config/Info.plist
+      properties:
+        CFBundleDisplayName: MassiveMusic
+        LSApplicationCategoryType: public.app-category.music
+        NSPrincipalClass: NSApplication
+        NSSupportsAutomaticTermination: true
+        NSSupportsSuddenTermination: false
+    entitlements:
+      path: Config/MassiveMusic.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.files.user-selected.read-write: true
+        com.apple.security.files.bookmarks.app-scope: true
+        com.apple.security.network.client: true
+    dependencies:
+      - target: MassiveMusicCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.local.MassiveMusic
+        PRODUCT_NAME: MassiveMusic
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_HARDENED_RUNTIME: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+  MassiveMusicBench:
+    type: tool
+    platform: macOS
+    sources: Tools/MassiveMusicBench
+    dependencies:
+      - target: MassiveMusicCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.local.MassiveMusicBench
+  MassiveMusicSmoke:
+    type: tool
+    platform: macOS
+    sources: Tools/MassiveMusicSmoke
+    dependencies:
+      - target: MassiveMusicCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.local.MassiveMusicSmoke
+  MassiveMusicTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: Tests/MassiveMusicTests
+    dependencies:
+      - target: MassiveMusicCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.local.MassiveMusicTests
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  MassiveMusic:
+    build:
+      targets:
+        MassiveMusic: all
+        MassiveMusicTests: [test]
+    test:
+      targets:
+        - MassiveMusicTests
+  MassiveMusicBench:
+    build:
+      targets:
+        MassiveMusicBench: all
+  MassiveMusicSmoke:
+    build:
+      targets:
+        MassiveMusicSmoke: all
