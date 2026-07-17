@@ -1544,12 +1544,29 @@ private struct NowPlayingInspector: View {
 
     private var playerInformation: some View {
         VStack(spacing: 12) {
-            PlayerArtwork(
-                artworkURL: model.enrichedInfo?.artworkURL,
-                size: 210,
-                cornerRadius: 12,
-                placeholderPointSize: 48
-            )
+            if player.currentTrack == nil {
+                if let appIcon = NSApp.applicationIconImage {
+                    Image(nsImage: appIcon)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 210, height: 210)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                } else {
+                    PlayerArtwork(
+                        artworkURL: nil,
+                        size: 210,
+                        cornerRadius: 12,
+                        placeholderPointSize: 48
+                    )
+                }
+            } else {
+                PlayerArtwork(
+                    artworkURL: model.enrichedInfo?.artworkURL,
+                    size: 210,
+                    cornerRadius: 12,
+                    placeholderPointSize: 48
+                )
+            }
             Text(player.currentTrack?.title ?? model.text("再生していません", "Not Playing")).font(.title3.bold()).lineLimit(2).multilineTextAlignment(.center)
             Text(player.currentTrack?.artist ?? "").foregroundStyle(.secondary).lineLimit(1)
             Picker("情報", selection: $tab) {
@@ -2432,12 +2449,31 @@ private struct PlayerBar: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            PlayerArtwork(
-                artworkURL: model.enrichedInfo?.artworkURL,
-                size: 48,
-                cornerRadius: 6,
-                placeholderPointSize: 18
-            )
+            Group {
+                if player.currentTrack == nil {
+                    if let appIcon = NSApp.applicationIconImage {
+                        Image(nsImage: appIcon)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 48, height: 48)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                    } else {
+                        PlayerArtwork(
+                            artworkURL: nil,
+                            size: 48,
+                            cornerRadius: 6,
+                            placeholderPointSize: 18
+                        )
+                    }
+                } else {
+                    PlayerArtwork(
+                        artworkURL: model.enrichedInfo?.artworkURL,
+                        size: 48,
+                        cornerRadius: 6,
+                        placeholderPointSize: 18
+                    )
+                }
+            }
             .accessibilityLabel(model.text("アルバムジャケット", "Album artwork"))
             VStack(alignment: .leading, spacing: 2) {
                 Text(player.currentTrack?.title ?? model.text("再生していません", "Not Playing")).lineLimit(1).fontWeight(.medium)
