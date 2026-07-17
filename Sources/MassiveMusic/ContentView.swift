@@ -335,6 +335,15 @@ struct ContentView: View {
                     .buttonStyle(.plain)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .foregroundStyle(model.selectedPlaylistID == playlist.id ? Color.accentColor : Color.primary)
+                    .contextMenu {
+                        Button(model.text("名前を変更…", "Rename…")) {
+                            model.selectPlaylist(playlist.id)
+                            model.renameSelectedPlaylist()
+                        }
+                        Button(model.text("削除", "Delete"), role: .destructive) {
+                            model.deletePlaylist(id: playlist.id)
+                        }
+                    }
                 }
             } header: {
                 HStack {
@@ -447,10 +456,24 @@ struct ContentView: View {
                     .buttonStyle(.plain).foregroundStyle(.secondary)
                     .fixedSize(horizontal: true, vertical: false)
             }
-            Text(headerTitle)
-                .font(.title2.bold())
-                .lineLimit(1)
-                .truncationMode(.tail)
+            if model.selectedPlaylistID != nil {
+                Button {
+                    model.renameSelectedPlaylist()
+                } label: {
+                    Text(headerTitle)
+                        .font(.title2.bold())
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(model.text("クリックしてプレイリスト名を変更", "Click to rename playlist"))
+            } else {
+                Text(headerTitle)
+                    .font(.title2.bold())
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
             if let album = model.selectedAlbum {
                 HStack(spacing: 8) {
                     Button { model.openArtist(named: album.artist) } label: {

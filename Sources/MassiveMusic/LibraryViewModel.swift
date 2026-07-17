@@ -349,6 +349,10 @@ final class LibraryViewModel: ObservableObject {
     }
 
     func selectPlaylist(_ id: Int64) {
+        if selectedPlaylistID == id && section == .playlists {
+            renameSelectedPlaylist()
+            return
+        }
         browseReturnStack.removeAll()
         selectedIndexToken = nil
         section = .playlists
@@ -1495,6 +1499,19 @@ final class LibraryViewModel: ObservableObject {
                 let index = playlists.count + 1
                 let name = text("新規プレイリスト \(index)", "New Playlist \(index)")
                 _ = try await Task.detached { try self.database.createPlaylist(name: name) }.value
+                refreshPlaylists()
+            } catch { errorMessage = error.localizedDescription }
+        }
+    }
+
+    func deletePlaylist(id: Int64) {
+        Task {
+            do {
+                try await Task.detached { try self.database.deletePlaylist(id: id) }.value
+                if selectedPlaylistID == id {
+                    selectedPlaylistID = nil
+                    changeSection(.tracks)
+                }
                 refreshPlaylists()
             } catch { errorMessage = error.localizedDescription }
         }
