@@ -1476,11 +1476,21 @@ final class LibraryViewModel: ObservableObject {
             alert.addButton(withTitle: text("そのまま取り込む", "Import As-Is"))
             alert.addButton(withTitle: text("キャンセル", "Cancel"))
             
-            let response = alert.runModal()
-            if response == .alertFirstButtonReturn {
-                performImport(urls: filteredURLs, convertFlac: true, playlistID: playlistID)
-            } else if response == .alertSecondButtonReturn {
-                performImport(urls: filteredURLs, convertFlac: false, playlistID: playlistID)
+            if let window = NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first {
+                alert.beginSheetModal(for: window) { response in
+                    if response == .alertFirstButtonReturn {
+                        self.performImport(urls: filteredURLs, convertFlac: true, playlistID: playlistID)
+                    } else if response == .alertSecondButtonReturn {
+                        self.performImport(urls: filteredURLs, convertFlac: false, playlistID: playlistID)
+                    }
+                }
+            } else {
+                let response = alert.runModal()
+                if response == .alertFirstButtonReturn {
+                    performImport(urls: filteredURLs, convertFlac: true, playlistID: playlistID)
+                } else if response == .alertSecondButtonReturn {
+                    performImport(urls: filteredURLs, convertFlac: false, playlistID: playlistID)
+                }
             }
         } else {
             performImport(urls: filteredURLs, convertFlac: false, playlistID: playlistID)
