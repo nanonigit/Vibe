@@ -1397,7 +1397,9 @@ struct ContentView: View {
         }
         group.notify(queue: .main) {
             guard !urls.isEmpty else { return }
-            model.importURLs(urls, toPlaylist: playlistID)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                model.importURLs(urls, toPlaylist: playlistID)
+            }
         }
     }
 }
