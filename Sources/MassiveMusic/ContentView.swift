@@ -431,18 +431,10 @@ struct ContentView: View {
     }
 
     private var header: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 12) {
-                headerIdentity
-                    .frame(minWidth: 220, maxWidth: .infinity, alignment: .leading)
-                headerControls
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                headerIdentity
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                headerControls
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-            }
+        HStack(spacing: 12) {
+            headerIdentity
+                .frame(maxWidth: .infinity, alignment: .leading)
+            headerControls
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
@@ -1331,7 +1323,8 @@ private struct LibrarySearchField: View {
             }
         }
         .padding(.horizontal, 9)
-        .frame(width: 360, height: 30)
+        .frame(minWidth: 160, idealWidth: 280, maxWidth: 360)
+        .frame(height: 30)
         .background(.background, in: RoundedRectangle(cornerRadius: 7))
         .overlay {
             RoundedRectangle(cornerRadius: 7)
