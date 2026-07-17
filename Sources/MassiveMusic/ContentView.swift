@@ -8,7 +8,6 @@ private enum SettingsTab: Hashable {
     case storage
     case offline
     case ai
-    case status
 }
 
 private struct BatchMetadataEditRequest: Identifiable {
@@ -311,16 +310,7 @@ struct ContentView: View {
                 }
                 .buttonStyle(.plain)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                Button {
-                    settingsTab = .status
-                    showSettings = true
-                } label: {
-                    SidebarNavigationLabel(
-                        title: model.text("実装状況", "Feature Status"), systemImage: "checklist"
-                    )
-                }
-                .buttonStyle(.plain)
-                .frame(maxWidth: .infinity, alignment: .leading)
+
             }
             Section {
                 ForEach(model.playlists) { playlist in
@@ -2385,8 +2375,6 @@ private struct LibrarySettingsView: View {
             .padding()
             .tabItem { Label("AI", systemImage: "sparkles") }
             .tag(SettingsTab.ai)
-
-            FeatureStatusView(model: model).padding().tabItem { Label(model.text("実装状況", "Feature Status"), systemImage: "checklist") }.tag(SettingsTab.status)
         }
         .onAppear {
             openAIModel = model.openAIModel
@@ -2404,33 +2392,7 @@ private struct LibrarySettingsView: View {
     }
 }
 
-private struct FeatureStatusView: View {
-    @ObservedObject var model: LibraryViewModel
-    private var items: [(String, String, String)] { [
-        (model.text("ローカル受信箱と確認後の移動", "Local Inbox and Confirmed Move"), model.text("完了", "Done"), "checkmark.circle.fill"),
-        (model.text("保存先の変更・未接続表示", "Configurable Storage and Disconnect State"), model.text("完了", "Done"), "checkmark.circle.fill"),
-        (model.text("お気に入り動的ビュー", "Dynamic Favorites"), model.text("完了", "Done"), "checkmark.circle.fill"),
-        (model.text("同一ウインドウのミニプレイヤー", "In-place Mini Player"), model.text("完了", "Done"), "checkmark.circle.fill"),
-        (model.text("列ヘッダーの双方向ソート", "Bidirectional Column Sorting"), model.text("完了", "Done"), "checkmark.circle.fill"),
-        (model.text("日英切替・ライト/ダーク", "Japanese/English and Light/Dark"), model.text("完了", "Done"), "checkmark.circle.fill"),
-        (model.text("アルバム・アーティスト詳細", "Album and Artist Details"), model.text("完了", "Done"), "checkmark.circle.fill"),
-        (model.text("曲情報の編集・確認付き削除", "Metadata Editing and Confirmed Deletion"), model.text("完了", "Done"), "checkmark.circle.fill"),
-        (model.text("複数曲の一括編集・ジャケット貼り付け", "Bulk Metadata Editing and Artwork Paste"), model.text("完了", "Done"), "checkmark.circle.fill"),
-        (model.text("不明タグ・URL・表記ゆれ診断", "Missing Tags, URL, and Variation Diagnostics"), model.text("完了", "Done"), "checkmark.circle.fill"),
-        (model.text("ジャンル別のアルバム・アーティスト・曲", "Albums, Artists, and Songs by Genre"), model.text("完了", "Done"), "checkmark.circle.fill"),
-        (model.text("OpenAI・Gemini・内蔵AIの自動切替", "OpenAI, Gemini, and Built-in AI Fallback"), model.text("完了", "Done"), "checkmark.circle.fill"),
-        (model.text("永続化・ページング対応の次に再生", "Persistent Paged Up Next Queue"), model.text("完了", "Done"), "checkmark.circle.fill"),
-        (model.text("右ペインのYouTube検索・再生", "YouTube Search and Playback in Right Pane"), model.text("完了", "Done"), "checkmark.circle.fill"),
-        (model.text("SSD差分", "Storage Differences"), model.text("一部完了（登録済み欠落を表示）", "Partial (registered missing files)"), "clock.fill"),
-        (model.text("アルバム単位キャッシュ", "Album-count Cache Policy"), model.text("未着手", "Pending"), "circle"),
-        (model.text("音響解析によるジャンル推定", "Acoustic Genre Inference"), model.text("未着手", "Pending"), "circle")
-    ] }
-    var body: some View {
-        List(items, id: \.0) { item in
-            HStack { Image(systemName: item.2).foregroundStyle(item.2.hasPrefix("checkmark") ? .green : item.2 == "clock.fill" ? .orange : .secondary); VStack(alignment: .leading) { Text(item.0); Text(item.1).font(.caption).foregroundStyle(.secondary) } }
-        }
-    }
-}
+
 
 private struct TrackTitleCell: View {
     let track: Track
