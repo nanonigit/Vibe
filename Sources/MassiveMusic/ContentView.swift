@@ -595,17 +595,7 @@ struct ContentView: View {
                 .frame(width: 230)
                 .onChange(of: model.genreDetailMode) { _, mode in model.changeGenreDetailMode(mode) }
             }
-            if model.section != .tracks && model.section != .activityLog &&
-                model.diagnosticKind != .suspectedVariations &&
-                (model.selectedAlbum != nil || (model.selectedGenre != nil && model.genreDetailMode == .tracks) || ![.albums, .artists, .genres, .folders, .diagnostics].contains(model.section) || model.section == .diagnostics) {
-                Picker(model.text("並び替え", "Sort"), selection: $model.sort) {
-                    ForEach(TrackSort.allCases) { Text(model.sortTitle($0)).tag($0) }
-                }
-                .labelsHidden()
-                .frame(width: 150)
-                .onChange(of: model.sort) { _, _ in model.loadCurrentPage(reset: true) }
 
-            }
             if showsTrackColumns || [.albums, .artists].contains(model.section) || model.selectedArtist != nil {
                 if selectedTracksOnPage.count > 1 && showsTrackColumns {
                     Button { openBatchMetadataEditor() } label: {
