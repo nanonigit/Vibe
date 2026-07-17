@@ -1147,15 +1147,10 @@ final class LibraryViewModel: ObservableObject {
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
-
     func updateMetadata(for track: Track, edit: TrackMetadataEdit) {
         Task {
             do {
-                try await runFileOperationWithAuthorizationRetry(for: track) {
-                    try await self.trackFiles.updateMetadata(track: track, edit: edit, authorizedRoot: $0)
-                }
-                loadCurrentPage(reset: false)
-                if edit.artworkData != nil { refreshEnrichmentIfNeeded(updatedTrackIDs: [track.id]) }
+                try await updateMetadataAsync(for: track, edit: edit)
             } catch {
                 let repairableID3Damage = (error as? MassiveMusicError)?.isRepairableID3Damage == true
                     || error.localizedDescription.contains("ID3フレーム")
@@ -1167,6 +1162,14 @@ final class LibraryViewModel: ObservableObject {
                 }
             }
         }
+    }
+
+    func updateMetadataAsync(for track: Track, edit: TrackMetadataEdit) async throws {
+        try await runFileOperationWithAuthorizationRetry(for: track) {
+            try await self.trackFiles.updateMetadata(track: track, edit: edit, authorizedRoot: $0)
+        }
+        loadCurrentPage(reset: false)
+        if edit.artworkData != nil { refreshEnrichmentIfNeeded(updatedTrackIDs: [track.id]) }
     }
 
     func confirmMetadataRepair() {

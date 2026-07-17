@@ -1715,57 +1715,281 @@ private struct NowPlayingInspector: View {
             }
         }
     }
-
     private var information: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        Group {
             if let track = player.currentTrack {
-                LabeledContent(model.text("アルバム", "Album"), value: track.album)
-                LabeledContent(model.text("ジャンル", "Genre"), value: track.genre.isEmpty ? model.text("未判定", "Unknown") : track.genre)
-                LabeledContent(model.text("形式", "Format"), value: track.format.uppercased())
-                Button(model.text("Wikipediaを見る", "View Wikipedia")) { browserURL = model.enrichedInfo?.wikipediaURL }
-                    .disabled(model.enrichedInfo?.wikipediaURL == nil)
-                Button(model.text("ニュースを検索", "Search News")) {
-                    browserURL = model.newsURL(for: track.artist)
-                }.disabled(track.artist.isEmpty)
-                Button(model.text("YouTubeを検索", "Search YouTube")) {
-                    browserURL = model.youtubeURL(for: track)
-                }
-                Divider()
-                Text(model.text("AIジャンル候補", "AI Genre Suggestion")).font(.headline)
-                if model.isClassifyingGenre {
-                    ProgressView(model.text("メタデータから判定中…", "Classifying from metadata…"))
-                } else if let suggestion = model.genreSuggestion {
-                    Text(suggestion.genre).font(.title3.bold())
-                    Label(
-                        suggestion.source == .local ? model.text("内蔵AI", "Built-in AI") :
-                            (suggestion.source == .openAI ? "OpenAI" : "Gemini"),
-                        systemImage: suggestion.source == .local ? "desktopcomputer" : "cloud"
-                    )
-                    .font(.caption).foregroundStyle(.secondary)
-                    Text(model.text("確信度 \(Int(suggestion.confidence * 100))%", "Confidence \(Int(suggestion.confidence * 100))%"))
-                        .font(.caption).foregroundStyle(.secondary)
-                    Text(suggestion.rationale).font(.caption)
-                    HStack {
-                        Button(model.text("ファイルへ適用", "Apply to File")) { model.applyGenreSuggestion(to: track) }
-                        Button(model.text("閉じる", "Dismiss"), action: model.clearGenreSuggestion)
-                    }
-                    if let message = model.aiFallbackMessage {
-                        Label(message, systemImage: "arrow.triangle.branch")
-                            .font(.caption).foregroundStyle(.orange)
-                    }
-                } else {
-                    Button(model.text("AIでジャンル候補を提案", "Suggest Genre with AI")) { model.classifyGenre(for: track) }
-                    Text(model.text("曲名・アーティスト・アルバム等だけを送信します。音声解析ではありません。", "Only title, artist, album, and related metadata are sent. Audio is not analyzed."))
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                HStack(spacing: 8) {
-                    AIProviderStatusBadge(model: model, name: "OpenAI", status: model.openAIStatus)
-                    AIProviderStatusBadge(model: model, name: "Gemini", status: model.geminiStatus)
-                }
-                Button(model.text("AI設定を開く（OpenAI・Gemini）", "Open AI Settings (OpenAI & Gemini)"), action: openAISettings)
-                    .buttonStyle(.link)
+                CurrentTrackInfoEditorView(model: model, player: player, track: track, browserURL: $browserURL, openAISettings: openAISettings)
+            } else {
+                ContentUnavailableView(
+                    model.text("曲情報がありません", "No Track Info"),
+                    systemImage: "info.circle",
+                    description: Text(model.text("再生中の曲がありません。", "No song is currently playing."))
+                )
             }
         }
+    }
+}
+
+private struct CurrentTrackInfoEditorView: View {
+    @ObservedObject var model: LibraryViewModel
+    @ObservedObject var player: PlaybackController
+    let track: Track
+    @Binding var browserURL: URL?
+    let openAISettings: () -> Void
+
+    @State private var title: String = ""
+    @State private var artist: String = ""
+    @State private var album: String = ""
+    @State private var albumArtist: String = ""
+    @State private var genre: String = ""
+    @State private var discNumber: String = ""
+    @State private var trackNumber: String = ""
+
+    @State private var isSaving = false
+    @State private var saveError: String? = nil
+    @State private var saveSuccess = false
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                // Editable Fields
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(model.text("基本情報", "Basic Info")).font(.headline)
+                    
+                    TextField(model.text("タイトル", "Title"), text: $title)
+                        .textFieldStyle(.roundedBorder)
+                    TextField(model.text("アーティスト", "Artist"), text: $artist)
+                        .textFieldStyle(.roundedBorder)
+                    TextField(model.text("アルバム", "Album"), text: $album)
+                        .textFieldStyle(.roundedBorder)
+                    TextField(model.text("アルバムアーティスト", "Album Artist"), text: $albumArtist)
+                        .textFieldStyle(.roundedBorder)
+                    TextField(model.text("ジャンル", "Genre"), text: $genre)
+                        .textFieldStyle(.roundedBorder)
+                    
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(model.text("ディスク番号", "Disc #")).font(.caption).foregroundStyle(.secondary)
+                            TextField("", text: $discNumber)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(model.text("トラック番号", "Track #")).font(.caption).foregroundStyle(.secondary)
+                            TextField("", text: $trackNumber)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                    }
+                }
+                
+                // Save button & status
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Button(action: saveChanges) {
+                            if isSaving {
+                                ProgressView().controlSize(.small).padding(.trailing, 4)
+                            }
+                            Text(model.text("ファイルへ保存", "Save to File"))
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!hasChanges || isSaving || !numbersAreValid)
+                        
+                        if saveSuccess {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                                .font(.title3)
+                                .transition(.opacity)
+                        }
+                    }
+                    
+                    if let saveError {
+                        Text(saveError)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .lineLimit(2)
+                    }
+                }
+                
+                Divider()
+                
+                // Read-Only Specs
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(model.text("ファイル仕様", "File Specifications")).font(.headline)
+                    LabeledContent(model.text("形式", "Format"), value: track.format.uppercased())
+                    if let bitrate = track.bitrate {
+                        LabeledContent(model.text("ビットレート", "Bitrate"), value: "\(bitrate) kbps")
+                    }
+                    LabeledContent(model.text("再生時間", "Duration"), value: formatDuration(track.duration))
+                    LabeledContent(model.text("ファイルサイズ", "File Size"), value: ByteCountFormatter.string(fromByteCount: track.fileSize, countStyle: .file))
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(model.text("ファイル名", "Filename")).font(.caption).foregroundStyle(.secondary)
+                        Text(track.filename)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(track.filename)
+                        
+                        Text(model.text("相対パス", "Relative Path")).font(.caption).foregroundStyle(.secondary)
+                            .padding(.top, 4)
+                        Text(track.relativePath)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                            .help(track.relativePath)
+                            .textSelection(.enabled)
+                    }
+                    .padding(.top, 4)
+                }
+                
+                Divider()
+                
+                // Navigation/Search Buttons
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(model.text("関連リンク", "Related Links")).font(.headline)
+                    HStack(spacing: 8) {
+                        Button(model.text("Wikipedia", "Wikipedia")) { browserURL = model.enrichedInfo?.wikipediaURL }
+                            .disabled(model.enrichedInfo?.wikipediaURL == nil)
+                        Button(model.text("ニュース", "News")) {
+                            browserURL = model.newsURL(for: track.artist)
+                        }.disabled(track.artist.isEmpty)
+                        Button(model.text("YouTube", "YouTube")) {
+                            browserURL = model.youtubeURL(for: track)
+                        }
+                    }
+                }
+                
+                Divider()
+                
+                // AI Suggestions
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(model.text("AIジャンル候補", "AI Genre Suggestion")).font(.headline)
+                    if model.isClassifyingGenre {
+                        ProgressView(model.text("メタデータから判定中…", "Classifying from metadata…"))
+                    } else if let suggestion = model.genreSuggestion {
+                        Text(suggestion.genre).font(.title3.bold())
+                        Label(
+                            suggestion.source == .local ? model.text("内蔵AI", "Built-in AI") :
+                                (suggestion.source == .openAI ? "OpenAI" : "Gemini"),
+                            systemImage: suggestion.source == .local ? "desktopcomputer" : "cloud"
+                        )
+                        .font(.caption).foregroundStyle(.secondary)
+                        Text(model.text("確信度 \(Int(suggestion.confidence * 100))%", "Confidence \(Int(suggestion.confidence * 100))%"))
+                            .font(.caption).foregroundStyle(.secondary)
+                        Text(suggestion.rationale).font(.caption)
+                        HStack {
+                            Button(model.text("ファイルへ適用", "Apply to File")) { model.applyGenreSuggestion(to: track) }
+                            Button(model.text("閉じる", "Dismiss"), action: model.clearGenreSuggestion)
+                        }
+                        if let message = model.aiFallbackMessage {
+                            Label(message, systemImage: "arrow.triangle.branch")
+                                .font(.caption).foregroundStyle(.orange)
+                        }
+                    } else {
+                        Button(model.text("AIでジャンル候補を提案", "Suggest Genre with AI")) { model.classifyGenre(for: track) }
+                        Text(model.text("曲名・アーティスト・アルバム等だけを送信します。音声解析ではありません。", "Only title, artist, album, and related metadata are sent. Audio is not analyzed."))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    HStack(spacing: 8) {
+                        AIProviderStatusBadge(model: model, name: "OpenAI", status: model.openAIStatus)
+                        AIProviderStatusBadge(model: model, name: "Gemini", status: model.geminiStatus)
+                    }
+                    Button(model.text("AI設定を開く（OpenAI・Gemini）", "Open AI Settings (OpenAI & Gemini)"), action: openAISettings)
+                        .buttonStyle(.link)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        }
+        .onAppear(perform: loadTrackData)
+        .onChange(of: track) { _, _ in loadTrackData() }
+    }
+
+    private var hasChanges: Bool {
+        title != track.title ||
+        artist != track.artist ||
+        album != track.album ||
+        albumArtist != track.albumArtist ||
+        genre != track.genre ||
+        discNumber != (track.discNumber.map(String.init) ?? "") ||
+        trackNumber != (track.trackNumber.map(String.init) ?? "")
+    }
+
+    private var numbersAreValid: Bool {
+        let discOK = discNumber.isEmpty || Int(discNumber) != nil
+        let trackOK = trackNumber.isEmpty || Int(trackNumber) != nil
+        return discOK && trackOK
+    }
+
+    private func loadTrackData() {
+        title = track.title
+        artist = track.artist
+        album = track.album
+        albumArtist = track.albumArtist
+        genre = track.genre
+        discNumber = track.discNumber.map(String.init) ?? ""
+        trackNumber = track.trackNumber.map(String.init) ?? ""
+        saveError = nil
+        saveSuccess = false
+    }
+
+    private func saveChanges() {
+        guard hasChanges && !isSaving && numbersAreValid else { return }
+        isSaving = true
+        saveError = nil
+        saveSuccess = false
+        
+        let editTitle = title
+        let editArtist = artist
+        let editAlbum = album
+        let editAlbumArtist = albumArtist
+        let editGenre = genre
+        let editDisc = Int(discNumber)
+        let editTrackNum = Int(trackNumber)
+        
+        var edit = TrackMetadataEdit(track: track)
+        edit.title = editTitle
+        edit.artist = editArtist
+        edit.album = editAlbum
+        edit.albumArtist = editAlbumArtist
+        edit.genre = editGenre
+        edit.discNumber = editDisc
+        edit.trackNumber = editTrackNum
+        
+        Task {
+            do {
+                try await model.updateMetadataAsync(for: track, edit: edit)
+                await MainActor.run {
+                    player.updateCurrentTrack(
+                        title: editTitle,
+                        artist: editArtist,
+                        album: editAlbum,
+                        albumArtist: editAlbumArtist,
+                        genre: editGenre,
+                        discNumber: editDisc,
+                        trackNumber: editTrackNum
+                    )
+                    isSaving = false
+                    saveSuccess = true
+                    withAnimation {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                            saveSuccess = false
+                        }
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    isSaving = false
+                    saveError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func formatDuration(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "--:--" }
+        return String(format: "%d:%02d", Int(seconds) / 60, Int(seconds) % 60)
     }
 }
 

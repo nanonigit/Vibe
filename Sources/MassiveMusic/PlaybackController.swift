@@ -317,4 +317,32 @@ final class PlaybackController: ObservableObject {
             MPNowPlayingInfoPropertyPlaybackRate: player.rate
         ]
     }
+
+    func updateCurrentTrack(title: String, artist: String, album: String, albumArtist: String, genre: String, discNumber: Int?, trackNumber: Int?) {
+        guard let current = currentTrack else { return }
+        let updated = Track(
+            id: current.id,
+            rootID: current.rootID,
+            relativePath: current.relativePath,
+            filename: current.filename,
+            title: title,
+            artist: artist,
+            album: album,
+            albumArtist: albumArtist,
+            genre: genre,
+            discNumber: discNumber,
+            trackNumber: trackNumber,
+            duration: current.duration,
+            fileSize: current.fileSize,
+            modifiedAt: Date(),
+            format: current.format,
+            bitrate: current.bitrate,
+            hasArtwork: current.hasArtwork,
+            isAvailable: current.isAvailable,
+            addedAt: current.addedAt,
+            isFavorite: current.isFavorite
+        )
+        self.currentTrack = updated
+        updateNowPlaying()
+    }
 }
