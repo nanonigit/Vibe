@@ -39,7 +39,7 @@ private struct PlayerWindowRoot: View {
                 }
             } else {
                 ContentUnavailableView(
-                    "MassiveMusicを起動できません",
+                    "Vibeを起動できません",
                     systemImage: "exclamationmark.triangle",
                     description: Text(environment.errorMessage ?? "不明なエラー")
                 )
