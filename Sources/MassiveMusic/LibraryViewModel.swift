@@ -158,6 +158,7 @@ final class LibraryViewModel: ObservableObject {
     private var enrichedTrackID: Int64?
     private var usesDirectOffsetPaging = false
     private var headerStorageScope: String?
+    private var isSyncingOffline = false
     private var browseReturnStack: [BrowseReturnState] = []
 
     init(database: LibraryDatabase, scanner: LibraryScanner) {
@@ -1427,8 +1428,79 @@ final class LibraryViewModel: ObservableObject {
         panel.allowedContentTypes = [.mp3, .mpeg4Audio, .wav]
         guard panel.runModal() == .OK else { return }
         Task {
-            do { pendingImports = try await storage.stage(panel.urls) }
-            catch { errorMessage = error.localizedDescription }
+            do {
+                let staged = try await storage.stage(panel.urls)
+                if let primary = storageDestinations.first(where: \.isPrimary), primary.isAvailable {
+                    // SSD is connected! Move them automatically.
+                    for item in staged {
+                        try await storage.move(item, to: primary)
+                    }
+                    startScan(url: URL(filePath: primary.path))
+                } else {
+                    // SSD is NOT connected! Keep them locally in cache/inbox and register them in database.
+                    for item in staged {
+                        let localURL = URL(filePath: item.localPath)
+                        let metadata = await AudioMetadataReader.read(url: localURL)
+                        
+                        // Find or fallback to primary scan root ID
+                        let primaryRootID: Int64
+                        if let root = try? database.scanRoots().first(where: { $0.lastKnownPath == storageDestinations.first(where: \.isPrimary)?.path }) {
+                            primaryRootID = root.id
+                        } else if let firstRoot = try? database.scanRoots().first {
+                            primaryRootID = firstRoot.id
+                        } else {
+                            primaryRootID = 1
+                        }
+                        
+                        let relativePath = item.filename
+                        let format = localURL.pathExtension.uppercased()
+                        let fileSize = (try? localURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) } ?? 0
+                        let identityKey = "\(primaryRootID):\(relativePath)"
+                        
+                        let track = Track(
+                            id: 0,
+                            rootID: primaryRootID,
+                            relativePath: relativePath,
+                            filename: item.filename,
+                            title: metadata.title,
+                            artist: metadata.artist,
+                            album: metadata.album,
+                            albumArtist: metadata.albumArtist,
+                            genre: metadata.genre,
+                            discNumber: metadata.discNumber,
+                            trackNumber: metadata.trackNumber,
+                            duration: metadata.duration,
+                            fileSize: fileSize,
+                            modifiedAt: Date(),
+                            format: format,
+                            bitrate: metadata.bitrate,
+                            hasArtwork: metadata.hasArtwork,
+                            isAvailable: true,
+                            addedAt: Date()
+                        )
+                        
+                        let trackImport = TrackImport(identityKey: identityKey, fileResourceID: nil, track: track)
+                        let sessionID = try database.createScanSession(rootID: primaryRootID)
+                        _ = try database.commitScanBatch(imports: [trackImport], unchangedIdentityKeys: [], sessionID: sessionID)
+                        try database.updateScanSession(id: sessionID, state: .completed, cursor: nil, discovered: 1, processed: 1, changed: 1, skipped: 0, errors: 0, finished: true)
+                        
+                        // Fetch the newly inserted track's ID and copy to cache so it is playable offline
+                        if let trackID = try? database.trackID(forIdentityKey: identityKey) {
+                            let cacheURL = OfflineCacheManager.cacheDirectoryURL().appending(path: "\(trackID).\(format.lowercased())")
+                            if !FileManager.default.fileExists(atPath: cacheURL.path) {
+                                try? FileManager.default.copyItem(at: localURL, to: cacheURL)
+                            }
+                            try? database.recordCachedTrack(trackID: trackID, path: cacheURL.path, fileSize: fileSize, pinned: true)
+                        }
+                        
+                        try? database.updatePendingImport(id: item.id, state: .keptLocal, localPath: localURL.path)
+                    }
+                }
+                refreshStorage()
+                loadCurrentPage(reset: true)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 
@@ -1749,6 +1821,9 @@ final class LibraryViewModel: ObservableObject {
                 }
                 let hasMissingRoots = !missingNames.isEmpty
                 driveMessage = hasMissingRoots ? "\(text("ドライブが接続されていません", "Drive is not connected")): \(missingNames.joined(separator: ", "))" : nil
+                if !hasMissingRoots {
+                    syncOfflineImportsIfNeeded()
+                }
                 if hadMissingRoots, !hasMissingRoots {
                     startLeadingTitleSpaceCleanup()
                 }
@@ -1757,6 +1832,29 @@ final class LibraryViewModel: ObservableObject {
                 driveMessage = error.localizedDescription
             }
             try? await Task.sleep(for: .seconds(3))
+        }
+    }
+
+    private func syncOfflineImportsIfNeeded() {
+        guard let primary = storageDestinations.first(where: \.isPrimary), primary.isAvailable else { return }
+        guard !isSyncingOffline else { return }
+        isSyncingOffline = true
+        Task {
+            defer { isSyncingOffline = false }
+            do {
+                let pending = try await Task.detached { try self.database.pendingImports() }.value
+                let keptLocalItems = pending.filter { $0.state == .keptLocal }
+                guard !keptLocalItems.isEmpty else { return }
+                
+                for item in keptLocalItems {
+                    try await storage.move(item, to: primary)
+                }
+                
+                startScan(url: URL(filePath: primary.path))
+                refreshStorage()
+            } catch {
+                print("Failed to sync offline imports: \(error)")
+            }
         }
     }
 }

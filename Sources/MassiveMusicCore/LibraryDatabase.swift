@@ -649,6 +649,12 @@ public final class LibraryDatabase: @unchecked Sendable {
         }
     }
 
+    public func trackID(forIdentityKey identityKey: String) throws -> Int64? {
+        try pool.read { db in
+            try Int64.fetchOne(db, sql: "SELECT id FROM tracks WHERE identity_key = ?", arguments: [identityKey])
+        }
+    }
+
     public func updatePendingImport(id: Int64, state: ImportState, localPath: String? = nil, error: String? = nil) throws {
         try pool.write { db in
             try db.execute(sql: "UPDATE pending_imports SET state = ?, local_path = COALESCE(?, local_path), error_message = ? WHERE id = ?", arguments: [state.rawValue, localPath, error, id])
