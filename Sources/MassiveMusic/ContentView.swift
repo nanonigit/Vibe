@@ -471,10 +471,13 @@ struct ContentView: View {
                 .buttonStyle(.plain)
                 .help(model.text("クリックしてプレイリスト名を変更", "Click to rename playlist"))
             } else {
-                Text(headerTitle)
-                    .font(.title2.bold())
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                let hideTitle = [.favorites, .cache].contains(model.section) && model.selectedAlbum == nil && model.selectedArtist == nil && model.selectedGenre == nil
+                if !hideTitle {
+                    Text(headerTitle)
+                        .font(.title2.bold())
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
             }
             if let album = model.selectedAlbum {
                 HStack(spacing: 8) {
@@ -599,16 +602,10 @@ struct ContentView: View {
                 .labelsHidden()
                 .frame(width: 150)
                 .onChange(of: model.sort) { _, _ in model.loadCurrentPage(reset: true) }
-                Button {
-                    model.sortDirection = model.sortDirection == .ascending ? .descending : .ascending
-                    model.loadCurrentPage(reset: true)
-                } label: {
-                    Image(systemName: model.sortDirection == .ascending ? "arrow.up" : "arrow.down")
-                }
-                .help(model.text("昇順・降順を切り替え", "Toggle ascending or descending"))
+
             }
-            if showsTrackColumns {
-                if selectedTracksOnPage.count > 1 {
+            if showsTrackColumns || [.albums, .artists].contains(model.section) || model.selectedArtist != nil {
+                if selectedTracksOnPage.count > 1 && showsTrackColumns {
                     Button { openBatchMetadataEditor() } label: {
                         Label(
                             model.text("\(selectedTracksOnPage.count)曲を一括編集", "Edit \(selectedTracksOnPage.count) Songs"),
