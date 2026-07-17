@@ -1566,13 +1566,16 @@ final class LibraryViewModel: ObservableObject {
                     if let trackID = try? database.trackID(forIdentityKey: identityKey) {
                         importedTrackIDs.append(trackID)
                         
+                        // Always save copy to local cache by default
+                        let cacheURL = OfflineCacheManager.cacheDirectoryURL().appending(path: "\(trackID).\(format.lowercased())")
+                        if !FileManager.default.fileExists(atPath: cacheURL.path) {
+                            try? FileManager.default.copyItem(at: localURL, to: cacheURL)
+                        }
+                        
                         if primaryAvailable, let primaryDest = primary {
+                            try? database.recordCachedTrack(trackID: trackID, path: cacheURL.path, fileSize: fileSize, pinned: false)
                             try await storage.move(item, to: primaryDest)
                         } else {
-                            let cacheURL = OfflineCacheManager.cacheDirectoryURL().appending(path: "\(trackID).\(format.lowercased())")
-                            if !FileManager.default.fileExists(atPath: cacheURL.path) {
-                                try? FileManager.default.copyItem(at: localURL, to: cacheURL)
-                            }
                             try? database.recordCachedTrack(trackID: trackID, path: cacheURL.path, fileSize: fileSize, pinned: true)
                             try? database.updatePendingImport(id: item.id, state: .keptLocal, localPath: localURL.path)
                         }
@@ -1610,6 +1613,7 @@ final class LibraryViewModel: ObservableObject {
 
     private func ensureDefaultStorageDestination() {
         do {
+            try database.renameVibeStorageDestinationToMain()
             let destinations = try database.storageDestinations()
             if destinations.isEmpty {
                 let fm = FileManager.default
@@ -1618,8 +1622,8 @@ final class LibraryViewModel: ObservableObject {
                     try fm.createDirectory(at: vibeURL, withIntermediateDirectories: true)
                     
                     let scoped = try SecurityScopedRoot.create(for: vibeURL)
-                    _ = try database.addStorageDestination(name: vibeURL.lastPathComponent, path: vibeURL.path, bookmark: scoped.bookmark)
-                    _ = try database.addScanRoot(displayName: vibeURL.lastPathComponent, bookmark: scoped.bookmark, volumeUUID: nil, path: vibeURL.path)
+                    _ = try database.addStorageDestination(name: "メイン保管先", path: vibeURL.path, bookmark: scoped.bookmark)
+                    _ = try database.addScanRoot(displayName: "メイン保管先", bookmark: scoped.bookmark, volumeUUID: nil, path: vibeURL.path)
                 }
             }
             storageDestinations = try database.storageDestinations()

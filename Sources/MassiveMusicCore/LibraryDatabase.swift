@@ -624,6 +624,12 @@ public final class LibraryDatabase: @unchecked Sendable {
             return try Int64.fetchOne(db, sql: "SELECT id FROM storage_destinations WHERE path = ?", arguments: [path]) ?? 0
         }
     }
+    public func renameVibeStorageDestinationToMain() throws {
+        try pool.write { db in
+            try db.execute(sql: "UPDATE storage_destinations SET name = 'メイン保管先' WHERE name = 'Vibe'")
+            try db.execute(sql: "UPDATE scan_roots SET display_name = 'メイン保管先' WHERE display_name = 'Vibe'")
+        }
+    }
 
     public func storageDestinations() throws -> [StorageDestination] {
         try pool.read { db in
