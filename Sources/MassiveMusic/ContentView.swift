@@ -1154,7 +1154,7 @@ struct ContentView: View {
         case .favorites: "star.fill"
         case .cache: "internaldrive.fill"
         case .activityLog: "clock.arrow.circlepath"
-        case .diagnostics: "checkmark.magnifyingglass"
+        case .diagnostics: "stethoscope"
         }
     }
 
