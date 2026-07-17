@@ -65,6 +65,10 @@ struct ContentView: View {
     @AppStorage("columns.trackNumber.visible") private var isTrackNumberColumnVisible = true
     @AppStorage("columns.duration.visible") private var isDurationColumnVisible = true
     @AppStorage("columns.format.visible") private var isFormatColumnVisible = true
+    @AppStorage("columns.albumView.artist.visible") private var isAlbumViewArtistVisible = true
+    @AppStorage("columns.albumView.songs.visible") private var isAlbumViewSongsVisible = true
+    @AppStorage("columns.artistView.albums.visible") private var isArtistViewAlbumsVisible = true
+    @AppStorage("columns.artistView.songs.visible") private var isArtistViewSongsVisible = true
 
     var body: some View {
         NavigationSplitView {
@@ -606,13 +610,21 @@ struct ContentView: View {
                     .help(model.text("選択した曲の共通情報を一括変更", "Bulk edit shared metadata for selected songs"))
                 }
                 Menu {
-                    columnVisibilityButton(model.text("タイトル", "Title"), isVisible: $isTitleColumnVisible)
-                    columnVisibilityButton(model.text("アーティスト", "Artist"), isVisible: $isArtistColumnVisible)
-                    columnVisibilityButton(model.text("アルバム", "Album"), isVisible: $isAlbumColumnVisible)
-                    columnVisibilityButton(model.text("ディスク番号", "Disc Number"), isVisible: $isDiscNumberColumnVisible)
-                    columnVisibilityButton(model.text("トラック番号", "Track Number"), isVisible: $isTrackNumberColumnVisible)
-                    columnVisibilityButton(model.text("時間", "Duration"), isVisible: $isDurationColumnVisible)
-                    columnVisibilityButton(model.text("形式", "Format"), isVisible: $isFormatColumnVisible)
+                    if (model.section == .albums || model.selectedArtist != nil) && model.selectedAlbum == nil {
+                        columnVisibilityButton(model.text("アーティスト", "Artist"), isVisible: $isAlbumViewArtistVisible)
+                        columnVisibilityButton(model.text("曲数", "Songs"), isVisible: $isAlbumViewSongsVisible)
+                    } else if model.section == .artists && model.selectedArtist == nil {
+                        columnVisibilityButton(model.text("アルバム数", "Albums"), isVisible: $isArtistViewAlbumsVisible)
+                        columnVisibilityButton(model.text("曲数", "Songs"), isVisible: $isArtistViewSongsVisible)
+                    } else {
+                        columnVisibilityButton(model.text("タイトル", "Title"), isVisible: $isTitleColumnVisible)
+                        columnVisibilityButton(model.text("アーティスト", "Artist"), isVisible: $isArtistColumnVisible)
+                        columnVisibilityButton(model.text("アルバム", "Album"), isVisible: $isAlbumColumnVisible)
+                        columnVisibilityButton(model.text("ディスク番号", "Disc Number"), isVisible: $isDiscNumberColumnVisible)
+                        columnVisibilityButton(model.text("トラック番号", "Track Number"), isVisible: $isTrackNumberColumnVisible)
+                        columnVisibilityButton(model.text("時間", "Duration"), isVisible: $isDurationColumnVisible)
+                        columnVisibilityButton(model.text("形式", "Format"), isVisible: $isFormatColumnVisible)
+                    }
                 } label: {
                     Label(model.text("表示項目", "Columns"), systemImage: "rectangle.3.group")
                 }
@@ -868,16 +880,24 @@ struct ContentView: View {
         VStack(spacing: 0) {
             HStack {
                 Text(model.text("アルバム", "Album")).frame(maxWidth: .infinity, alignment: .leading)
-                Text(model.text("アーティスト", "Artist")).frame(width: 260, alignment: .leading)
-                Text(model.text("曲数", "Songs")).frame(width: 80, alignment: .trailing)
+                if isAlbumViewArtistVisible {
+                    Text(model.text("アーティスト", "Artist")).frame(width: 260, alignment: .leading)
+                }
+                if isAlbumViewSongsVisible {
+                    Text(model.text("曲数", "Songs")).frame(width: 80, alignment: .trailing)
+                }
                 Spacer().frame(width: 28)
             }.font(.caption.bold()).foregroundStyle(.secondary).padding(.horizontal, 14).padding(.vertical, 8)
             Divider()
             List(model.albumSummaries) { album in
                 HStack {
                     Button { model.openAlbum(album) } label: { Label(album.name, systemImage: "square.stack").frame(maxWidth: .infinity, alignment: .leading) }.buttonStyle(.plain)
-                    Button(model.displayArtist(album.artist)) { model.openArtist(named: album.artist) }.buttonStyle(.link).frame(width: 260, alignment: .leading).lineLimit(1)
-                    Text(album.trackCount.formatted()).frame(width: 80, alignment: .trailing).monospacedDigit()
+                    if isAlbumViewArtistVisible {
+                        Button(model.displayArtist(album.artist)) { model.openArtist(named: album.artist) }.buttonStyle(.link).frame(width: 260, alignment: .leading).lineLimit(1)
+                    }
+                    if isAlbumViewSongsVisible {
+                        Text(album.trackCount.formatted()).frame(width: 80, alignment: .trailing).monospacedDigit()
+                    }
                     Image(systemName: "chevron.right").foregroundStyle(.tertiary).frame(width: 20)
                 }.padding(.vertical, 3)
             }
@@ -888,8 +908,12 @@ struct ContentView: View {
         VStack(spacing: 0) {
             HStack {
                 Text(model.text("アーティスト", "Artist")).frame(maxWidth: .infinity, alignment: .leading)
-                Text(model.text("アルバム数", "Albums")).frame(width: 100, alignment: .trailing)
-                Text(model.text("曲数", "Songs")).frame(width: 100, alignment: .trailing)
+                if isArtistViewAlbumsVisible {
+                    Text(model.text("アルバム数", "Albums")).frame(width: 100, alignment: .trailing)
+                }
+                if isArtistViewSongsVisible {
+                    Text(model.text("曲数", "Songs")).frame(width: 100, alignment: .trailing)
+                }
                 Spacer().frame(width: 28)
             }.font(.caption.bold()).foregroundStyle(.secondary).padding(.horizontal, 14).padding(.vertical, 8)
             Divider()
@@ -897,8 +921,12 @@ struct ContentView: View {
                 Button { model.openArtist(artist) } label: {
                     HStack {
                         Label(model.displayArtist(artist.name), systemImage: artist.name.isEmpty ? "person.crop.circle.badge.questionmark" : "music.mic").frame(maxWidth: .infinity, alignment: .leading)
-                        Text(artist.albumCount.formatted()).frame(width: 100, alignment: .trailing).monospacedDigit()
-                        Text(artist.trackCount.formatted()).frame(width: 100, alignment: .trailing).monospacedDigit()
+                        if isArtistViewAlbumsVisible {
+                            Text(artist.albumCount.formatted()).frame(width: 100, alignment: .trailing).monospacedDigit()
+                        }
+                        if isArtistViewSongsVisible {
+                            Text(artist.trackCount.formatted()).frame(width: 100, alignment: .trailing).monospacedDigit()
+                        }
                         Image(systemName: "chevron.right").foregroundStyle(.tertiary).frame(width: 20)
                     }.contentShape(Rectangle())
                 }.buttonStyle(.plain).padding(.vertical, 3)
