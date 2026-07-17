@@ -437,14 +437,15 @@ struct ContentView: View {
                     .frame(minWidth: 220, maxWidth: .infinity, alignment: .leading)
                 headerControls
             }
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
                 headerIdentity
                     .frame(maxWidth: .infinity, alignment: .leading)
                 headerControls
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
-        .padding(14)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
     }
 
     private var headerIdentity: some View {
@@ -590,25 +591,6 @@ struct ContentView: View {
                 .help(model.text("昇順・降順を切り替え", "Toggle ascending or descending"))
             }
             if showsTrackColumns {
-                Menu {
-                    Button(model.text(
-                        "表示中の\(model.tracks.count)曲をすべて選択",
-                        "Select All \(model.tracks.count) Visible Songs"
-                    )) {
-                        model.selectedTrackIDs = Set(model.tracks.map(\.id))
-                        selectionAnchorID = model.tracks.first?.id
-                    }
-                    .keyboardShortcut("a", modifiers: .command)
-                    if !model.selectedTrackIDs.isEmpty {
-                        Button(model.text("選択を解除", "Clear Selection")) {
-                            model.selectedTrackIDs.removeAll()
-                            selectionAnchorID = nil
-                        }
-                    }
-                } label: {
-                    Label(model.text("選択", "Select"), systemImage: "checkmark.circle")
-                }
-                .help(model.text("⌘クリックで追加、Shiftクリックで範囲選択", "Command-click to add; Shift-click to select a range"))
                 if selectedTracksOnPage.count > 1 {
                     Button { openBatchMetadataEditor() } label: {
                         Label(
