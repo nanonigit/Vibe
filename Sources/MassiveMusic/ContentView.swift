@@ -1141,6 +1141,52 @@ struct ContentView: View {
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         ToolbarItemGroup {
+            // 1. ローカルキャッシュ
+            Menu {
+                Button(model.text("Finderでキャッシュフォルダーを表示", "Show Cache Folder in Finder"), action: model.revealLocalCache)
+                Divider()
+                Text(model.text("場所: \(model.localCacheDirectoryPath)", "Path: \(model.localCacheDirectoryPath)"))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "internaldrive.fill")
+                    Text(model.text("キャッシュ", "Cache"))
+                }
+            }
+            .help(model.text("キャッシュ保存場所: \(model.localCacheDirectoryPath)", "Cache Location: \(model.localCacheDirectoryPath)"))
+
+            // 2. 外付けSSD (保管先)
+            Menu {
+                Button(model.text("保管先を変更…", "Change Storage Destination…"), action: model.chooseStorageDestination)
+                if let primary = model.storageDestinations.first(where: \.isPrimary) {
+                    Button(model.text("Finderで保管先フォルダーを表示", "Show Storage in Finder")) {
+                        NSWorkspace.shared.open(URL(filePath: primary.path))
+                    }
+                    .disabled(!primary.isAvailable)
+                    Divider()
+                    Text(model.text("場所: \(primary.path)", "Path: \(primary.path)"))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Divider()
+                    Text(model.text("保管先が設定されていません", "No storage destination set"))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "externaldrive.fill")
+                    Text(model.storageDestinations.first(where: \.isPrimary)?.name ?? model.text("保管先未設定", "No Storage"))
+                }
+            }
+            .help(model.text(
+                "保管先: \(model.storageDestinations.first(where: \.isPrimary)?.path ?? "未設定")",
+                "Storage: \(model.storageDestinations.first(where: \.isPrimary)?.path ?? "Not set")"
+            ))
+
+            Divider()
+
             Button(action: model.chooseAndScanFolder) { Label(model.text("フォルダを追加", "Add Folder"), systemImage: "folder.badge.plus") }
             Button(action: model.importNewTracks) { Label(model.text("曲を取り込む", "Import Songs"), systemImage: "tray.and.arrow.down") }
             Button { isMiniPlayer = true } label: { Label(model.text("ミニプレイヤーに切り替え", "Switch to Mini Player"), systemImage: "pip") }
