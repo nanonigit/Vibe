@@ -181,6 +181,7 @@ final class LibraryViewModel: ObservableObject {
         refreshStorage()
         refreshDifferenceSummary()
         restoreAIProviderConfigurationWithoutReadingKeys()
+        ensureDefaultStorageDestination()
         driveMonitor = Task { [weak self] in await self?.monitorDrives() }
         startLeadingTitleSpaceCleanup()
     }
@@ -1604,6 +1605,26 @@ final class LibraryViewModel: ObservableObject {
         Task {
             do { storageDestinations = try await storage.addDestination(url) }
             catch { errorMessage = error.localizedDescription }
+        }
+    }
+
+    private func ensureDefaultStorageDestination() {
+        do {
+            let destinations = try database.storageDestinations()
+            if destinations.isEmpty {
+                let fm = FileManager.default
+                if let musicURL = fm.urls(for: .musicDirectory, in: .userDomainMask).first {
+                    let vibeURL = musicURL.appending(path: "Vibe", directoryHint: .isDirectory)
+                    try fm.createDirectory(at: vibeURL, withIntermediateDirectories: true)
+                    
+                    let scoped = try SecurityScopedRoot.create(for: vibeURL)
+                    _ = try database.addStorageDestination(name: vibeURL.lastPathComponent, path: vibeURL.path, bookmark: scoped.bookmark)
+                    _ = try database.addScanRoot(displayName: vibeURL.lastPathComponent, bookmark: scoped.bookmark, volumeUUID: nil, path: vibeURL.path)
+                }
+            }
+            storageDestinations = try database.storageDestinations()
+        } catch {
+            print("Failed to initialize default storage destination: \(error)")
         }
     }
 
