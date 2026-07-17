@@ -103,6 +103,7 @@ actor StorageCoordinator {
         let process = Process()
         process.executableURL = URL(filePath: "/opt/homebrew/bin/ffmpeg")
         process.arguments = [
+            "-nostdin",
             "-i", source.path,
             "-codec:a", "libmp3lame",
             "-qscale:a", "0",
@@ -123,6 +124,7 @@ actor StorageCoordinator {
     func addDestination(_ url: URL) throws -> [StorageDestination] {
         let scoped = try SecurityScopedRoot.create(for: url)
         _ = try database.addStorageDestination(name: url.lastPathComponent, path: url.path, bookmark: scoped.bookmark)
+        _ = try? database.addScanRoot(displayName: url.lastPathComponent, bookmark: scoped.bookmark, volumeUUID: nil, path: url.path)
         return try database.storageDestinations()
     }
 

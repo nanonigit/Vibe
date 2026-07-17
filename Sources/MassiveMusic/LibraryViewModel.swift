@@ -1500,23 +1500,35 @@ final class LibraryViewModel: ObservableObject {
     private func performImport(urls: [URL], convertFlac: Bool, playlistID: Int64?) {
         Task {
             do {
+                let primary = storageDestinations.first(where: \.isPrimary)
+                guard let primaryDest = primary else {
+                    throw MassiveMusicError.metadataWriteFailed(
+                        text("保管先が設定されていません。画面右上の「保管先設定」ボタンからメインの保管場所を選択してください。",
+                             "No storage destination configured. Choose a primary storage using the settings button in the top right.")
+                    )
+                }
+                
+                // Ensure a scan root exists for the primary storage destination
+                let primaryRootID: Int64
+                if let root = try? database.scanRoots().first(where: { $0.lastKnownPath == primaryDest.path }) {
+                    primaryRootID = root.id
+                } else {
+                    let rootID = try database.addScanRoot(
+                        displayName: primaryDest.name,
+                        bookmark: primaryDest.bookmark,
+                        volumeUUID: nil,
+                        path: primaryDest.path
+                    )
+                    primaryRootID = rootID
+                }
+                
                 let staged = try await storage.stage(urls, convertFlac: convertFlac)
                 var importedTrackIDs: [Int64] = []
-                let primary = storageDestinations.first(where: \.isPrimary)
-                let primaryAvailable = primary?.isAvailable == true
+                let primaryAvailable = primaryDest.isAvailable
                 
                 for item in staged {
                     let localURL = URL(filePath: item.localPath)
                     let metadata = await AudioMetadataReader.read(url: localURL)
-                    
-                    let primaryRootID: Int64
-                    if let root = try? database.scanRoots().first(where: { $0.lastKnownPath == primary?.path }) {
-                        primaryRootID = root.id
-                    } else if let firstRoot = try? database.scanRoots().first {
-                        primaryRootID = firstRoot.id
-                    } else {
-                        primaryRootID = 1
-                    }
                     
                     let relativePath = item.filename
                     let format = localURL.pathExtension.uppercased()
@@ -1925,8 +1937,19 @@ final class LibraryViewModel: ObservableObject {
                 let keptLocalItems = pending.filter { $0.state == .keptLocal }
                 guard !keptLocalItems.isEmpty else { return }
                 
+                let primaryRootID: Int64
+                if let root = try? database.scanRoots().first(where: { $0.lastKnownPath == primary.path }) {
+                    primaryRootID = root.id
+                } else {
+                    primaryRootID = 1
+                }
+                
                 for item in keptLocalItems {
                     try await storage.move(item, to: primary)
+                    let identityKey = "\(primaryRootID):\(item.filename)"
+                    if let trackID = try? database.trackID(forIdentityKey: identityKey) {
+                        try? database.setCachedTrackPinned(trackID: trackID, pinned: false)
+                    }
                 }
                 
                 startScan(url: URL(filePath: primary.path))
