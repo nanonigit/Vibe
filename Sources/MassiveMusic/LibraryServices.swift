@@ -84,11 +84,40 @@ actor StorageCoordinator {
         for source in sources {
             let scoped = source.startAccessingSecurityScopedResource()
             defer { if scoped { source.stopAccessingSecurityScopedResource() } }
-            let destination = uniqueURL(for: source.lastPathComponent, in: inbox)
-            try fileManager.copyItem(at: source, to: destination)
+            
+            let isFlac = source.pathExtension.lowercased() == "flac"
+            let targetFilename = isFlac ? source.deletingPathExtension().appendingPathExtension("mp3").lastPathComponent : source.lastPathComponent
+            let destination = uniqueURL(for: targetFilename, in: inbox)
+            
+            if isFlac {
+                try convertFlacToMp3(source: source, destination: destination)
+            } else {
+                try fileManager.copyItem(at: source, to: destination)
+            }
             _ = try database.addPendingImport(localPath: destination.path, filename: destination.lastPathComponent)
         }
         return try database.pendingImports()
+    }
+
+    private func convertFlacToMp3(source: URL, destination: URL) throws {
+        let process = Process()
+        process.executableURL = URL(filePath: "/opt/homebrew/bin/ffmpeg")
+        process.arguments = [
+            "-i", source.path,
+            "-codec:a", "libmp3lame",
+            "-qscale:a", "0",
+            "-y",
+            destination.path
+        ]
+        let errorPipe = Pipe()
+        process.standardError = errorPipe
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            let errorMessage = String(data: errorData, encoding: .utf8) ?? "Unknown ffmpeg error"
+            throw MassiveMusicError.metadataWriteFailed("FLAC to MP3 conversion failed: \(errorMessage)")
+        }
     }
 
     func addDestination(_ url: URL) throws -> [StorageDestination] {

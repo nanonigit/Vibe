@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import UniformTypeIdentifiers
 import Foundation
 import MassiveMusicCore
 import SwiftUI
@@ -1425,7 +1426,13 @@ final class LibraryViewModel: ObservableObject {
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
         panel.allowsMultipleSelection = true
-        panel.allowedContentTypes = [.mp3, .mpeg4Audio, .wav]
+        var allowedTypes: [UTType] = [.mp3, .mpeg4Audio, .wav]
+        if let flacType = UTType("org.xiph.flac") {
+            allowedTypes.append(flacType)
+        } else if let flacType = UTType(filenameExtension: "flac") {
+            allowedTypes.append(flacType)
+        }
+        panel.allowedContentTypes = allowedTypes
         guard panel.runModal() == .OK else { return }
         Task {
             do {
