@@ -1439,7 +1439,29 @@ final class LibraryViewModel: ObservableObject {
     }
 
     func importURLs(_ urls: [URL], toPlaylist playlistID: Int64? = nil) {
-        let hasFlac = urls.contains { $0.pathExtension.lowercased() == "flac" }
+        var fileURLs: [URL] = []
+        let fm = FileManager.default
+        for url in urls {
+            var isDir: ObjCBool = false
+            if fm.fileExists(atPath: url.path, isDirectory: &isDir) {
+                if isDir.boolValue {
+                    if let enumerator = fm.enumerator(at: url, includingPropertiesForKeys: nil) {
+                        while let fileURL = enumerator.nextObject() as? URL {
+                            fileURLs.append(fileURL)
+                        }
+                    }
+                } else {
+                    fileURLs.append(url)
+                }
+            }
+        }
+        
+        let allowedExtensions = ["mp3", "m4a", "wav", "flac"]
+        let filteredURLs = fileURLs.filter { allowedExtensions.contains($0.pathExtension.lowercased()) }
+        
+        guard !filteredURLs.isEmpty else { return }
+        
+        let hasFlac = filteredURLs.contains { $0.pathExtension.lowercased() == "flac" }
         if hasFlac {
             let alert = NSAlert()
             alert.messageText = text("FLACファイルをMP3に変換しますか？", "Convert FLAC files to MP3?")
@@ -1453,12 +1475,12 @@ final class LibraryViewModel: ObservableObject {
             
             let response = alert.runModal()
             if response == .alertFirstButtonReturn {
-                performImport(urls: urls, convertFlac: true, playlistID: playlistID)
+                performImport(urls: filteredURLs, convertFlac: true, playlistID: playlistID)
             } else if response == .alertSecondButtonReturn {
-                performImport(urls: urls, convertFlac: false, playlistID: playlistID)
+                performImport(urls: filteredURLs, convertFlac: false, playlistID: playlistID)
             }
         } else {
-            performImport(urls: urls, convertFlac: false, playlistID: playlistID)
+            performImport(urls: filteredURLs, convertFlac: false, playlistID: playlistID)
         }
     }
 

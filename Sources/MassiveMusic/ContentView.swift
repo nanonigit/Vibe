@@ -400,6 +400,8 @@ struct ContentView: View {
             if [.running, .paused].contains(model.scanProgress.state) { scanStatus }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(Color.clear)
+        .contentShape(Rectangle())
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
             handleDroppedProviders(providers)
             return true
@@ -1379,12 +1381,28 @@ struct ContentView: View {
         let group = DispatchGroup()
         var urls: [URL] = []
         for provider in providers {
-            group.enter()
-            _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                if let url = url {
-                    urls.append(url)
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                group.enter()
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, error in
+                    if let data = item as? Data {
+                        if let url = URL(dataRepresentation: data, relativeTo: nil) {
+                            urls.append(url)
+                        } else if let path = String(data: data, encoding: .utf8), let url = URL(string: path) {
+                            urls.append(url)
+                        }
+                    } else if let url = item as? URL {
+                        urls.append(url)
+                    }
+                    group.leave()
                 }
-                group.leave()
+            } else {
+                group.enter()
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    if let url = url {
+                        urls.append(url)
+                    }
+                    group.leave()
+                }
             }
         }
         group.notify(queue: .main) {
