@@ -1195,7 +1195,7 @@ public final class LibraryDatabase: @unchecked Sendable {
         guard (1...1_000).contains(limit) else { throw MassiveMusicError.invalidPageSize }
         let safeOffset = max(0, offset)
         return try pool.read { db in
-            let artistExpression = "COALESCE(NULLIF(t.album_artist, ''), t.artist)"
+            let artistExpression = "t.artist"
             let arguments: StatementArguments = [album.name, album.artist]
             let total = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks t WHERE t.is_available = 1 AND t.album = ? COLLATE NOCASE AND \(artistExpression) = ? COLLATE NOCASE", arguments: arguments) ?? 0
             var pageArguments = arguments

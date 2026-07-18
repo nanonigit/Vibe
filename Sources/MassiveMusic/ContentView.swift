@@ -758,7 +758,7 @@ struct ContentView: View {
                                         } else {
                                             model.openAlbum(AlbumSummary(
                                                 name: track.album,
-                                                artist: track.albumArtist.isEmpty ? track.artist : track.albumArtist,
+                                                artist: track.artist,
                                                 trackCount: 0
                                             ))
                                         }
