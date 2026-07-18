@@ -1684,7 +1684,16 @@ final class LibraryViewModel: ObservableObject {
                     let metadata = await AudioMetadataReader.read(url: localURL)
                     let format = localURL.pathExtension.uppercased()
                     let fileSize = (try? localURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) } ?? 0
-                    let identityKey = "\(primaryRootID):\(relativePath)"
+                    let resKeys: Set<URLResourceKey> = [.fileResourceIdentifierKey, .volumeUUIDStringKey]
+                    let resValues = try? localURL.resourceValues(forKeys: resKeys)
+                    let volumeUUID = resValues?.volumeUUIDString ?? "unknown-volume"
+                    let resourceID = resValues?.fileResourceIdentifier.map { String(describing: $0) }
+                    let identityKey: String
+                    if let resourceID, !resourceID.isEmpty {
+                        identityKey = "\(volumeUUID)|resource|\(resourceID)"
+                    } else {
+                        identityKey = "\(volumeUUID)|path|\(relativePath)"
+                    }
                     
                     let track = Track(
                         id: 0,

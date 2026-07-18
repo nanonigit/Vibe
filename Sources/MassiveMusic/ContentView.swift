@@ -1303,6 +1303,12 @@ struct ContentView: View {
                         NSWorkspace.shared.open(URL(filePath: primary.path))
                     }
                     .disabled(!primary.isAvailable)
+                    
+                    Button(model.text("保管先フォルダを再スキャン", "Rescan Storage Folder")) {
+                        model.startScan(url: URL(filePath: primary.path))
+                    }
+                    .disabled(!primary.isAvailable)
+                    
                     Divider()
                     Text(model.text("場所: \(primary.path)", "Path: \(primary.path)"))
                         .font(.caption2)
