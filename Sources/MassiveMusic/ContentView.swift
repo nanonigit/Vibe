@@ -1639,6 +1639,10 @@ private struct NowPlayingInspector: View {
     @Binding var browserURL: URL?
     let openAISettings: () -> Void
     @State private var tab = 0
+    @AppStorage("lyrics.autoScroll") private var lyricsAutoScroll = true
+    @State private var lyricsContentHeight: CGFloat = 0
+    @State private var lyricsViewHeight: CGFloat = 0
+    private let lyricsAnchorCount = 100
 
     var body: some View {
         Group {
@@ -1699,9 +1703,71 @@ private struct NowPlayingInspector: View {
     }
 
     private var lyrics: some View {
-        ScrollView {
-            Text(model.enrichedInfo?.lyrics?.plainLyrics ?? model.text("歌詞が見つかりませんでした。LRCLIBで一致した歌詞は自動保存され、次回はオフラインで表示されます。", "No matching lyrics were found. LRCLIB matches are saved for offline viewing."))
-                .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+        VStack(spacing: 0) {
+            HStack {
+                Spacer()
+                Toggle(isOn: $lyricsAutoScroll) {
+                    Label(model.text("自動スクロール", "Auto Scroll"), systemImage: "arrow.up.and.down.text.horizontal")
+                        .font(.caption)
+                }
+                .toggleStyle(.button)
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .tint(.accentColor)
+                .opacity(lyricsAutoScroll ? 1.0 : 0.4)
+            }
+            .padding(.bottom, 4)
+
+            GeometryReader { geo in
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        ZStack(alignment: .topLeading) {
+                            // Lyrics text
+                            Text(model.enrichedInfo?.lyrics?.plainLyrics ?? model.text(
+                                "歌詞が見つかりませんでした。LRCLIBで一致した歌詞は自動保存され、次回はオフラインで表示されます。",
+                                "No matching lyrics were found. LRCLIB matches are saved for offline viewing."
+                            ))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.bottom, 60)
+                            .background(
+                                GeometryReader { contentGeo in
+                                    Color.clear
+                                        .onAppear { lyricsContentHeight = contentGeo.size.height }
+                                        .onChange(of: contentGeo.size.height) { lyricsContentHeight = $0 }
+                                }
+                            )
+
+                            // Invisible anchor grid spread evenly through content
+                            GeometryReader { anchorGeo in
+                                ForEach(0...lyricsAnchorCount, id: \.self) { i in
+                                    Color.clear
+                                        .frame(width: 1, height: 1)
+                                        .offset(y: anchorGeo.size.height * CGFloat(i) / CGFloat(lyricsAnchorCount))
+                                        .id("lyricsAnchor_\(i)")
+                                }
+                            }
+                        }
+                    }
+                    .onAppear {
+                        lyricsViewHeight = geo.size.height
+                    }
+                    .onChange(of: geo.size.height) { lyricsViewHeight = $0 }
+                    .onChange(of: player.elapsed) { _ in
+                        guard lyricsAutoScroll, player.duration > 0,
+                              lyricsContentHeight > lyricsViewHeight else { return }
+                        let pct = player.elapsed / player.duration
+                        let rawIndex = Int((pct * Double(lyricsAnchorCount)).rounded())
+                        let anchorIndex = min(lyricsAnchorCount, max(0, rawIndex))
+                        withAnimation(.linear(duration: 0.8)) {
+                            proxy.scrollTo("lyricsAnchor_\(anchorIndex)", anchor: .top)
+                        }
+                    }
+                    .onChange(of: model.enrichedInfo?.lyrics?.plainLyrics) { _ in
+                        proxy.scrollTo("lyricsAnchor_0", anchor: .top)
+                    }
+                }
+            }
         }
     }
 
