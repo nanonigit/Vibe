@@ -2942,19 +2942,20 @@ private struct TrackTitleCell: View {
     @State private var isHovered = false
 
     var body: some View {
-        HStack {
+        HStack(spacing: 6) {
             if track.isAvailable {
                 Image(systemName: "music.note")
                     .foregroundStyle(Color.secondary)
             } else {
                 Image(systemName: "externaldrive.badge.exclamationmark")
                     .foregroundStyle(Color.orange)
-                    .popover(isPresented: $isHovered, arrowEdge: .top) {
-                        Text(helpText)
-                            .padding(8)
-                            .font(.caption)
-                            .frame(maxWidth: 250)
-                    }
+            }
+            
+            if !track.isAvailable && isHovered {
+                Text(helpText)
+                    .font(.caption)
+                    .foregroundStyle(Color.orange)
+                    .transition(.opacity.combined(with: .move(edge: .leading)))
             }
             
             Text(track.title)
@@ -2962,7 +2963,7 @@ private struct TrackTitleCell: View {
         }
         .contentShape(Rectangle())
         .onHover { hovering in
-            if !track.isAvailable {
+            withAnimation(.easeOut(duration: 0.15)) {
                 isHovered = hovering
             }
         }
