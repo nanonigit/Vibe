@@ -1607,7 +1607,8 @@ final class LibraryViewModel: ObservableObject {
     }
 
     private func performImport(urls: [URL], convertFlac: Bool, playlistID: Int64?) {
-        Task {
+        Task { [weak self] in
+            guard let self else { return }
             do {
                 let primary = storageDestinations.first(where: \.isPrimary)
                 guard let primaryDest = primary else {
@@ -1645,33 +1646,42 @@ final class LibraryViewModel: ObservableObject {
                     )
                 }
                 
-                let staged = try await storage.stage(urls, convertFlac: convertFlac) { [weak self] index, total, fileProgress in
-                    Task { @MainActor in
-                        let filename = index - 1 < urls.count ? urls[index - 1].lastPathComponent : ""
-                        self?.importProgress = ImportProgress(
-                            state: .converting,
-                            currentFileIndex: index,
-                            totalFiles: total,
-                            fileProgress: fileProgress,
-                            currentFileName: filename
-                        )
-                    }
-                }
-                
-                defer {
-                    Task { @MainActor in
-                        self.importProgress = .idle
-                    }
-                }
-                
-                var importedTrackIDs: [Int64] = []
+                let primaryURL = URL(filePath: targetPath).standardizedFileURL
                 let primaryAvailable = primaryDest.isAvailable
+                var importedTrackIDs: [Int64] = []
                 
-                for item in staged {
-                    let localURL = URL(filePath: item.localPath)
-                    let metadata = await AudioMetadataReader.read(url: localURL)
+                // 1. Separate URLs into in-place (already under primary storage) and staged (needs copy/convert/move)
+                var inplaceURLs: [URL] = []
+                var stageURLs: [URL] = []
+                
+                for url in urls {
+                    let standardURL = url.standardizedFileURL
+                    let isUnderPrimary = standardURL.path.precomposedStringWithCanonicalMapping.hasPrefix(targetPath)
+                    let isFlac = standardURL.pathExtension.lowercased() == "flac"
                     
-                    let relativePath = item.filename
+                    if isUnderPrimary && (!isFlac || !convertFlac) {
+                        inplaceURLs.append(standardURL)
+                    } else {
+                        stageURLs.append(url)
+                    }
+                }
+                
+                let getRelativePath = { (fileURL: URL) -> String in
+                    let filePath = fileURL.standardizedFileURL.path.precomposedStringWithCanonicalMapping
+                    if filePath.hasPrefix(targetPath) {
+                        let index = filePath.index(filePath.startIndex, offsetBy: targetPath.count)
+                        var rel = String(filePath[index...])
+                        if rel.hasPrefix("/") {
+                            rel.removeFirst()
+                        }
+                        return rel
+                    }
+                    return fileURL.lastPathComponent
+                }
+                
+                // Reusable track registration closure
+                let processAndCommitTrack = { @MainActor (localURL: URL, relativePath: String, isPendingImportItem: PendingImport?) async throws -> Int64 in
+                    let metadata = await AudioMetadataReader.read(url: localURL)
                     let format = localURL.pathExtension.uppercased()
                     let fileSize = (try? localURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) } ?? 0
                     let identityKey = "\(primaryRootID):\(relativePath)"
@@ -1680,7 +1690,7 @@ final class LibraryViewModel: ObservableObject {
                         id: 0,
                         rootID: primaryRootID,
                         relativePath: relativePath,
-                        filename: item.filename,
+                        filename: localURL.lastPathComponent,
                         title: metadata.title,
                         artist: metadata.artist,
                         album: metadata.album,
@@ -1699,25 +1709,73 @@ final class LibraryViewModel: ObservableObject {
                     )
                     
                     let trackImport = TrackImport(identityKey: identityKey, fileResourceID: nil, track: track)
-                    let sessionID = try database.createScanSession(rootID: primaryRootID)
-                    _ = try database.commitScanBatch(imports: [trackImport], unchangedIdentityKeys: [], sessionID: sessionID)
-                    try database.updateScanSession(id: sessionID, state: .completed, cursor: nil, discovered: 1, processed: 1, changed: 1, skipped: 0, errors: 0, finished: true)
+                    let sessionID = try self.database.createScanSession(rootID: primaryRootID)
+                    _ = try self.database.commitScanBatch(imports: [trackImport], unchangedIdentityKeys: [], sessionID: sessionID)
+                    try self.database.updateScanSession(id: sessionID, state: .completed, cursor: nil, discovered: 1, processed: 1, changed: 1, skipped: 0, errors: 0, finished: true)
                     
-                    if let trackID = try? database.trackID(forIdentityKey: identityKey) {
-                        importedTrackIDs.append(trackID)
-                        
-                        // Always save copy to local cache by default
+                    guard let trackID = try? self.database.trackID(forIdentityKey: identityKey) else {
+                        throw MassiveMusicError.metadataWriteFailed("Failed to get track ID")
+                    }
+                    
+                    // Cache copy (only if storage is external)
+                    if self.isStorageExternal {
                         let cacheURL = OfflineCacheManager.cacheDirectoryURL().appending(path: "\(trackID).\(format.lowercased())")
                         if !FileManager.default.fileExists(atPath: cacheURL.path) {
                             try? FileManager.default.copyItem(at: localURL, to: cacheURL)
                         }
-                        
+                        try? self.database.recordCachedTrack(trackID: trackID, path: cacheURL.path, fileSize: fileSize, pinned: false)
+                    }
+                    
+                    if let item = isPendingImportItem {
                         if primaryAvailable, let primaryDest = primary {
-                            try? database.recordCachedTrack(trackID: trackID, path: cacheURL.path, fileSize: fileSize, pinned: false)
-                            try await storage.move(item, to: primaryDest)
+                            try await self.storage.move(item, to: primaryDest)
                         } else {
-                            try? database.recordCachedTrack(trackID: trackID, path: cacheURL.path, fileSize: fileSize, pinned: true)
-                            try? database.updatePendingImport(id: item.id, state: .keptLocal, localPath: localURL.path)
+                            if self.isStorageExternal {
+                                let cacheURL = OfflineCacheManager.cacheDirectoryURL().appending(path: "\(trackID).\(format.lowercased())")
+                                try? self.database.recordCachedTrack(trackID: trackID, path: cacheURL.path, fileSize: fileSize, pinned: true)
+                            }
+                            try? self.database.updatePendingImport(id: item.id, state: .keptLocal, localPath: localURL.path)
+                        }
+                    }
+                    
+                    return trackID
+                }
+                
+                // 2. Register in-place URLs (already in destination, no copying/moving)
+                for url in inplaceURLs {
+                    let rel = getRelativePath(url)
+                    if let trackID = try? await processAndCommitTrack(url, rel, nil) {
+                        importedTrackIDs.append(trackID)
+                    }
+                }
+                
+                // 3. Process staged URLs (external or needs FLAC conversion)
+                if !stageURLs.isEmpty {
+                    let stageFileNames = stageURLs.map { $0.lastPathComponent }
+                    let staged = try await storage.stage(stageURLs, convertFlac: convertFlac) { [weak self] index, total, fileProgress in
+                        Task { @MainActor in
+                            let filename = index - 1 < stageFileNames.count ? stageFileNames[index - 1] : ""
+                            self?.importProgress = ImportProgress(
+                                state: .converting,
+                                currentFileIndex: index,
+                                totalFiles: total,
+                                fileProgress: fileProgress,
+                                currentFileName: filename
+                            )
+                        }
+                    }
+                    
+                    defer {
+                        Task { @MainActor in
+                            self.importProgress = .idle
+                        }
+                    }
+                    
+                    for item in staged {
+                        let localURL = URL(filePath: item.localPath)
+                        let rel = item.filename
+                        if let trackID = try? await processAndCommitTrack(localURL, rel, item) {
+                            importedTrackIDs.append(trackID)
                         }
                     }
                 }
