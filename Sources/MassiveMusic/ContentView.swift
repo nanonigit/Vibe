@@ -2964,7 +2964,7 @@ private struct HoverTrackingView: NSViewRepresentable {
 
             let options: NSTrackingArea.Options = [
                 .mouseEnteredAndExited,
-                .activeInKeyWindow,
+                .activeAlways,
                 .assumeInside
             ]
             
