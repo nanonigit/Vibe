@@ -2942,16 +2942,21 @@ private struct TrackTitleCell: View {
 
     var body: some View {
         HStack {
-            Image(systemName: iconName)
-                .foregroundStyle(track.isAvailable ? Color.secondary : Color.orange)
+            if track.isAvailable {
+                Image(systemName: "music.note")
+                    .foregroundStyle(Color.secondary)
+            } else {
+                Button {
+                    // Do nothing on click
+                } label: {
+                    Image(systemName: "externaldrive.badge.exclamationmark")
+                        .foregroundStyle(Color.orange)
+                }
+                .buttonStyle(.plain)
+                .modifier(HelpModifier(helpText: helpText))
+            }
             Text(track.title).lineLimit(1)
         }
-        .contentShape(Rectangle())
-        .modifier(HelpModifier(helpText: track.isAvailable ? nil : helpText))
-    }
-
-    private var iconName: String {
-        track.isAvailable ? "music.note" : "externaldrive.badge.exclamationmark"
     }
 }
 
