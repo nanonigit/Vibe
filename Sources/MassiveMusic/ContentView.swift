@@ -737,7 +737,7 @@ struct ContentView: View {
                                 .buttonStyle(.plain)
                                 .help(track.isFavorite ? model.text("お気に入りから外す", "Remove from Favorites") : model.text("お気に入りに追加", "Add to Favorites"))
                                 if isTitleColumnVisible {
-                                    TrackTitleCell(track: track).frame(width: titleColumnWidth, alignment: .leading)
+                                     TrackTitleCell(track: track, helpText: track.isAvailable ? "" : model.text("保管先ストレージが未接続です（ローカルキャッシュからのみ再生可能）", "Storage destination is disconnected (Playable only via local cache)")).frame(width: titleColumnWidth, alignment: .leading)
                                 }
                                 if isArtistColumnVisible {
                                     TrackNavigationCell(
@@ -2938,11 +2938,13 @@ private struct LibrarySettingsView: View {
 
 private struct TrackTitleCell: View {
     let track: Track
+    let helpText: String
 
     var body: some View {
         HStack {
             Image(systemName: iconName)
                 .foregroundStyle(track.isAvailable ? Color.secondary : Color.orange)
+                .help(helpText)
             Text(track.title).lineLimit(1)
         }
     }
