@@ -887,6 +887,8 @@ public final class LibraryDatabase: @unchecked Sendable {
     public func pageAlbums(
         artistFilter: String? = nil,
         genreFilter: String? = nil,
+        sort: AlbumSort = .name,
+        direction: SortDirection = .ascending,
         offset: Int = 0,
         limit: Int = defaultPageSize
     ) throws -> AlbumSummaryPage {
@@ -914,12 +916,24 @@ public final class LibraryDatabase: @unchecked Sendable {
                 """, arguments: filterArgs) ?? 0
             var args = filterArgs
             args += [limit, safeOffset]
+            
+            let sortDir = direction == .ascending ? "ASC" : "DESC"
+            let orderClause: String
+            switch sort {
+            case .name:
+                orderClause = "name COLLATE NOCASE \(sortDir), artist COLLATE NOCASE \(sortDir)"
+            case .artist:
+                orderClause = "artist COLLATE NOCASE \(sortDir), name COLLATE NOCASE \(sortDir)"
+            case .trackCount:
+                orderClause = "track_count \(sortDir), name COLLATE NOCASE \(sortDir)"
+            }
+
             let rows = try Row.fetchAll(db, sql: """
                 SELECT album AS name, \(expression) AS artist, COUNT(*) AS track_count
                 FROM tracks
                 WHERE is_available = 1 AND album <> ''\(filterSQL)
                 GROUP BY album COLLATE NOCASE, \(expression) COLLATE NOCASE
-                ORDER BY name COLLATE NOCASE, artist COLLATE NOCASE
+                ORDER BY \(orderClause)
                 LIMIT ? OFFSET ?
                 """, arguments: args)
             return AlbumSummaryPage(
@@ -932,6 +946,8 @@ public final class LibraryDatabase: @unchecked Sendable {
     public func pageArtists(
         genreFilter: String? = nil,
         search: String? = nil,
+        sort: ArtistSort = .name,
+        direction: SortDirection = .ascending,
         offset: Int = 0,
         limit: Int = defaultPageSize
     ) throws -> ArtistSummaryPage {
@@ -962,12 +978,24 @@ public final class LibraryDatabase: @unchecked Sendable {
             ) ?? 0
             var pageArguments = filterArgs
             pageArguments += [limit, safeOffset]
+            
+            let sortDir = direction == .ascending ? "ASC" : "DESC"
+            let orderClause: String
+            switch sort {
+            case .name:
+                orderClause = "\(sortExpression) COLLATE NOCASE \(sortDir), artist COLLATE NOCASE \(sortDir)"
+            case .albumCount:
+                orderClause = "album_count \(sortDir), \(sortExpression) COLLATE NOCASE \(sortDir)"
+            case .trackCount:
+                orderClause = "track_count \(sortDir), \(sortExpression) COLLATE NOCASE \(sortDir)"
+            }
+
             let rows = try Row.fetchAll(db, sql: """
                 SELECT artist AS name, COUNT(DISTINCT NULLIF(album, '')) AS album_count, COUNT(*) AS track_count
                 FROM tracks
                 WHERE \(filterSQL)
                 GROUP BY artist COLLATE NOCASE
-                ORDER BY \(sortExpression) COLLATE NOCASE, artist COLLATE NOCASE
+                ORDER BY \(orderClause)
                 LIMIT ? OFFSET ?
                 """, arguments: pageArguments)
             return ArtistSummaryPage(

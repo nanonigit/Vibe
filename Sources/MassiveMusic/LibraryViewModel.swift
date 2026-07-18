@@ -100,6 +100,10 @@ final class LibraryViewModel: ObservableObject {
     @Published var section: LibrarySection = .tracks
     @Published var sort: TrackSort = .artist
     @Published var sortDirection: SortDirection = .ascending
+    @Published var albumSort: AlbumSort = .name
+    @Published var albumSortDirection: SortDirection = .ascending
+    @Published var artistSort: ArtistSort = .name
+    @Published var artistSortDirection: SortDirection = .ascending
     @Published var searchText = ""
     @Published private(set) var isSearchPending = false
     @Published private(set) var tracks: [Track] = []
@@ -113,6 +117,11 @@ final class LibraryViewModel: ObservableObject {
     @Published private(set) var offset = 0
     @Published private(set) var totalCount = 0
     @Published private(set) var isLoading = false
+
+    var isStorageExternal: Bool {
+        guard let primary = storageDestinations.first(where: \.isPrimary) else { return false }
+        return primary.path.hasPrefix("/Volumes/")
+    }
     @Published private(set) var scanProgress = ScanProgress.idle
     @Published private(set) var driveMessage: String?
     @Published private(set) var errorMessage: String?
@@ -391,6 +400,26 @@ final class LibraryViewModel: ObservableObject {
         if let newSort {
             if sort == newSort { sortDirection = sortDirection == .ascending ? .descending : .ascending }
             else { sort = newSort; sortDirection = .ascending }
+        }
+        loadCurrentPage(reset: true)
+    }
+
+    func albumSortChanged(to newSort: AlbumSort? = nil) {
+        usesDirectOffsetPaging = false
+        selectedIndexToken = nil
+        if let newSort {
+            if albumSort == newSort { albumSortDirection = albumSortDirection == .ascending ? .descending : .ascending }
+            else { albumSort = newSort; albumSortDirection = .ascending }
+        }
+        loadCurrentPage(reset: true)
+    }
+
+    func artistSortChanged(to newSort: ArtistSort? = nil) {
+        usesDirectOffsetPaging = false
+        selectedIndexToken = nil
+        if let newSort {
+            if artistSort == newSort { artistSortDirection = artistSortDirection == .ascending ? .descending : .ascending }
+            else { artistSort = newSort; artistSortDirection = .ascending }
         }
         loadCurrentPage(reset: true)
     }
@@ -866,6 +895,10 @@ final class LibraryViewModel: ObservableObject {
         let requestedQuery = searchText
         let requestedSort = sort
         let requestedDirection = sortDirection
+        let requestedAlbumSort = albumSort
+        let requestedAlbumDirection = albumSortDirection
+        let requestedArtistSort = artistSort
+        let requestedArtistDirection = artistSortDirection
         let playlistID = selectedPlaylistID
         let pageCursor = trackPageCursors.last ?? nil
         let knownTotal = requestedOffset == 0 ? nil : totalCount
@@ -946,7 +979,13 @@ final class LibraryViewModel: ObservableObject {
                         apply(page: page)
                     } else {
                         let page = try await Task.detached(priority: .userInitiated) {
-                            try self.database.pageAlbums(artistFilter: artist.name, offset: requestedOffset, limit: self.pageSize)
+                            try self.database.pageAlbums(
+                                artistFilter: artist.name,
+                                sort: requestedAlbumSort,
+                                direction: requestedAlbumDirection,
+                                offset: requestedOffset,
+                                limit: self.pageSize
+                            )
                         }.value
                         apply(albumPage: page)
                     }
@@ -954,12 +993,25 @@ final class LibraryViewModel: ObservableObject {
                     switch requestedGenreMode {
                     case .albums:
                         let page = try await Task.detached(priority: .userInitiated) {
-                            try self.database.pageAlbums(genreFilter: genre, offset: requestedOffset, limit: self.pageSize)
+                            try self.database.pageAlbums(
+                                genreFilter: genre,
+                                sort: requestedAlbumSort,
+                                direction: requestedAlbumDirection,
+                                offset: requestedOffset,
+                                limit: self.pageSize
+                            )
                         }.value
                         apply(albumPage: page)
                     case .artists:
                         let page = try await Task.detached(priority: .userInitiated) {
-                            try self.database.pageArtists(genreFilter: genre, search: requestedQuery, offset: requestedOffset, limit: self.pageSize)
+                            try self.database.pageArtists(
+                                genreFilter: genre,
+                                search: requestedQuery,
+                                sort: requestedArtistSort,
+                                direction: requestedArtistDirection,
+                                offset: requestedOffset,
+                                limit: self.pageSize
+                            )
                         }.value
                         apply(artistPage: page)
                     case .tracks:
@@ -973,12 +1025,23 @@ final class LibraryViewModel: ObservableObject {
                     }
                 } else if requestedSection == .albums {
                     let page = try await Task.detached(priority: .userInitiated) {
-                        try self.database.pageAlbums(offset: requestedOffset, limit: self.pageSize)
+                        try self.database.pageAlbums(
+                            sort: requestedAlbumSort,
+                            direction: requestedAlbumDirection,
+                            offset: requestedOffset,
+                            limit: self.pageSize
+                        )
                     }.value
                     apply(albumPage: page)
                 } else if requestedSection == .artists {
                     let page = try await Task.detached(priority: .userInitiated) {
-                        try self.database.pageArtists(search: requestedQuery, offset: requestedOffset, limit: self.pageSize)
+                        try self.database.pageArtists(
+                            search: requestedQuery,
+                            sort: requestedArtistSort,
+                            direction: requestedArtistDirection,
+                            offset: requestedOffset,
+                            limit: self.pageSize
+                        )
                     }.value
                     apply(artistPage: page)
                 } else if requestedSection == .favorites {

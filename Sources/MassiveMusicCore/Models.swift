@@ -183,6 +183,20 @@ public enum SortDirection: String, CaseIterable, Identifiable, Equatable, Sendab
     public var id: String { rawValue }
 }
 
+public enum AlbumSort: String, CaseIterable, Identifiable, Equatable, Sendable {
+    case name = "アルバム"
+    case artist = "アーティスト"
+    case trackCount = "曲数"
+    public var id: String { rawValue }
+}
+
+public enum ArtistSort: String, CaseIterable, Identifiable, Equatable, Sendable {
+    case name = "アーティスト"
+    case albumCount = "アルバム数"
+    case trackCount = "曲数"
+    public var id: String { rawValue }
+}
+
 public enum TrackPlaybackScope: Equatable, Sendable {
     case library(query: String)
     case album(name: String, artist: String)

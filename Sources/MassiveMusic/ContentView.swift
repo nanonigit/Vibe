@@ -847,23 +847,25 @@ struct ContentView: View {
     @ViewBuilder
     private func trackContextMenu(_ track: Track) -> some View {
         Button(model.text("次に再生", "Play Next")) { player.addToUpNext(track) }
-        if model.isCached(track) {
-            Button(model.text("ローカルキャッシュから削除", "Remove from Local Cache"), role: .destructive) {
-                model.removeTrackFromCache(track)
-            }
-        } else {
-            Button {
-                model.cacheTrack(track)
-            } label: {
-                if model.cachingTrackIDs.contains(track.id) {
-                    Text(model.text("キャッシュ中…", "Caching…"))
-                } else {
-                    Text(model.text("ローカルにキャッシュ", "Cache Locally"))
+        if model.isStorageExternal {
+            if model.isCached(track) {
+                Button(model.text("ローカルキャッシュから削除", "Remove from Local Cache"), role: .destructive) {
+                    model.removeTrackFromCache(track)
                 }
+            } else {
+                Button {
+                    model.cacheTrack(track)
+                } label: {
+                    if model.cachingTrackIDs.contains(track.id) {
+                        Text(model.text("キャッシュ中…", "Caching…"))
+                    } else {
+                        Text(model.text("ローカルにキャッシュ", "Cache Locally"))
+                    }
+                }
+                .disabled(model.cachingTrackIDs.contains(track.id))
             }
-            .disabled(model.cachingTrackIDs.contains(track.id))
+            Divider()
         }
-        Divider()
         Menu(model.text("プレイリストに追加", "Add to Playlist")) {
             ForEach(model.playlists) { playlist in
                 Button(playlist.name) {
@@ -899,16 +901,23 @@ struct ContentView: View {
 
     private var albumSummaryList: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text(model.text("アルバム", "Album")).frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 8) {
+                albumHeaderButton(.name, title: model.text("アルバム", "Album"))
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 if isAlbumViewArtistVisible {
-                    Text(model.text("アーティスト", "Artist")).frame(width: 260, alignment: .leading)
+                    albumHeaderButton(.artist, title: model.text("アーティスト", "Artist"))
+                        .frame(width: 260, alignment: .leading)
                 }
                 if isAlbumViewSongsVisible {
-                    Text(model.text("曲数", "Songs")).frame(width: 80, alignment: .trailing)
+                    albumHeaderButton(.trackCount, title: model.text("曲数", "Songs"))
+                        .frame(width: 80, alignment: .trailing)
                 }
                 Spacer().frame(width: 28)
-            }.font(.caption.bold()).foregroundStyle(.secondary).padding(.horizontal, 14).padding(.vertical, 8)
+            }
+            .font(.caption.bold())
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(.bar)
             Divider()
             List(model.albumSummaries) { album in
                 HStack {
@@ -925,18 +934,54 @@ struct ContentView: View {
         }
     }
 
+    private func albumHeaderButton(_ sort: AlbumSort, title: String) -> some View {
+        let isActive = model.albumSort == sort
+        return Button {
+            model.albumSortChanged(to: sort)
+        } label: {
+            HStack(spacing: 4) {
+                Text(title)
+                    .lineLimit(1)
+                    .fontWeight(isActive ? .bold : .regular)
+                if isActive {
+                    Image(systemName: model.albumSortDirection == .ascending ? "chevron.up" : "chevron.down")
+                        .font(.caption2)
+                        .fontWeight(.bold)
+                }
+            }
+            .foregroundStyle(isActive ? Color.white : Color.secondary)
+            .frame(maxWidth: .infinity, alignment: sort == .trackCount ? .trailing : .leading)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(isActive ? Color.accentColor.opacity(0.7) : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(model.text("クリックして並び順を変更", "Click to change sort order"))
+    }
+
     private var artistSummaryList: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text(model.text("アーティスト", "Artist")).frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 8) {
+                artistHeaderButton(.name, title: model.text("アーティスト", "Artist"))
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 if isArtistViewAlbumsVisible {
-                    Text(model.text("アルバム数", "Albums")).frame(width: 100, alignment: .trailing)
+                    artistHeaderButton(.albumCount, title: model.text("アルバム数", "Albums"))
+                        .frame(width: 100, alignment: .trailing)
                 }
                 if isArtistViewSongsVisible {
-                    Text(model.text("曲数", "Songs")).frame(width: 100, alignment: .trailing)
+                    artistHeaderButton(.trackCount, title: model.text("曲数", "Songs"))
+                        .frame(width: 100, alignment: .trailing)
                 }
                 Spacer().frame(width: 28)
-            }.font(.caption.bold()).foregroundStyle(.secondary).padding(.horizontal, 14).padding(.vertical, 8)
+            }
+            .font(.caption.bold())
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(.bar)
             Divider()
             List(model.artistSummaries) { artist in
                 Button { model.openArtist(artist) } label: {
@@ -953,6 +998,35 @@ struct ContentView: View {
                 }.buttonStyle(.plain).padding(.vertical, 3)
             }
         }
+    }
+
+    private func artistHeaderButton(_ sort: ArtistSort, title: String) -> some View {
+        let isActive = model.artistSort == sort
+        return Button {
+            model.artistSortChanged(to: sort)
+        } label: {
+            HStack(spacing: 4) {
+                Text(title)
+                    .lineLimit(1)
+                    .fontWeight(isActive ? .bold : .regular)
+                if isActive {
+                    Image(systemName: model.artistSortDirection == .ascending ? "chevron.up" : "chevron.down")
+                        .font(.caption2)
+                        .fontWeight(.bold)
+                }
+            }
+            .foregroundStyle(isActive ? Color.white : Color.secondary)
+            .frame(maxWidth: .infinity, alignment: sort == .name ? .leading : .trailing)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(isActive ? Color.accentColor.opacity(0.7) : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(model.text("クリックして並び順を変更", "Click to change sort order"))
     }
 
     private var facetList: some View {
@@ -1205,19 +1279,21 @@ struct ContentView: View {
     private var toolbar: some ToolbarContent {
         ToolbarItemGroup {
             // 1. ローカルキャッシュ
-            Menu {
-                Button(model.text("Finderでキャッシュフォルダーを表示", "Show Cache Folder in Finder"), action: model.revealLocalCache)
-                Divider()
-                Text(model.text("場所: \(model.localCacheDirectoryPath)", "Path: \(model.localCacheDirectoryPath)"))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "internaldrive.fill")
-                    Text(model.text("キャッシュ", "Cache"))
+            if model.isStorageExternal {
+                Menu {
+                    Button(model.text("Finderでキャッシュフォルダーを表示", "Show Cache Folder in Finder"), action: model.revealLocalCache)
+                    Divider()
+                    Text(model.text("場所: \(model.localCacheDirectoryPath)", "Path: \(model.localCacheDirectoryPath)"))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "internaldrive.fill")
+                        Text(model.text("キャッシュ", "Cache"))
+                    }
                 }
+                .help(model.text("キャッシュ保存場所: \(model.localCacheDirectoryPath)", "Cache Location: \(model.localCacheDirectoryPath)"))
             }
-            .help(model.text("キャッシュ保存場所: \(model.localCacheDirectoryPath)", "Cache Location: \(model.localCacheDirectoryPath)"))
 
             // 2. 外付けSSD (保管先)
             Menu {
@@ -2759,22 +2835,24 @@ private struct LibrarySettingsView: View {
             }
             .padding().tabItem { Label(model.text("保存先", "Storage"), systemImage: "externaldrive") }.tag(SettingsTab.storage)
 
-            Form {
-                Toggle(model.text("再生した曲をローカルにキャッシュ", "Cache Played Songs Locally"), isOn: $model.cacheEnabled)
-                Stepper(model.text("保持する直近の曲: \(model.cacheTrackLimit) 曲", "Recent songs to keep: \(model.cacheTrackLimit)"), value: $model.cacheTrackLimit, in: 0...500)
-                Text(model.text("上限を超えた曲は最終アクセスの古い順に自動削除します。SSD上の原本は変更しません。", "Songs beyond the limit are evicted least-recently-used. Originals on the SSD are not changed."))
-                    .font(.caption).foregroundStyle(.secondary)
-                LabeledContent(model.text("キャッシュ保存場所", "Cache Location")) {
-                    Text(model.localCacheDirectoryPath).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+            if model.isStorageExternal {
+                Form {
+                    Toggle(model.text("再生した曲をローカルにキャッシュ", "Cache Played Songs Locally"), isOn: $model.cacheEnabled)
+                    Stepper(model.text("保持する直近の曲: \(model.cacheTrackLimit) 曲", "Recent songs to keep: \(model.cacheTrackLimit)"), value: $model.cacheTrackLimit, in: 0...500)
+                    Text(model.text("上限を超えた曲は最終アクセスの古い順に自動削除します。SSD上の原本は変更しません。", "Songs beyond the limit are evicted least-recently-used. Originals on the SSD are not changed."))
+                        .font(.caption).foregroundStyle(.secondary)
+                    LabeledContent(model.text("キャッシュ保存場所", "Cache Location")) {
+                        Text(model.localCacheDirectoryPath).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                    }
+                    Text(model.text(
+                        "お気に入り登録時に「追加してローカルに保存」を選んだ曲は、直近曲の上限とは別に保持します。",
+                        "Favorites saved locally are retained separately from the recent-song limit."
+                    )).font(.caption).foregroundStyle(.secondary)
+                    Button(model.text("Finderでキャッシュを表示", "Show Cache in Finder"), action: model.revealLocalCache)
+                    Button(model.text("設定を保存", "Save Settings"), action: model.saveCacheSettings)
                 }
-                Text(model.text(
-                    "お気に入り登録時に「追加してローカルに保存」を選んだ曲は、直近曲の上限とは別に保持します。",
-                    "Favorites saved locally are retained separately from the recent-song limit."
-                )).font(.caption).foregroundStyle(.secondary)
-                Button(model.text("Finderでキャッシュを表示", "Show Cache in Finder"), action: model.revealLocalCache)
-                Button(model.text("設定を保存", "Save Settings"), action: model.saveCacheSettings)
+                .padding().tabItem { Label(model.text("オフライン", "Offline"), systemImage: "arrow.down.circle") }.tag(SettingsTab.offline)
             }
-            .padding().tabItem { Label(model.text("オフライン", "Offline"), systemImage: "arrow.down.circle") }.tag(SettingsTab.offline)
 
             Form {
                 Section("OpenAI") {
