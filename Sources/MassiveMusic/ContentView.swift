@@ -2939,6 +2939,7 @@ private struct LibrarySettingsView: View {
 private struct TrackTitleCell: View {
     let track: Track
     let helpText: String
+    @State private var isHovered = false
 
     var body: some View {
         HStack {
@@ -2946,28 +2947,19 @@ private struct TrackTitleCell: View {
                 Image(systemName: "music.note")
                     .foregroundStyle(Color.secondary)
             } else {
-                Button {
-                    // Do nothing on click
-                } label: {
-                    Image(systemName: "externaldrive.badge.exclamationmark")
-                        .foregroundStyle(Color.orange)
-                }
-                .buttonStyle(.plain)
-                .modifier(HelpModifier(helpText: helpText))
+                Image(systemName: "externaldrive.badge.exclamationmark")
+                    .foregroundStyle(Color.orange)
+                    .popover(isPresented: $isHovered, arrowEdge: .top) {
+                        Text(helpText)
+                            .padding(8)
+                            .font(.caption)
+                            .frame(maxWidth: 250)
+                    }
+                    .onHover { hovering in
+                        isHovered = hovering
+                    }
             }
             Text(track.title).lineLimit(1)
-        }
-    }
-}
-
-private struct HelpModifier: ViewModifier {
-    let helpText: String?
-
-    func body(content: Content) -> some View {
-        if let helpText, !helpText.isEmpty {
-            content.help(helpText)
-        } else {
-            content
         }
     }
 }
