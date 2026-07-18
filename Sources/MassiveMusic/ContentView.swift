@@ -2936,6 +2936,72 @@ private struct LibrarySettingsView: View {
 
 
 
+private struct HoverTrackingView: NSViewRepresentable {
+    let onHover: (Bool) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = HoverNSView()
+        view.onHover = onHover
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        if let view = nsView as? HoverNSView {
+            view.onHover = onHover
+        }
+    }
+
+    class HoverNSView: NSView {
+        var onHover: ((Bool) -> Void)?
+        private var trackingArea: NSTrackingArea?
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            
+            if let trackingArea = trackingArea {
+                removeTrackingArea(trackingArea)
+            }
+
+            let options: NSTrackingArea.Options = [
+                .mouseEnteredAndExited,
+                .activeInKeyWindow,
+                .assumeInside
+            ]
+            
+            let area = NSTrackingArea(
+                rect: bounds,
+                options: options,
+                owner: self,
+                userInfo: nil
+            )
+            addTrackingArea(area)
+            trackingArea = area
+            
+            // Check initial mouse position
+            if let window = window {
+                let mouseLocation = window.mouseLocationOutsideOfEventStream
+                let localPoint = convert(mouseLocation, from: nil)
+                let isInside = bounds.contains(localPoint)
+                onHover?(isInside)
+            }
+        }
+
+        override func mouseEntered(with event: NSEvent) {
+            onHover?(true)
+        }
+
+        override func mouseExited(with event: NSEvent) {
+            onHover?(false)
+        }
+    }
+}
+
+extension View {
+    func onHoverStrong(perform action: @escaping (Bool) -> Void) -> some View {
+        self.background(HoverTrackingView(onHover: action))
+    }
+}
+
 private struct TrackTitleCell: View {
     let track: Track
     let helpText: String
@@ -2962,7 +3028,7 @@ private struct TrackTitleCell: View {
                 .lineLimit(1)
         }
         .contentShape(Rectangle())
-        .onHover { hovering in
+        .onHoverStrong { hovering in
             withAnimation(.easeOut(duration: 0.15)) {
                 isHovered = hovering
             }
