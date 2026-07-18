@@ -2007,10 +2007,15 @@ public final class LibraryDatabase: @unchecked Sendable {
     private static func upsertTrackAndLog(
         db: Database, item: TrackImport, sessionID: Int64
     ) throws -> Int {
+        let track = item.track
+        try db.execute(sql: """
+            DELETE FROM tracks 
+            WHERE root_id = ? AND relative_path = ? AND identity_key <> ?
+            """, arguments: [track.rootID, track.relativePath, item.identityKey])
+
         let previous = try Row.fetchOne(
             db, sql: "SELECT * FROM tracks WHERE identity_key = ?", arguments: [item.identityKey]
         )
-        let track = item.track
         try db.execute(
             sql: SQL.upsertTrack,
             arguments: [
