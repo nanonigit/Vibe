@@ -2987,10 +2987,12 @@ private struct HoverTrackingView: NSViewRepresentable {
         }
 
         override func mouseEntered(with event: NSEvent) {
+            print("[HoverNSView] mouseEntered - bounds: \(bounds)")
             onHover?(true)
         }
 
         override func mouseExited(with event: NSEvent) {
+            print("[HoverNSView] mouseExited")
             onHover?(false)
         }
     }
