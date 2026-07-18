@@ -2944,9 +2944,10 @@ private struct TrackTitleCell: View {
         HStack {
             Image(systemName: iconName)
                 .foregroundStyle(track.isAvailable ? Color.secondary : Color.orange)
-                .help(helpText)
             Text(track.title).lineLimit(1)
         }
+        .contentShape(Rectangle())
+        .help(track.isAvailable ? "" : helpText)
     }
 
     private var iconName: String {
