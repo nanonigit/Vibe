@@ -893,7 +893,7 @@ public final class LibraryDatabase: @unchecked Sendable {
         guard (1...1_000).contains(limit) else { throw MassiveMusicError.invalidPageSize }
         let safeOffset = max(0, offset)
         return try pool.read { db in
-            let expression = "COALESCE(NULLIF(album_artist, ''), artist)"
+            let expression = "artist"
             var filters: [String] = []
             var filterArgs: StatementArguments = []
             if let artistFilter {
