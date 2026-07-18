@@ -46,6 +46,7 @@ struct ContentView: View {
     @State private var browserURL: URL?
     @State private var trackBeingEdited: Track?
     @State private var trackPendingDeletion: Track?
+    @State private var tracksPendingDeletion: [Track]? = nil
     @State private var trackPendingFavoriteCache: Track?
     @State private var batchMetadataEditRequest: BatchMetadataEditRequest?
     @State private var selectionAnchorID: Int64?
@@ -150,12 +151,21 @@ struct ContentView: View {
         .confirmationDialog(
             model.text("曲を削除", "Delete Song"),
             isPresented: Binding(
-                get: { trackPendingDeletion != nil },
-                set: { if !$0 { trackPendingDeletion = nil } }
+                get: { trackPendingDeletion != nil || tracksPendingDeletion != nil },
+                set: { if !$0 { trackPendingDeletion = nil; tracksPendingDeletion = nil } }
             ),
             titleVisibility: .visible
         ) {
-            if let track = trackPendingDeletion {
+            if let tracks = tracksPendingDeletion {
+                Button(model.text("ライブラリからのみ削除", "Remove from Library Only"), role: .destructive) {
+                    model.removeTracksFromLibrary(tracks)
+                    tracksPendingDeletion = nil
+                }
+                Button(model.text("実ファイルをゴミ箱へ移動", "Move Source Files to Trash"), role: .destructive) {
+                    model.moveFilesToTrash(tracks)
+                    tracksPendingDeletion = nil
+                }
+            } else if let track = trackPendingDeletion {
                 Button(model.text("ライブラリからのみ削除", "Remove from Library Only"), role: .destructive) {
                     model.removeFromLibrary(track)
                     trackPendingDeletion = nil
@@ -165,12 +175,19 @@ struct ContentView: View {
                     trackPendingDeletion = nil
                 }
             }
-            Button(model.text("キャンセル", "Cancel"), role: .cancel) { trackPendingDeletion = nil }
+            Button(model.text("キャンセル", "Cancel"), role: .cancel) { trackPendingDeletion = nil; tracksPendingDeletion = nil }
         } message: {
-            Text(model.text(
-                "ライブラリだけから外すか、SSD上の実ファイルをmacOSのゴミ箱へ移動するか選んでください。",
-                "Choose whether to remove only the library entry or move the actual SSD file to the macOS Trash."
-            ))
+            if let tracks = tracksPendingDeletion {
+                Text(model.text(
+                    "選択した\(tracks.count)曲をライブラリから削除しますか？\n「実ファイルをゴミ箱へ移動」を選ぶと、パソコンからファイルが削除されます。",
+                    "Are you sure you want to delete the \(tracks.count) selected songs from the library?\nChoosing 'Move Source Files to Trash' will delete the files from your computer."
+                ))
+            } else if let track = trackPendingDeletion {
+                Text(model.text(
+                    "「\(track.title)」をライブラリから削除しますか？\n「実ファイルをゴミ箱へ移動」を選ぶと、パソコンからファイルが削除されます。",
+                    "Are you sure you want to delete '\(track.title)' from the library?\nChoosing 'Move Source File to Trash' will delete the file from your computer."
+                ))
+            }
         }
         .confirmationDialog(
             model.text("古い／壊れたID3タグを変換・修復", "Convert or Repair ID3 Tag"),
@@ -863,7 +880,13 @@ struct ContentView: View {
             )) { openBatchMetadataEditor() }
         }
         Button(model.text("この曲の情報を編集…", "Edit This Song…")) { trackBeingEdited = track }
-        Button(model.text("削除…", "Delete…"), role: .destructive) { trackPendingDeletion = track }
+        if model.selectedTrackIDs.contains(track.id), selectedTracksOnPage.count > 1 {
+            Button(model.text("選択した\(selectedTracksOnPage.count)曲を削除…", "Delete \(selectedTracksOnPage.count) Selected Songs…"), role: .destructive) {
+                tracksPendingDeletion = selectedTracksOnPage
+            }
+        } else {
+            Button(model.text("削除…", "Delete…"), role: .destructive) { trackPendingDeletion = track }
+        }
         if model.selectedPlaylistID != nil {
             Button(model.text("上へ移動", "Move Up")) { model.moveTrackInSelectedPlaylist(track.id, by: -1) }
             Button(model.text("下へ移動", "Move Down")) { model.moveTrackInSelectedPlaylist(track.id, by: 1) }

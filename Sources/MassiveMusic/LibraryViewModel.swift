@@ -1370,6 +1370,32 @@ final class LibraryViewModel: ObservableObject {
         }
     }
 
+    func moveFilesToTrash(_ tracks: [Track]) {
+        Task {
+            do {
+                for track in tracks {
+                    try await runFileOperationWithAuthorizationRetry(for: track) {
+                        try await self.trackFiles.moveFileToTrash(track: track, authorizedRoot: $0)
+                    }
+                }
+                loadCurrentPage(reset: true)
+                refreshPlaylists()
+            } catch { errorMessage = error.localizedDescription }
+        }
+    }
+
+    func removeTracksFromLibrary(_ tracks: [Track]) {
+        Task {
+            do {
+                for track in tracks {
+                    try await trackFiles.removeFromLibrary(track: track)
+                }
+                loadCurrentPage(reset: true)
+                refreshPlaylists()
+            } catch { errorMessage = error.localizedDescription }
+        }
+    }
+
     private func runFileOperationWithAuthorizationRetry(
         for track: Track,
         operation: @escaping (SecurityScopedRoot?) async throws -> Void
