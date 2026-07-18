@@ -1337,9 +1337,10 @@ public final class LibraryDatabase: @unchecked Sendable {
                     """,
                 arguments: [displayName, bookmark, volumeUUID, normalizedPath, Date().timeIntervalSince1970]
             )
-            return db.lastInsertedRowID != 0
-                ? db.lastInsertedRowID
-                : (try Int64.fetchOne(db, sql: "SELECT id FROM scan_roots WHERE last_known_path = ?", arguments: [normalizedPath]) ?? 0)
+            guard let rootID = try Int64.fetchOne(db, sql: "SELECT id FROM scan_roots WHERE last_known_path = ?", arguments: [normalizedPath]) else {
+                throw MassiveMusicError.databaseError("Failed to resolve scan root ID for path: \(normalizedPath)")
+            }
+            return rootID
         }
     }
 
