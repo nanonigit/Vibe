@@ -1872,16 +1872,31 @@ private struct CurrentTrackInfoEditorView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(model.text("基本情報", "Basic Info")).font(.headline)
                     
-                    TextField(model.text("タイトル", "Title"), text: $title)
-                        .textFieldStyle(.roundedBorder)
-                    TextField(model.text("アーティスト", "Artist"), text: $artist)
-                        .textFieldStyle(.roundedBorder)
-                    TextField(model.text("アルバム", "Album"), text: $album)
-                        .textFieldStyle(.roundedBorder)
-                    TextField(model.text("アルバムアーティスト", "Album Artist"), text: $albumArtist)
-                        .textFieldStyle(.roundedBorder)
-                    TextField(model.text("ジャンル", "Genre"), text: $genre)
-                        .textFieldStyle(.roundedBorder)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(model.text("曲名", "Title")).font(.caption).foregroundStyle(.secondary)
+                        TextField(model.text("曲名", "Title"), text: $title)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(model.text("アーティスト", "Artist")).font(.caption).foregroundStyle(.secondary)
+                        TextField(model.text("アーティスト", "Artist"), text: $artist)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(model.text("アルバム", "Album")).font(.caption).foregroundStyle(.secondary)
+                        TextField(model.text("アルバム", "Album"), text: $album)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(model.text("アルバムアーティスト", "Album Artist")).font(.caption).foregroundStyle(.secondary)
+                        TextField(model.text("アルバムアーティスト", "Album Artist"), text: $albumArtist)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(model.text("ジャンル", "Genre")).font(.caption).foregroundStyle(.secondary)
+                        TextField(model.text("ジャンル", "Genre"), text: $genre)
+                            .textFieldStyle(.roundedBorder)
+                    }
                     
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
