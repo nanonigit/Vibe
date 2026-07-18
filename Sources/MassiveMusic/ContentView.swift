@@ -398,6 +398,7 @@ struct ContentView: View {
             Divider()
             pageControls
             if [.running, .paused].contains(model.scanProgress.state) { scanStatus }
+            if model.importProgress.state != .idle { importStatus }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color.clear)
@@ -1153,6 +1154,30 @@ struct ContentView: View {
         .background(.bar)
     }
 
+    private var importStatus: some View {
+        HStack(spacing: 12) {
+            ProgressView(value: model.importProgress.fileProgress)
+                .progressViewStyle(.linear)
+                .frame(width: 80)
+            
+            let percentStr = String(format: "%.0f%%", model.importProgress.fileProgress * 100)
+            Text(model.text(
+                "MP3に変換中... (\(model.importProgress.currentFileIndex)/\(model.importProgress.totalFiles)) \(percentStr)",
+                "Converting... (\(model.importProgress.currentFileIndex)/\(model.importProgress.totalFiles)) \(percentStr)"
+            ))
+            
+            Text(model.importProgress.currentFileName)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .foregroundStyle(.secondary)
+            
+            Spacer()
+        }
+        .font(.caption)
+        .padding(8)
+        .background(.bar)
+    }
+
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         ToolbarItemGroup {
@@ -1300,6 +1325,7 @@ struct ContentView: View {
         case .missingArtist: model.text("不明なアーティスト", "Unknown Artist")
         case .missingAlbum: model.text("アルバム名なし", "Missing Album")
         case .urlInMP3Metadata: model.text("URLを含むMP3", "MP3 Metadata URLs")
+        case .duplicateTracks: model.text("重複曲", "Duplicate Tracks")
         case .suspectedVariations: model.text("表記ゆれ候補", "Variation Candidates")
         }
     }
@@ -1310,6 +1336,7 @@ struct ContentView: View {
         case .missingArtist: "person.crop.circle.badge.questionmark"
         case .missingAlbum: "square.stack.3d.up.slash"
         case .urlInMP3Metadata: "link.badge.plus"
+        case .duplicateTracks: "square.2.layers.3d"
         case .suspectedVariations: "text.magnifyingglass"
         }
     }

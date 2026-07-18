@@ -358,7 +358,7 @@ public final class LibraryDatabase: @unchecked Sendable {
 
     public func metadataIssueSummaries() throws -> [MetadataIssueSummary] {
         try pool.read { db in
-            try [MetadataIssueKind.missingTitle, .missingArtist, .missingAlbum, .urlInMP3Metadata].map { kind in
+            try [MetadataIssueKind.missingTitle, .missingArtist, .missingAlbum, .urlInMP3Metadata, .duplicateTracks].map { kind in
                 MetadataIssueSummary(
                     kind: kind,
                     count: try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks t WHERE \(Self.metadataIssuePredicate(kind))") ?? 0
@@ -628,6 +628,7 @@ public final class LibraryDatabase: @unchecked Sendable {
         try pool.write { db in
             try db.execute(sql: "UPDATE storage_destinations SET name = 'メイン保管先' WHERE name = 'Vibe'")
             try db.execute(sql: "UPDATE scan_roots SET display_name = 'メイン保管先' WHERE display_name = 'Vibe'")
+            try db.execute(sql: "DELETE FROM tracks WHERE id NOT IN (SELECT MIN(id) FROM tracks GROUP BY identity_key)")
         }
     }
 
@@ -654,7 +655,13 @@ public final class LibraryDatabase: @unchecked Sendable {
             }
         }
     }
-
+    public func pendingImport(id: Int64) throws -> PendingImport? {
+        try pool.read { db in
+            guard let row = try Row.fetchOne(db, sql: "SELECT * FROM pending_imports WHERE id = ?", arguments: [id]) else { return nil }
+            guard let state = ImportState(rawValue: row["state"]) else { return nil }
+            return PendingImport(id: row["id"], localPath: row["local_path"], filename: row["filename"], state: state, createdAt: Date(timeIntervalSince1970: row["created_at"]), errorMessage: row["error_message"])
+        }
+    }
     public func trackID(forIdentityKey identityKey: String) throws -> Int64? {
         try pool.read { db in
             try Int64.fetchOne(db, sql: "SELECT id FROM tracks WHERE identity_key = ?", arguments: [identityKey])
@@ -890,8 +897,8 @@ public final class LibraryDatabase: @unchecked Sendable {
             var filters: [String] = []
             var filterArgs: StatementArguments = []
             if let artistFilter {
-                filters.append("\(expression) = ? COLLATE NOCASE")
-                filterArgs += [artistFilter]
+                filters.append("(artist = ? COLLATE NOCASE OR album_artist = ? COLLATE NOCASE)")
+                filterArgs += [artistFilter, artistFilter]
             }
             if let genreFilter {
                 filters.append("genre = ? COLLATE NOCASE")
@@ -1032,11 +1039,11 @@ public final class LibraryDatabase: @unchecked Sendable {
         guard (1...1_000).contains(limit) else { throw MassiveMusicError.invalidPageSize }
         let safeOffset = max(0, offset)
         return try pool.read { db in
-            let total = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks WHERE is_available = 1 AND artist = ? COLLATE NOCASE", arguments: [artist]) ?? 0
+            let total = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks WHERE is_available = 1 AND (artist = ? COLLATE NOCASE OR album_artist = ? COLLATE NOCASE)", arguments: [artist, artist]) ?? 0
             let rows = try Row.fetchAll(db, sql: """
-                SELECT t.* FROM tracks t WHERE t.is_available = 1 AND t.artist = ? COLLATE NOCASE
+                SELECT t.* FROM tracks t WHERE t.is_available = 1 AND (t.artist = ? COLLATE NOCASE OR t.album_artist = ? COLLATE NOCASE)
                 ORDER BY \(Self.orderSQL(sort, direction: direction)) LIMIT ? OFFSET ?
-                """, arguments: [artist, limit, safeOffset])
+                """, arguments: [artist, artist, limit, safeOffset])
             return TrackPage(tracks: rows.map(Self.decodeTrack), offset: safeOffset, limit: limit, totalCount: total)
         }
     }
@@ -1288,7 +1295,8 @@ public final class LibraryDatabase: @unchecked Sendable {
         volumeUUID: String?,
         path: String
     ) throws -> Int64 {
-        try pool.write { db in
+        let normalizedPath = path.precomposedStringWithCanonicalMapping
+        return try pool.write { db in
             try db.execute(
                 sql: """
                     INSERT INTO scan_roots(display_name, bookmark, volume_uuid, last_known_path, is_available, created_at)
@@ -1299,11 +1307,11 @@ public final class LibraryDatabase: @unchecked Sendable {
                         volume_uuid = excluded.volume_uuid,
                         is_available = 1
                     """,
-                arguments: [displayName, bookmark, volumeUUID, path, Date().timeIntervalSince1970]
+                arguments: [displayName, bookmark, volumeUUID, normalizedPath, Date().timeIntervalSince1970]
             )
             return db.lastInsertedRowID != 0
                 ? db.lastInsertedRowID
-                : (try Int64.fetchOne(db, sql: "SELECT id FROM scan_roots WHERE last_known_path = ?", arguments: [path]) ?? 0)
+                : (try Int64.fetchOne(db, sql: "SELECT id FROM scan_roots WHERE last_known_path = ?", arguments: [normalizedPath]) ?? 0)
         }
     }
 
@@ -1854,6 +1862,16 @@ public final class LibraryDatabase: @unchecked Sendable {
             lower(t.format) = 'mp3' AND (
                 instr(lower(t.title || ' ' || t.artist || ' ' || t.album || ' ' || t.album_artist || ' ' || t.genre || ' ' || t.filename), 'http') > 0
                 OR instr(lower(t.title || ' ' || t.artist || ' ' || t.album || ' ' || t.album_artist || ' ' || t.genre || ' ' || t.filename), 'www.') > 0
+            )
+            """
+        case .duplicateTracks:
+            """
+            EXISTS (
+                SELECT 1 FROM tracks t2
+                WHERE t2.is_available = 1 AND t2.id <> t.id
+                  AND t2.title = t.title COLLATE NOCASE
+                  AND t2.artist = t.artist COLLATE NOCASE
+                  AND t2.album = t.album COLLATE NOCASE
             )
             """
         case .suspectedVariations: "0"

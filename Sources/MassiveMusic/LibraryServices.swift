@@ -80,8 +80,13 @@ actor StorageCoordinator {
         try? fileManager.createDirectory(at: inbox, withIntermediateDirectories: true)
     }
 
-    func stage(_ sources: [URL], convertFlac: Bool = true) throws -> [PendingImport] {
-        for source in sources {
+    func stage(
+        _ sources: [URL],
+        convertFlac: Bool = true,
+        progress: (@Sendable (Int, Int, Double) -> Void)? = nil
+    ) async throws -> [PendingImport] {
+        var stagedItems: [PendingImport] = []
+        for (index, source) in sources.enumerated() {
             let scoped = source.startAccessingSecurityScopedResource()
             defer { if scoped { source.stopAccessingSecurityScopedResource() } }
             
@@ -90,16 +95,25 @@ actor StorageCoordinator {
             let destination = uniqueURL(for: targetFilename, in: inbox)
             
             if isFlac && convertFlac {
-                try convertFlacToMp3(source: source, destination: destination)
+                try await convertFlacToMp3(source: source, destination: destination) { fileProgress in
+                    progress?(index + 1, sources.count, fileProgress)
+                }
             } else {
                 try fileManager.copyItem(at: source, to: destination)
+                progress?(index + 1, sources.count, 1.0)
             }
-            _ = try database.addPendingImport(localPath: destination.path, filename: destination.lastPathComponent)
+            let id = try database.addPendingImport(localPath: destination.path, filename: destination.lastPathComponent)
+            if let item = try database.pendingImport(id: id) {
+                stagedItems.append(item)
+            }
         }
-        return try database.pendingImports()
+        return stagedItems
     }
 
-    private func convertFlacToMp3(source: URL, destination: URL) throws {
+    private func convertFlacToMp3(source: URL, destination: URL, progress: (@Sendable (Double) -> Void)? = nil) async throws {
+        let duration = await AudioMetadataReader.read(url: source).duration
+        let totalDuration = duration > 0 ? duration : 180.0
+        
         let process = Process()
         process.executableURL = URL(filePath: "/opt/homebrew/bin/ffmpeg")
         process.arguments = [
@@ -110,15 +124,56 @@ actor StorageCoordinator {
             "-y",
             destination.path
         ]
+        
         let errorPipe = Pipe()
         process.standardError = errorPipe
+        
         try process.run()
+        
+        let fileHandle = errorPipe.fileHandleForReading
+        
+        let bufferSize = 1024
+        var remainingData = Data()
+        
+        while process.isRunning {
+            if let data = try? fileHandle.read(upToCount: bufferSize), !data.isEmpty {
+                remainingData.append(data)
+                while let lineRange = remainingData.firstRange(of: Data([0x0A])) {
+                    let lineData = remainingData.subdata(in: remainingData.startIndex..<lineRange.lowerBound)
+                    remainingData.removeSubrange(remainingData.startIndex..<lineRange.upperBound)
+                    
+                    if let line = String(data: lineData, encoding: .utf8) {
+                        if let timeRange = line.range(of: "time=") {
+                            let timePart = line[timeRange.upperBound...]
+                            let tokens = timePart.split(separator: " ")
+                            if let firstToken = tokens.first {
+                                let timeStr = String(firstToken)
+                                let parts = timeStr.split(separator: ":")
+                                if parts.count == 3,
+                                   let hours = Double(parts[0]),
+                                   let minutes = Double(parts[1]),
+                                   let seconds = Double(parts[2]) {
+                                    let currentTime = hours * 3600.0 + minutes * 60.0 + seconds
+                                    let pct = min(1.0, max(0.0, currentTime / totalDuration))
+                                    progress?(pct)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        
         process.waitUntilExit()
+        
         guard process.terminationStatus == 0 else {
-            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            let errorData = fileHandle.readDataToEndOfFile()
             let errorMessage = String(data: errorData, encoding: .utf8) ?? "Unknown ffmpeg error"
             throw MassiveMusicError.metadataWriteFailed("FLAC to MP3 conversion failed: \(errorMessage)")
         }
+        
+        progress?(1.0)
     }
 
     func addDestination(_ url: URL) throws -> [StorageDestination] {

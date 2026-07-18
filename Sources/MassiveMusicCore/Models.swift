@@ -83,6 +83,7 @@ public enum MetadataIssueKind: String, CaseIterable, Identifiable, Equatable, Se
     case missingArtist
     case missingAlbum
     case urlInMP3Metadata
+    case duplicateTracks
     case suspectedVariations
     public var id: String { rawValue }
 }

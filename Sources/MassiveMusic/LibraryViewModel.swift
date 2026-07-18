@@ -54,6 +54,24 @@ struct BatchMetadataProgress: Sendable {
     static let idle = BatchMetadataProgress()
 }
 
+struct ImportProgress: Sendable {
+    var state: State = .idle
+    var currentFileIndex = 0
+    var totalFiles = 0
+    var fileProgress = 0.0
+    var currentFileName = ""
+    
+    enum State: Equatable {
+        case idle
+        case converting
+        case moving
+        case completed
+        case failed(String)
+    }
+    
+    static let idle = ImportProgress()
+}
+
 struct MetadataRepairRequest: Identifiable, Sendable {
     let id = UUID()
     let track: Track
@@ -133,6 +151,7 @@ final class LibraryViewModel: ObservableObject {
     @Published private(set) var genreSuggestion: GenreSuggestion?
     @Published private(set) var isClassifyingGenre = false
     @Published private(set) var batchMetadataProgress = BatchMetadataProgress.idle
+    @Published var importProgress = ImportProgress.idle
 
     let pageSize = 200
     private let database: LibraryDatabase
@@ -1509,21 +1528,53 @@ final class LibraryViewModel: ObservableObject {
                     )
                 }
                 
-                // Ensure a scan root exists for the primary storage destination
-                let primaryRootID: Int64
-                if let root = try? database.scanRoots().first(where: { $0.lastKnownPath == primaryDest.path }) {
+                // Ensure a scan root exists for the primary storage destination (with NFC path normalization)
+                let targetPath = primaryDest.path.precomposedStringWithCanonicalMapping
+                var primaryRootID: Int64 = 0
+                if let root = try? database.scanRoots().first(where: { $0.lastKnownPath.precomposedStringWithCanonicalMapping == targetPath }) {
                     primaryRootID = root.id
                 } else {
                     let rootID = try database.addScanRoot(
                         displayName: primaryDest.name,
                         bookmark: primaryDest.bookmark,
                         volumeUUID: nil,
-                        path: primaryDest.path
+                        path: targetPath
                     )
                     primaryRootID = rootID
                 }
                 
-                let staged = try await storage.stage(urls, convertFlac: convertFlac)
+                if primaryRootID == 0 {
+                    if let firstRoot = try? database.scanRoots().first {
+                        primaryRootID = firstRoot.id
+                    }
+                }
+                
+                guard primaryRootID > 0 else {
+                    throw MassiveMusicError.metadataWriteFailed(
+                        text("有効なスキャンルートが見つかりませんでした。保管先設定を確認してください。",
+                             "Could not find or create a valid scan root. Please check your storage settings.")
+                    )
+                }
+                
+                let staged = try await storage.stage(urls, convertFlac: convertFlac) { [weak self] index, total, fileProgress in
+                    Task { @MainActor in
+                        let filename = index - 1 < urls.count ? urls[index - 1].lastPathComponent : ""
+                        self?.importProgress = ImportProgress(
+                            state: .converting,
+                            currentFileIndex: index,
+                            totalFiles: total,
+                            fileProgress: fileProgress,
+                            currentFileName: filename
+                        )
+                    }
+                }
+                
+                defer {
+                    Task { @MainActor in
+                        self.importProgress = .idle
+                    }
+                }
+                
                 var importedTrackIDs: [Int64] = []
                 let primaryAvailable = primaryDest.isAvailable
                 
