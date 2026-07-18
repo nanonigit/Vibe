@@ -1556,17 +1556,27 @@ private struct TrackSortHeader: View {
     }
 
     private func header(_ sort: TrackSort) -> some View {
-        Button {
+        let isActive = model.sort == sort
+        return Button {
             model.sortChanged(to: sort)
         } label: {
             HStack(spacing: 4) {
-                Text(model.sortTitle(sort)).lineLimit(1)
-                if model.sort == sort {
+                Text(model.sortTitle(sort))
+                    .lineLimit(1)
+                    .fontWeight(isActive ? .bold : .regular)
+                if isActive {
                     Image(systemName: model.sortDirection == .ascending ? "chevron.up" : "chevron.down")
                         .font(.caption2)
+                        .fontWeight(.bold)
                 }
             }
-            .foregroundStyle(model.sort == sort ? Color.accentColor : Color.secondary)
+            .foregroundStyle(isActive ? Color.white : Color.secondary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .padding(.horizontal, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(isActive ? Color.accentColor.opacity(0.7) : Color.clear)
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

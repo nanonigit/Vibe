@@ -98,7 +98,7 @@ private struct BrowseReturnState {
 @MainActor
 final class LibraryViewModel: ObservableObject {
     @Published var section: LibrarySection = .tracks
-    @Published var sort: TrackSort = .title
+    @Published var sort: TrackSort = .artist
     @Published var sortDirection: SortDirection = .ascending
     @Published var searchText = ""
     @Published private(set) var isSearchPending = false
