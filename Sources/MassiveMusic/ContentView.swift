@@ -2947,11 +2947,23 @@ private struct TrackTitleCell: View {
             Text(track.title).lineLimit(1)
         }
         .contentShape(Rectangle())
-        .help(track.isAvailable ? "" : helpText)
+        .modifier(HelpModifier(helpText: track.isAvailable ? nil : helpText))
     }
 
     private var iconName: String {
         track.isAvailable ? "music.note" : "externaldrive.badge.exclamationmark"
+    }
+}
+
+private struct HelpModifier: ViewModifier {
+    let helpText: String?
+
+    func body(content: Content) -> some View {
+        if let helpText, !helpText.isEmpty {
+            content.help(helpText)
+        } else {
+            content
+        }
     }
 }
 
