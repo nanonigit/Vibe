@@ -22,6 +22,7 @@ final class PlaybackController: ObservableObject {
     @Published var repeatMode: RepeatMode = .off
     @Published var shuffleEnabled = false
     @Published private(set) var errorMessage: String?
+    @Published private(set) var unavailableTrackIDs: Set<Int64> = []
     @Published private(set) var upNextTracks: [Track] = []
     @Published private(set) var queueTotalCount = 0
     @Published private(set) var queueOffset = 0
@@ -80,6 +81,7 @@ final class PlaybackController: ObservableObject {
         let token = UUID()
         loadToken = token
         Task {
+            var resolvedSourceURL: URL?
             do {
                 let url: URL
                 if let cachedURL = try await offlineCache.cachedPlayableURL(for: track) {
@@ -99,12 +101,14 @@ final class PlaybackController: ObservableObject {
                     activeScopeStarted = scoped.url.startAccessingSecurityScopedResource()
                     activeScopedURL = scoped.url
                     let sourceURL = scoped.url.appending(path: track.relativePath)
+                    resolvedSourceURL = sourceURL
                     guard FileManager.default.fileExists(atPath: sourceURL.path) else {
                         throw MassiveMusicError.trackUnavailable
                     }
                     url = try await offlineCache.playableURL(for: track, sourceURL: sourceURL)
                 }
                 let item = AVPlayerItem(url: url)
+                unavailableTrackIDs.remove(track.id)
                 player.replaceCurrentItem(with: item)
                 currentTrack = track
                 elapsed = 0
@@ -115,11 +119,45 @@ final class PlaybackController: ObservableObject {
                 updateNowPlaying()
             } catch {
                 if token == loadToken {
-                    errorMessage = error.localizedDescription
+                    let sourceDisappeared = resolvedSourceURL.map {
+                        !FileManager.default.fileExists(atPath: $0.path)
+                    } ?? false
+                    if sourceDisappeared {
+                        await markTrackUnavailable(track)
+                    } else {
+                        switch error {
+                        case MassiveMusicError.trackUnavailable:
+                            await markTrackUnavailable(track)
+                        case MassiveMusicError.scanRootUnavailable:
+                            errorMessage = unavailablePlaybackMessage(rootDisconnected: true)
+                        default:
+                            errorMessage = error.localizedDescription
+                        }
+                    }
                     isPlaying = false
                 }
             }
         }
+    }
+
+    private func markTrackUnavailable(_ track: Track) async {
+        unavailableTrackIDs.insert(track.id)
+        try? await Task.detached {
+            try self.database.setTrackAvailability(id: track.id, isAvailable: false)
+        }.value
+        errorMessage = unavailablePlaybackMessage(rootDisconnected: false)
+    }
+
+    private func unavailablePlaybackMessage(rootDisconnected: Bool) -> String {
+        let isEnglish = (try? database.setting(forKey: "app.language")) == "en"
+        if isEnglish {
+            return rootDisconnected
+                ? "The storage drive is not connected and no local cache is available."
+                : "The original file is missing and no local cache is available. Reconnect the storage drive or rescan the library."
+        }
+        return rootDisconnected
+            ? "保存先のドライブが接続されておらず、ローカルキャッシュもありません。"
+            : "元ファイルが見つからず、ローカルキャッシュもありません。保存先を再接続するか、ライブラリを再スキャンしてください。"
     }
 
     func togglePlayPause() {

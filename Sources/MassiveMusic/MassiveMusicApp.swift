@@ -55,10 +55,14 @@ private struct PlayerWindowRoot: View {
             guard let window = NSApplication.shared.keyWindow ?? NSApplication.shared.mainWindow else { return }
             if mini {
                 expandedSize = window.contentLayoutRect.size
+                window.styleMask.remove(.resizable)
+                window.standardWindowButton(.zoomButton)?.isEnabled = false
                 window.minSize = NSSize(width: 390, height: 180)
                 window.maxSize = NSSize(width: 390, height: 180)
                 window.setContentSize(NSSize(width: 390, height: 180))
             } else {
+                window.styleMask.insert(.resizable)
+                window.standardWindowButton(.zoomButton)?.isEnabled = true
                 window.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
                 window.minSize = NSSize(width: 980, height: 640)
                 window.setContentSize(NSSize(width: max(980, expandedSize.width), height: max(640, expandedSize.height)))

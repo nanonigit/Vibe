@@ -5,3 +5,8 @@ FOUNDATION_EXPORT BOOL MassiveMusicWriteM4AHeader(
     NSDictionary<NSString *, id> *info,
     NSError **error
 );
+
+FOUNDATION_EXPORT NSDictionary<NSString *, id> *MassiveMusicReadM4AMetadata(
+    NSURL *url,
+    NSError **error
+);

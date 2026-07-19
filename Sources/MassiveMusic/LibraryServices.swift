@@ -37,6 +37,15 @@ actor TrackFileCoordinator {
         if edit.artworkData != nil { await ArtworkCache.shared.invalidate(trackID: track.id) }
     }
 
+    func sourceFileIsAvailable(for track: Track) -> Bool {
+        guard let (scope, sourceURL) = try? scopedSource(for: track, authorizedRoot: nil) else {
+            return false
+        }
+        return (try? scope.withAccess { _ in
+            fileManager.fileExists(atPath: sourceURL.path)
+        }) ?? false
+    }
+
     func removeFromLibrary(track: Track) throws {
         _ = try database.removeTrackFromLibrary(id: track.id, fileWasTrashed: false)
     }
@@ -105,14 +114,18 @@ actor StorageCoordinator {
             let isFlac = source.pathExtension.lowercased() == "flac"
             let targetFilename = (isFlac && convertFlac) ? source.deletingPathExtension().appendingPathExtension("mp3").lastPathComponent : source.lastPathComponent
             let destination = uniqueURL(for: targetFilename, in: inbox)
-            
-            if isFlac && convertFlac {
-                try await convertFlacToMp3(source: source, destination: destination) { fileProgress in
-                    progress?(index + 1, sources.count, fileProgress)
+            do {
+                if isFlac && convertFlac {
+                    try await convertFlacToMp3(source: source, destination: destination) { fileProgress in
+                        progress?(index + 1, sources.count, fileProgress)
+                    }
+                } else {
+                    try fileManager.copyItem(at: source, to: destination)
+                    progress?(index + 1, sources.count, 1.0)
                 }
-            } else {
-                try fileManager.copyItem(at: source, to: destination)
-                progress?(index + 1, sources.count, 1.0)
+            } catch {
+                try? fileManager.removeItem(at: destination)
+                throw error
             }
             let id = try database.addPendingImport(localPath: destination.path, filename: destination.lastPathComponent)
             if let item = try database.pendingImport(id: id) {
@@ -125,11 +138,25 @@ actor StorageCoordinator {
     private func convertFlacToMp3(source: URL, destination: URL, progress: (@Sendable (Double) -> Void)? = nil) async throws {
         let duration = await AudioMetadataReader.read(url: source).duration
         let totalDuration = duration > 0 ? duration : 180.0
+        let temporaryDirectory = fileManager.temporaryDirectory
+            .appending(path: "VibeConversion-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try fileManager.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: temporaryDirectory) }
+        let progressURL = temporaryDirectory.appending(path: "progress.txt")
+        let errorURL = temporaryDirectory.appending(path: "error.txt")
+        guard fileManager.createFile(atPath: errorURL.path, contents: nil),
+              let errorHandle = try? FileHandle(forWritingTo: errorURL) else {
+            throw MassiveMusicError.metadataWriteFailed("Could not create the FLAC conversion log")
+        }
+        defer { try? errorHandle.close() }
         
         let process = Process()
         process.executableURL = URL(filePath: "/opt/homebrew/bin/ffmpeg")
         process.arguments = [
             "-nostdin",
+            "-loglevel", "error",
+            "-nostats",
+            "-progress", progressURL.path,
             "-i", source.path,
             "-codec:a", "libmp3lame",
             "-qscale:a", "0",
@@ -137,51 +164,29 @@ actor StorageCoordinator {
             destination.path
         ]
         
-        let errorPipe = Pipe()
-        process.standardError = errorPipe
+        process.standardError = errorHandle
+        process.standardOutput = FileHandle.nullDevice
         
         try process.run()
-        
-        let fileHandle = errorPipe.fileHandleForReading
-        
-        let bufferSize = 1024
-        var remainingData = Data()
-        
         while process.isRunning {
-            if let data = try? fileHandle.read(upToCount: bufferSize), !data.isEmpty {
-                remainingData.append(data)
-                while let lineRange = remainingData.firstRange(of: Data([0x0A])) {
-                    let lineData = remainingData.subdata(in: remainingData.startIndex..<lineRange.lowerBound)
-                    remainingData.removeSubrange(remainingData.startIndex..<lineRange.upperBound)
-                    
-                    if let line = String(data: lineData, encoding: .utf8) {
-                        if let timeRange = line.range(of: "time=") {
-                            let timePart = line[timeRange.upperBound...]
-                            let tokens = timePart.split(separator: " ")
-                            if let firstToken = tokens.first {
-                                let timeStr = String(firstToken)
-                                let parts = timeStr.split(separator: ":")
-                                if parts.count == 3,
-                                   let hours = Double(parts[0]),
-                                   let minutes = Double(parts[1]),
-                                   let seconds = Double(parts[2]) {
-                                    let currentTime = hours * 3600.0 + minutes * 60.0 + seconds
-                                    let pct = min(1.0, max(0.0, currentTime / totalDuration))
-                                    progress?(pct)
-                                }
-                            }
-                        }
-                    }
-                }
+            if let report = try? String(contentsOf: progressURL, encoding: .utf8),
+               let line = report.split(separator: "\n").last(where: { $0.hasPrefix("out_time_us=") }),
+               let microseconds = Double(line.dropFirst("out_time_us=".count)) {
+                progress?(min(1.0, max(0.0, microseconds / 1_000_000.0 / totalDuration)))
             }
-            try? await Task.sleep(for: .milliseconds(50))
+            try await Task.sleep(for: .milliseconds(100))
         }
         
-        process.waitUntilExit()
+        // `isRunning == false` already means the child has terminated and its
+        // status is available. Calling `waitUntilExit()` here can deadlock
+        // when this actor resumes on the main executor because Foundation's
+        // termination notification also needs that run loop. This showed up
+        // consistently near the end of multi-file FLAC imports.
+        let terminationStatus = process.terminationStatus
+        try? errorHandle.synchronize()
         
-        guard process.terminationStatus == 0 else {
-            let errorData = fileHandle.readDataToEndOfFile()
-            let errorMessage = String(data: errorData, encoding: .utf8) ?? "Unknown ffmpeg error"
+        guard terminationStatus == 0 else {
+            let errorMessage = (try? String(contentsOf: errorURL, encoding: .utf8)) ?? "Unknown ffmpeg error"
             throw MassiveMusicError.metadataWriteFailed("FLAC to MP3 conversion failed: \(errorMessage)")
         }
         
@@ -195,7 +200,8 @@ actor StorageCoordinator {
         return try database.storageDestinations()
     }
 
-    func move(_ item: PendingImport, to destination: StorageDestination) throws {
+    @discardableResult
+    func move(_ item: PendingImport, to destination: StorageDestination) throws -> URL {
         let root = try SecurityScopedRoot.resolve(bookmark: destination.bookmark)
         guard fileManager.fileExists(atPath: root.url.path) else { throw MassiveMusicError.scanRootUnavailable }
         let started = root.url.startAccessingSecurityScopedResource()
@@ -204,6 +210,23 @@ actor StorageCoordinator {
         let target = uniqueURL(for: item.filename, in: root.url)
         try fileManager.moveItem(at: source, to: target)
         try database.updatePendingImport(id: item.id, state: .moved, localPath: target.path)
+        return target
+    }
+
+    /// Copies a locally retained import to the primary library while leaving
+    /// the offline-cache source intact for immediate playback.
+    @discardableResult
+    func copyKeptLocalImport(_ item: PendingImport, to destination: StorageDestination) throws -> URL {
+        let root = try SecurityScopedRoot.resolve(bookmark: destination.bookmark)
+        guard fileManager.fileExists(atPath: root.url.path) else { throw MassiveMusicError.scanRootUnavailable }
+        let started = root.url.startAccessingSecurityScopedResource()
+        defer { if started { root.url.stopAccessingSecurityScopedResource() } }
+        let source = URL(filePath: item.localPath)
+        guard fileManager.fileExists(atPath: source.path) else { throw MassiveMusicError.trackUnavailable }
+        let target = uniqueURL(for: item.filename, in: root.url)
+        try fileManager.copyItem(at: source, to: target)
+        try database.updatePendingImport(id: item.id, state: .moved, localPath: target.path)
+        return target
     }
 
     private func uniqueURL(for filename: String, in directory: URL) -> URL {
@@ -237,7 +260,16 @@ actor OfflineCacheManager {
         try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
     }
 
+    private func isStorageExternal() -> Bool {
+        guard let destinations = try? database.storageDestinations(),
+              let primary = destinations.first(where: { $0.isPrimary }) else {
+            return false
+        }
+        return StorageTopology.usesSeparateLocalCache(primaryPath: primary.path)
+    }
+
     func playableURL(for track: Track, sourceURL: URL) throws -> URL {
+        guard isStorageExternal() else { return sourceURL }
         if let cached = try cachedPlayableURL(for: track) { return cached }
         let enabled = (try database.setting(forKey: "cache.enabled") ?? "true") == "true"
         guard enabled else { return sourceURL }
@@ -249,6 +281,7 @@ actor OfflineCacheManager {
     }
 
     func cachedPlayableURL(for track: Track) throws -> URL? {
+        guard isStorageExternal() else { return nil }
         guard let path = try database.cachedPath(trackID: track.id),
               fileManager.fileExists(atPath: path) else { return nil }
         let url = URL(filePath: path)
@@ -266,18 +299,11 @@ actor OfflineCacheManager {
     }
 
     private func cache(_ track: Track, pinned: Bool) throws -> URL {
-        if let path = try database.cachedPath(trackID: track.id), fileManager.fileExists(atPath: path) {
-            let url = URL(filePath: path)
-            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? track.fileSize
-            try database.recordCachedTrack(trackID: track.id, path: path, fileSize: size, pinned: pinned)
-            return url
-        }
-
         guard let root = try database.scanRoot(id: track.rootID) else {
             throw MassiveMusicError.scanRootUnavailable
         }
         let scoped = try SecurityScopedRoot.resolve(bookmark: root.bookmark)
-        return try scoped.withAccess { rootURL in
+        let sourceURL = try scoped.withAccess { rootURL -> URL in
             guard fileManager.fileExists(atPath: rootURL.path) else {
                 throw MassiveMusicError.scanRootUnavailable
             }
@@ -287,15 +313,26 @@ actor OfflineCacheManager {
             guard sourceURL.path.hasPrefix(prefix), fileManager.fileExists(atPath: sourceURL.path) else {
                 throw MassiveMusicError.trackUnavailable
             }
-            let target = directory.appending(path: "\(track.id).\(track.format.lowercased())")
-            if !fileManager.fileExists(atPath: target.path) {
-                try fileManager.copyItem(at: sourceURL, to: target)
-            }
-            let size = (try? target.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? track.fileSize
-            try database.recordCachedTrack(trackID: track.id, path: target.path, fileSize: size, pinned: pinned)
-            try evictIfNeeded()
-            return target
+            return sourceURL
         }
+
+        guard isStorageExternal() else { return sourceURL }
+
+        if let path = try database.cachedPath(trackID: track.id), fileManager.fileExists(atPath: path) {
+            let url = URL(filePath: path)
+            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? track.fileSize
+            try database.recordCachedTrack(trackID: track.id, path: path, fileSize: size, pinned: pinned)
+            return url
+        }
+
+        let target = directory.appending(path: "\(track.id).\(track.format.lowercased())")
+        if !fileManager.fileExists(atPath: target.path) {
+            try fileManager.copyItem(at: sourceURL, to: target)
+        }
+        let size = (try? target.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? track.fileSize
+        try database.recordCachedTrack(trackID: track.id, path: target.path, fileSize: size, pinned: pinned)
+        try evictIfNeeded()
+        return target
     }
 
     func remove(trackID: Int64) throws {
@@ -431,6 +468,30 @@ actor WebEnrichmentService {
         return EnrichedTrackInfo(lyrics: lyrics, artworkURL: artwork, wikipediaURL: wiki, detectedGenre: track.genre.isEmpty ? nil : track.genre)
     }
 
+    func albumArtworkURL(album: String, artist: String) async -> URL? {
+        guard let remote = await coverArtURL(album: album, artist: artist) else { return nil }
+        return await cacheImage(from: remote, key: "album-\(album)-\(artist)")
+    }
+
+    func artistImageURL(artist: String, languageCode: String) async -> URL? {
+        guard !artist.isEmpty else { return nil }
+        let language = languageCode == "en" ? "en" : "ja"
+        var components = URLComponents(string: "https://\(language).wikipedia.org/w/api.php")!
+        components.queryItems = [
+            URLQueryItem(name: "action", value: "query"), URLQueryItem(name: "generator", value: "search"),
+            URLQueryItem(name: "gsrsearch", value: artist), URLQueryItem(name: "gsrlimit", value: "1"),
+            URLQueryItem(name: "prop", value: "pageimages"), URLQueryItem(name: "piprop", value: "thumbnail"),
+            URLQueryItem(name: "pithumbsize", value: "600"), URLQueryItem(name: "format", value: "json")
+        ]
+        guard let url = components.url, let (data, _) = try? await session.data(from: url),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let query = object["query"] as? [String: Any],
+              let pages = query["pages"] as? [String: [String: Any]],
+              let thumbnail = pages.values.first?["thumbnail"] as? [String: Any],
+              let source = thumbnail["source"] as? String, let remote = URL(string: source) else { return nil }
+        return await cacheImage(from: remote, key: "artist-\(artist)-\(language)")
+    }
+
     private func embeddedArtworkURL(for track: Track) async -> URL? {
         if let cachedPath = try? database.cachedPath(trackID: track.id),
            FileManager.default.fileExists(atPath: cachedPath) {
@@ -487,9 +548,13 @@ actor WebEnrichmentService {
     }
 
     private func coverArtURL(for track: Track) async -> URL? {
-        guard !track.album.isEmpty else { return nil }
+        await coverArtURL(album: track.album, artist: track.artist)
+    }
+
+    private func coverArtURL(album: String, artist: String) async -> URL? {
+        guard !album.isEmpty else { return nil }
         var components = URLComponents(string: "https://musicbrainz.org/ws/2/release/")!
-        let query = "release:\"\(track.album)\" AND artist:\"\(track.artist)\""
+        let query = "release:\"\(album)\" AND artist:\"\(artist)\""
         components.queryItems = [URLQueryItem(name: "query", value: query), URLQueryItem(name: "fmt", value: "json"), URLQueryItem(name: "limit", value: "1")]
         guard let url = components.url, let (data, _) = try? await session.data(from: url),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

@@ -87,7 +87,6 @@ struct AudioMetadataWriterTests {
         try AudioMetadataWriter.write(edit, to: url)
 
         let info = try AudioMetadataWriter.infoDictionary(at: url)
-        print("M4A info:", info)
         #expect(info["title"] as? String == "M4A Title")
         #expect(info["artist"] as? String == "M4A Artist")
         #expect(info["album"] as? String == "M4A Album")
@@ -204,6 +203,32 @@ struct AudioMetadataWriterTests {
         #expect(output.suffix(audioBytes.count) == audioBytes)
     }
 
+    @Test func writesAndClearsCompilationTagWithoutChangingAudioBytes() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "MassiveMusicCompilation-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appending(path: "fixture.mp3")
+        let audioBytes = Data(repeating: 0xA5, count: 4_096)
+        try makeID3v23(title: "Song", artworkPayload: Data(), audioBytes: audioBytes).write(to: url)
+        let track = Track(
+            rootID: 1, relativePath: "fixture.mp3", filename: "fixture.mp3", title: "Song",
+            artist: "Individual Artist", album: "Compilation",
+            fileSize: Int64((try Data(contentsOf: url)).count), modifiedAt: .now, format: "mp3"
+        )
+        var edit = TrackMetadataEdit(track: track)
+        edit.isCompilation = true
+
+        try AudioMetadataWriter.write(edit, to: url)
+        #expect(try AudioMetadataWriter.infoDictionary(at: url)["compilation"] as? String == "1")
+        #expect(try Data(contentsOf: url).suffix(audioBytes.count) == audioBytes)
+
+        edit.isCompilation = false
+        try AudioMetadataWriter.write(edit, to: url)
+        #expect(try AudioMetadataWriter.infoDictionary(at: url)["compilation"] == nil)
+        #expect(try Data(contentsOf: url).suffix(audioBytes.count) == audioBytes)
+    }
+
     @Test func explicitlyRepairsMalformedID3FrameWithoutChangingAudioBytes() throws {
         let directory = FileManager.default.temporaryDirectory
             .appending(path: "MassiveMusicMalformedID3-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -232,6 +257,35 @@ struct AudioMetadataWriterTests {
         #expect(info["artist"] as? String == "Old Artist")
         #expect(info["album"] as? String == "Old Album")
         #expect(info["track number"] as? String == "14")
+        #expect(output.suffix(audioBytes.count) == audioBytes)
+    }
+
+    @Test func repairsIncorrectID3SizeAfterValidatingConsecutiveMPEGFrames() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "MassiveMusicWrongID3Size-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appending(path: "fixture.mp3")
+        let audioBytes = makeMPEG1Layer3Frames(count: 3)
+        var damaged = Data("ID3".utf8)
+        damaged.append(contentsOf: [3, 0, 0])
+        // Declares 127 bytes although the damaged tag payload contains only 16.
+        damaged.append(contentsOf: [0, 0, 0, 127])
+        damaged.append(Data(repeating: 0, count: 16))
+        damaged.append(audioBytes)
+        try damaged.write(to: url)
+        let track = Track(
+            rootID: 1, relativePath: "fixture.mp3", filename: "fixture.mp3", title: "Ｏｌｄ",
+            artist: "Artist", album: "Album", fileSize: Int64(damaged.count),
+            modifiedAt: .now, format: "mp3"
+        )
+        var edit = TrackMetadataEdit(track: track)
+        edit.title = "Old"
+
+        try AudioMetadataWriter.write(edit, to: url, repairingCorruptID3: true)
+
+        let output = try Data(contentsOf: url)
+        #expect(try AudioMetadataWriter.infoDictionary(at: url)["title"] as? String == "Old")
         #expect(output.suffix(audioBytes.count) == audioBytes)
     }
 
@@ -269,6 +323,42 @@ struct AudioMetadataWriterTests {
         #expect(info["album"] as? String == "Voodoo Lounge")
         #expect(output.containsSubsequence(Data("APIC".utf8)))
         #expect(output.containsSubsequence(artworkBytes))
+        #expect(output.suffix(audioBytes.count) == audioBytes)
+    }
+
+    @Test func explicitlyRebuildsDamagedID3v22FramesWithoutChangingAudioBytes() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "MassiveMusicDamagedID3v22-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appending(path: "fixture.mp3")
+        var audioBytes = Data([0xFF, 0xFB])
+        audioBytes.append(Data(repeating: 0xA5, count: 8_190))
+        var damaged = makeID3v22(
+            title: "Old Title",
+            artworkBytes: Data([0xFF, 0xD8, 0xFF, 0xD9]),
+            audioBytes: audioBytes
+        )
+        // Corrupt the first v2.2 frame allocation while leaving the enclosing
+        // tag size and MPEG boundary intact.
+        damaged.replaceSubrange(13..<16, with: [0x7F, 0xFF, 0xFF])
+        try damaged.write(to: url)
+        let track = Track(
+            rootID: 1, relativePath: "fixture.mp3", filename: "fixture.mp3", title: "Old Title",
+            artist: "Artist", album: "Album", fileSize: Int64(damaged.count),
+            modifiedAt: .now, format: "mp3"
+        )
+        var edit = TrackMetadataEdit(track: track)
+        edit.title = "Repaired Title"
+
+        try AudioMetadataWriter.write(edit, to: url, repairingCorruptID3: true)
+
+        let output = try Data(contentsOf: url)
+        let info = try AudioMetadataWriter.infoDictionary(at: url)
+        #expect(output.prefix(4) == Data([0x49, 0x44, 0x33, 0x03]))
+        #expect(info["title"] as? String == "Repaired Title")
+        #expect(info["artist"] as? String == "Artist")
+        #expect(info["album"] as? String == "Album")
         #expect(output.suffix(audioBytes.count) == audioBytes)
     }
 
@@ -516,6 +606,17 @@ struct AudioMetadataWriterTests {
                                    UInt8((body.count >> 7) & 0x7F), UInt8(body.count & 0x7F)])
         result.append(body)
         result.append(audioBytes)
+        return result
+    }
+
+    private func makeMPEG1Layer3Frames(count: Int) -> Data {
+        // MPEG-1 Layer III, 128 kbps, 44.1 kHz. Each frame is 417 bytes.
+        let header = Data([0xFF, 0xFB, 0x90, 0x00])
+        var result = Data()
+        for index in 0..<count {
+            result.append(header)
+            result.append(Data(repeating: UInt8(0x40 + index), count: 413))
+        }
         return result
     }
 

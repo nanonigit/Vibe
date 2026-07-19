@@ -4,6 +4,164 @@ import Testing
 
 @Suite(.serialized)
 struct LibraryDatabaseTests {
+    @Test func storageTopologyOnlyUsesASeparateCacheForExternalMainStorage() {
+        #expect(!StorageTopology.usesSeparateLocalCache(primaryPath: nil))
+        #expect(!StorageTopology.usesSeparateLocalCache(primaryPath: "/Users/naoki/Music/Vibe"))
+        #expect(!StorageTopology.usesSeparateLocalCache(primaryPath: "/"))
+        #expect(StorageTopology.usesSeparateLocalCache(primaryPath: "/Volumes/Transcend/Music/Music"))
+        #expect(StorageTopology.usesSeparateLocalCache(primaryPath: "/Volumes/External HDD"))
+    }
+
+    @Test func recentlyAddedLibraryIsPagedNewestFirst() throws {
+        let context = try TestContext()
+        defer { try? FileManager.default.removeItem(at: context.directory) }
+        let rootID = try context.database.addScanRoot(
+            displayName: "Test", bookmark: Data(), volumeUUID: nil, path: context.directory.path
+        )
+        let sessionID = try context.database.createScanSession(rootID: rootID)
+        let imports = [
+            context.importedTrack(identity: "old", title: "Old", filename: "old.mp3", rootID: rootID, addedAt: Date(timeIntervalSince1970: 100)),
+            context.importedTrack(identity: "new", title: "New", filename: "new.mp3", rootID: rootID, addedAt: Date(timeIntervalSince1970: 300)),
+            context.importedTrack(identity: "middle", title: "Middle", filename: "middle.mp3", rootID: rootID, addedAt: Date(timeIntervalSince1970: 200))
+        ]
+        _ = try context.database.commitScanBatch(imports: imports, unchangedIdentityKeys: [], sessionID: sessionID)
+
+        let first = try context.database.pageTracksAfter(
+            sort: .dateAdded, direction: .descending, after: nil, limit: 2
+        )
+        let second = try context.database.pageTracksAfter(
+            sort: .dateAdded, direction: .descending, after: first.tracks.last,
+            logicalOffset: 2, limit: 2, knownTotal: first.totalCount
+        )
+
+        #expect(first.totalCount == 3)
+        #expect(first.tracks.map(\.title) == ["New", "Middle"])
+        #expect(second.tracks.map(\.title) == ["Old"])
+        #expect(second.offset == 2)
+    }
+
+    @Test func recentLibraryAndStorageConnectionStateAreExplicitInTheUI() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+        let view = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+
+        #expect(model.contains("case .recentlyAdded: text(\"最近追加した曲\", \"Recently Added\")"))
+        #expect(model.contains("requestedSection == .recentlyAdded"))
+        #expect(model.contains("primaryStorageIsConnected"))
+        #expect(view.contains("接続中"))
+        #expect(view.contains("未接続"))
+        #expect(view.contains("Color.green"))
+        #expect(view.contains("Color.orange"))
+    }
+
+    @Test func disconnectedImportsUseTheCacheAndReconnectCopiesWithoutRemovingIt() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let services = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryServices.swift"))
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+
+        #expect(services.contains("func copyKeptLocalImport"))
+        #expect(services.contains("fileManager.copyItem(at: source, to: target)"))
+        #expect(model.contains("state: .keptLocal, localPath: cacheURL.path"))
+        #expect(model.contains("storage.copyKeptLocalImport(item, to: primary)"))
+    }
+
+    @Test func existingContainerLibraryWinsOverANewEmptyUnsandboxedDatabase() {
+        let current = URL(filePath: "/Users/test/Library/Application Support/MassiveMusic/MassiveMusic.sqlite")
+        let container = URL(filePath: "/Users/test/Library/Containers/com.local.MassiveMusic/Data/Library/Application Support/MassiveMusic/MassiveMusic.sqlite")
+
+        #expect(LibraryDatabase.preferredApplicationSupportDatabase(
+            defaultURL: current, containerURL: container, containerDatabaseExists: true
+        ) == container)
+        #expect(LibraryDatabase.preferredApplicationSupportDatabase(
+            defaultURL: current, containerURL: container, containerDatabaseExists: false
+        ) == current)
+    }
+
+    @Test func existingScanRootBecomesPrimaryStorageBeforeCreatingALocalDefault() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+
+        #expect(source.contains("if let existingRoot = try database.scanRoots().first"))
+        #expect(source.contains("path: existingRoot.lastKnownPath"))
+        #expect(source.contains("bookmark: existingRoot.bookmark"))
+    }
+
+    @Test func automaticMetadataCleanupWaitsForEverySourceDrive() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+
+        #expect(source.contains("private func allScanRootsAreConnected() -> Bool"))
+        #expect(source.contains("guard allScanRootsAreConnected() else { return }"))
+    }
+
+    @Test func librarySidebarStaysExpandedAndOnlyShowsCacheForSeparateStorage() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+
+        #expect(source.contains("Section(isExpanded: .constant(true))"))
+        #expect(source.contains("ForEach(model.visibleLibrarySections)"))
+    }
+
+    @Test func librarySidebarCanBeDragReorderedAndPersistsItsOrder() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+
+        #expect(content.contains(".draggable(section.rawValue)"))
+        #expect(content.contains(".dropDestination(for: String.self)"))
+        #expect(content.contains("model.moveLibrarySection(source, before: section)"))
+        #expect(content.contains("model.moveLibrarySection(section, by: -1)"))
+        #expect(content.contains("model.moveLibrarySection(section, by: 1)"))
+        #expect(content.contains("model.text(\"並び替え\", \"Reorder\")"))
+        #expect(model.contains("sidebar.libraryOrder"))
+        #expect(model.contains("librarySectionOrder = order"))
+    }
+
+    @Test func storageAndDifferenceSidebarItemsOpenDistinctSettingsTabs() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+
+        #expect(source.contains("model.text(\"保管先と取り込み\", \"Storage & Imports\")"))
+        #expect(source.contains("settingsTab = .storage"))
+        #expect(source.contains("settingsTab = .differences"))
+        #expect(source.contains(".tag(SettingsTab.differences)"))
+    }
+
+    @Test func metadataWidthNormalizationChangesOnlyRequestedWidthVariants() {
+        #expect(
+            MetadataTextNormalizer.normalizedWidths("ﾗｳﾞ ｶﾞｯﾂ ＡＢＣ１２３！")
+                == "ラヴ ガッツ ABC123!"
+        )
+        #expect(MetadataTextNormalizer.normalizedWidths("s a y ｍｙ name") == "s a y my name")
+        #expect(MetadataTextNormalizer.normalizedWidths("Roman Ⅳ ① café") == "Roman Ⅳ ① café")
+    }
+
+    @Test func metadataWidthNormalizationIsOptionalAndResumable() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+
+        #expect(content.contains("文字幅を自動で正規化"))
+        #expect(content.contains("model.saveMetadataNormalizationSettings()"))
+        #expect(model.contains("metadata.normalizeCharacterWidths"))
+        #expect(model.contains("metadata.widthNormalizationCursor"))
+        #expect(model.contains("tracksForWidthNormalization(afterID:"))
+    }
+
     @Test func sidebarNavigationRowsUseFullWidthRectangularHitTargets() throws {
         let repository = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -17,17 +175,23 @@ struct LibraryDatabaseTests {
         #expect(source.components(separatedBy: "SidebarNavigationLabel(").count - 1 >= 5)
     }
 
-    @Test func bottomPlayerSharesArtworkAndUsesAnInsetThatCannotBeClipped() throws {
+    @Test func bottomPlayerSharesArtworkAndReservesDedicatedLayoutSpace() throws {
         let repository = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
         let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let bodyStart = try #require(source.range(of: "    var body: some View {"))
+        let toolbarStart = try #require(source.range(of: "        .toolbar { toolbar }", range: bodyStart.upperBound..<source.endIndex))
+        let rootLayout = String(source[bodyStart.lowerBound..<toolbarStart.lowerBound])
 
         #expect(source.contains("private struct PlayerArtwork: View"))
         #expect(source.components(separatedBy: "PlayerArtwork(").count - 1 >= 2)
-        #expect(source.contains(".safeAreaInset(edge: .bottom, spacing: 0)"))
-        #expect(!source.contains("PlayerBar(player: player, model: model)\n                .fixedSize"))
+        #expect(rootLayout.contains("VStack(spacing: 0)"))
+        #expect(rootLayout.contains("NavigationSplitView"))
+        #expect(rootLayout.contains("PlayerBar(player: player, model: model)"))
+        #expect(rootLayout.contains(".fixedSize(horizontal: false, vertical: true)"))
+        #expect(!rootLayout.contains(".safeAreaInset(edge: .bottom"))
     }
 
     @Test func miniPlayerUsesCurrentTrackArtworkAndRefreshesItWhenTheTrackChanges() throws {
@@ -44,6 +208,48 @@ struct LibraryDatabaseTests {
         #expect(miniPlayerSource.contains(".onChange(of: player.currentTrack)"))
         #expect(miniPlayerSource.contains("model.enrich(track)"))
         #expect(!miniPlayerSource.contains("NSApplication.shared.applicationIconImage"))
+    }
+
+    @Test func miniPlayerDisablesNativeWindowResizingUntilExpanded() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/MassiveMusicApp.swift"))
+
+        #expect(source.contains("window.styleMask.remove(.resizable)"))
+        #expect(source.contains("window.styleMask.insert(.resizable)"))
+        #expect(source.contains("window.standardWindowButton(.zoomButton)?.isEnabled = false"))
+        #expect(source.contains("window.standardWindowButton(.zoomButton)?.isEnabled = true"))
+    }
+
+    @Test func trackContextMenuShowsPlaylistChoicesWithoutANestedSubmenu() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let menuStart = try #require(source.range(of: "    private func trackContextMenu"))
+        let menuEnd = try #require(source.range(
+            of: "\n    @ViewBuilder private var albumSummaryList",
+            range: menuStart.upperBound..<source.endIndex
+        ))
+        let menu = String(source[menuStart.lowerBound..<menuEnd.lowerBound])
+
+        #expect(menu.contains("Section(model.text(\"プレイリストに追加\", \"Add to Playlist\"))"))
+        #expect(menu.contains("ForEach(model.playlists)"))
+        #expect(menu.contains("model.createPlaylist()"))
+        #expect(!menu.contains("Menu(model.text(\"プレイリストに追加\", \"Add to Playlist\"))"))
+    }
+
+    @Test func playlistsAreAvailableBeforeTheFirstContextMenuOpens() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+
+        #expect(source.contains("playlists = (try? database.playlists()) ?? []"))
     }
 
     @Test func cachedLibraryKeepsControlsAndTrackTableInsideItsVisibleBounds() throws {
@@ -80,6 +286,17 @@ struct LibraryDatabaseTests {
         #expect(modelSource.contains("refreshAIProviderStates(allowAuthenticationUI: true, validateRemotely: true)"))
     }
 
+    @Test func localAdHocBuildCanLoadItsEmbeddedCoreFramework() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let entitlements = try String(contentsOf: repository.appending(path: "Config/MassiveMusic.entitlements"))
+
+        #expect(entitlements.contains("com.apple.security.cs.disable-library-validation"))
+        #expect(entitlements.contains("<true/>"))
+    }
+
     @Test func openingSettingsDoesNotImplicitlyAuthenticateAIProviders() throws {
         let repository = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -87,7 +304,7 @@ struct LibraryDatabaseTests {
             .deletingLastPathComponent()
         let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
         let settingsStart = try #require(source.range(of: "private struct LibrarySettingsView: View"))
-        let settingsEnd = try #require(source.range(of: "\nprivate struct FeatureStatusView", range: settingsStart.upperBound..<source.endIndex))
+        let settingsEnd = try #require(source.range(of: "\nprivate struct HoverTrackingView", range: settingsStart.upperBound..<source.endIndex))
         let settings = String(source[settingsStart.lowerBound..<settingsEnd.lowerBound])
         let appearStart = try #require(settings.range(of: "        .onAppear {"))
         let appearEnd = try #require(settings.range(of: "\n        }", range: appearStart.upperBound..<settings.endIndex))
@@ -95,6 +312,37 @@ struct LibraryDatabaseTests {
 
         #expect(!onAppear.contains("validateAIProviders"))
         #expect(settings.contains("Button(model.text(\"接続を再確認\", \"Test Connections\"), action: model.validateAIProviders)"))
+    }
+
+    @Test func songsDefaultToTitleAscendingAndEverySettingsTabUsesTopAlignedLayout() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let settingsStart = try #require(content.range(of: "private struct LibrarySettingsView: View"))
+        let settingsEnd = try #require(content.range(of: "\nprivate struct SettingsPage", range: settingsStart.upperBound..<content.endIndex))
+        let settings = String(content[settingsStart.lowerBound..<settingsEnd.lowerBound])
+
+        #expect(model.contains("@Published var sort: TrackSort = .title"))
+        #expect(model.contains("if newSection == .tracks, exactFilter == nil {\n            sort = .title\n            sortDirection = .ascending\n        }"))
+        #expect(!settings.contains("            Form {"))
+        #expect(settings.components(separatedBy: "            SettingsPage {").count - 1 >= 5)
+    }
+
+    @Test func selectedTracksCanBeDraggedOntoAPlaylist() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+
+        #expect(content.contains(".draggable(trackDragPayload(for: track))"))
+        #expect(content.contains("let trackIDs = values.flatMap(parseTrackDragPayload)"))
+        #expect(content.contains("model.addTrackIDsToPlaylist(trackIDs, playlistID: playlist.id)"))
+        #expect(model.contains("func addTrackIDsToPlaylist(_ ids: [Int64], playlistID: Int64)"))
     }
 
     @Test func trackArtistAndAlbumNavigationUseTheEntireCellAsHitTarget() throws {
@@ -123,7 +371,7 @@ struct LibraryDatabaseTests {
         #expect(playback.contains("database.adjacentTrack(in: context, from: cursor, direction: direction)"))
     }
 
-    @Test func backFromArtistRestoresThePreviousTrackIndexAndPage() throws {
+    @Test func backFromArtistOrRenamedAlbumRestoresThePreviousIndexAndPage() throws {
         let repository = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -139,6 +387,8 @@ struct LibraryDatabaseTests {
         #expect(model.contains("selectedIndexToken: selectedIndexToken"))
         #expect(closeDetail.contains("restoreBrowseReturnState"))
         #expect(closeDetail.contains("loadCurrentPage(reset: false)"))
+        #expect(model.contains("if let selectedAlbum, selectedAlbum.id != editedAlbumIdentity"))
+        #expect(model.contains("closeDetail()"))
         #expect(content.contains("model.selectedIndexToken = token"))
         #expect(!content.contains("@State private var selectedIndexToken"))
     }
@@ -179,7 +429,15 @@ struct LibraryDatabaseTests {
         #expect(best.albumArtist == "The Beatles")
         #expect(best.discNumber == 1)
         #expect(best.trackNumber == 1)
+        #expect(best.mediumTrackCount == 17)
         #expect(best.matchScore > (candidates.last?.matchScore ?? 0))
+
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        #expect(content.contains("曲名・アーティスト・アルバム名は変更せず"))
+        #expect(content.contains("model.autoFillMusicBrainzTrackNumbers"))
+        #expect(!content.contains("edit.album = candidate.album"))
     }
 
     @Test func bundledGenreClassifierWorksWithoutNetworkOrAPIKey() {
@@ -202,12 +460,12 @@ struct LibraryDatabaseTests {
     @Test func paginationKeepsRelativeJumpsAroundFivePageWindow() {
         let entries = PageNavigation.entries(currentPage: 501, pageCount: 1_852)
         #expect(entries.map(\.label) == [
-            "-1000", "-100", "-10",
+            "-100", "-10",
             "496", "497", "498", "499", "500", "501", "502", "503", "504", "505", "506",
             "+10", "+100", "+1000",
         ])
         #expect(entries.map(\.target) == [
-            1, 401, 491,
+            401, 491,
             496, 497, 498, 499, 500, 501, 502, 503, 504, 505, 506,
             511, 601, 1_501,
         ])
@@ -215,15 +473,50 @@ struct LibraryDatabaseTests {
 
     @Test func paginationClampsRelativeJumpsAtFirstAndLastPage() {
         let first = PageNavigation.entries(currentPage: 1, pageCount: 100)
-        #expect(Array(first.prefix(3).map(\.target)) == [1, 1, 1])
+        #expect(first.allSatisfy { $0.kind != .backward })
+        #expect(first.map(\.label) == ["1", "2", "3", "4", "5", "6", "+10"])
         let last = PageNavigation.entries(currentPage: 100, pageCount: 100)
-        #expect(Array(last.suffix(3).map(\.target)) == [100, 100, 100])
+        #expect(last.allSatisfy { $0.kind != .forward })
+        #expect(last.map(\.label) == ["-10", "95", "96", "97", "98", "99", "100"])
     }
 
     @Test func migrationEnablesExpectedSchemaAndWAL() throws {
         let context = try TestContext()
-        #expect(try context.database.schemaVersion() == 7)
+        #expect(try context.database.schemaVersion() == 9)
         #expect(try context.database.journalMode().lowercased() == "wal")
+    }
+
+    @Test func compilationTagRoundTripsThroughDatabaseAndBatchChanges() throws {
+        let context = try TestContext()
+        _ = try context.database.upsertTracks([
+            context.importedTrack(identity: "compilation", title: "Song", isCompilation: true)
+        ], sessionID: 1)
+        let stored = try #require(try context.database.track(id: 1))
+        #expect(stored.isCompilation)
+
+        let changes = BatchMetadataChanges(isCompilation: false)
+        let edit = changes.applying(to: stored)
+        try context.database.updateTrackMetadata(
+            id: stored.id, edit: edit, fileSize: stored.fileSize, modifiedAt: .now
+        )
+        #expect(try context.database.track(id: 1)?.isCompilation == false)
+    }
+
+    @Test func compactBatchEditorAndResizableSummaryColumnsAreWired() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+        let start = try #require(content.range(of: "private struct BatchTrackMetadataEditor"))
+        let editor = String(content[start.lowerBound...])
+
+        #expect(editor.contains("GroupBox(model.text(\"変更する曲情報\""))
+        #expect(editor.contains("isCompilation: changeCompilation ? isCompilation : nil"))
+        #expect(!editor.contains("LabeledContent(title)"))
+        #expect(content.contains("ColumnResizeHandle(width: $albumViewAlbumWidth"))
+        #expect(content.contains("ColumnResizeHandle(width: $albumViewArtistWidth"))
+        #expect(content.contains("ColumnResizeHandle(width: $albumViewSongsWidth"))
+        #expect(model.contains("guard section == requestedSection, selectedArtist?.name == artist.name"))
     }
 
     @Test func activityLogRecordsFileAndMetadataChangesWithPagingAndFiltering() throws {
@@ -258,6 +551,48 @@ struct LibraryDatabaseTests {
         #expect(metadata.events.first?.changes.contains(where: { $0.field == "artist" }) == true)
         #expect(search.totalCount == 5)
         #expect(first.events.first?.relativePath == "Folder/logged.mp3")
+    }
+
+    @Test func activityLogRecordsCacheAndMainStorageAdditionsAndKeepsOnlyOneThousandRows() throws {
+        let context = try TestContext()
+        _ = try context.database.upsertTracks([
+            context.importedTrack(identity: "storage-log", title: "Storage Log", filename: "storage-log.mp3")
+        ], sessionID: 1)
+
+        try context.database.recordTrackActivity(
+            trackID: 1, kind: .addedToCache, absolutePath: "/tmp/cache/storage-log.mp3"
+        )
+        try context.database.recordTrackActivity(
+            trackID: 1, kind: .addedToMainStorage, absolutePath: "/Music/storage-log.mp3"
+        )
+        for index in 0..<1_000 {
+            try context.database.recordTrackActivity(
+                trackID: 1, kind: .addedToCache, absolutePath: "/tmp/cache/\(index).mp3"
+            )
+        }
+
+        let firstPage = try context.database.activityLogPage(offset: 0, limit: 100)
+        let lastPage = try context.database.activityLogPage(offset: 900, limit: 100)
+        #expect(firstPage.totalCount == 1_000)
+        #expect(firstPage.events.count == 100)
+        #expect(lastPage.events.count == 100)
+        #expect(firstPage.events.first?.kind == .addedToCache)
+        #expect(firstPage.events.first?.absolutePath == "/tmp/cache/999.mp3")
+        #expect(try context.database.trackID(rootID: 1, relativePath: "Folder/storage-log.mp3") == 1)
+        #expect(try context.database.trackID(rootID: 2, relativePath: "Folder/storage-log.mp3") == nil)
+    }
+
+    @Test func activityLogUsesOneHundredRowPagesAndImportProgressAlwaysResets() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let viewModel = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+
+        #expect(viewModel.contains("let activityPageSize = 100"))
+        #expect(viewModel.contains("section == .activityLog ? activityPageSize : pageSize"))
+        #expect(viewModel.contains("defer { importProgress = .idle }"))
+        #expect(viewModel.contains("for (index, sourceURL) in stageURLs.enumerated()"))
     }
 
     @Test func favoritesAreDynamicAndPaged() throws {
@@ -536,8 +871,30 @@ struct LibraryDatabaseTests {
         #expect(artists.artists.first?.albumCount == 2)
         #expect(albums.totalCount == 2)
         #expect(albums.albums.first(where: { $0.name == "Album A" })?.trackCount == 2)
+        #expect(try context.database.albumTrackCount(album: "album a", artist: "artist a") == 2)
         let albumTracks = try context.database.pageTracksForAlbum(album: AlbumSummary(name: "Album A", artist: "Artist A", trackCount: 2))
         #expect(albumTracks.totalCount == 2)
+    }
+
+    @Test func metadataVariationLinkUsesExactFieldAndValue() throws {
+        let context = try TestContext()
+        _ = try context.database.upsertTracks([
+            context.importedTrack(identity: "exact", title: "One", album: "Same", filename: "one.mp3"),
+            context.importedTrack(identity: "case", title: "Two", album: "same", filename: "two.mp3"),
+            context.importedTrack(identity: "other", title: "Same", album: "Other", filename: "three.mp3")
+        ], sessionID: 1)
+
+        let page = try context.database.pageTracks(matching: ExactMetadataFilter(field: .album, value: "Same"))
+        #expect(page.totalCount == 1)
+        #expect(page.tracks.map(\.filename) == ["one.mp3"])
+
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+        #expect(content.contains("searchVariationValue(candidate.valueA, field: candidate.field)"))
+        #expect(content.contains("searchVariationValue(candidate.valueB, field: candidate.field)"))
+        #expect(model.contains("changeSection(.tracks, exactFilter: ExactMetadataFilter(field: field, value: value))"))
     }
 
     @Test func storageSummaryAggregatesBytesAndAbsoluteRootsWithoutLoadingTracks() throws {
@@ -654,6 +1011,7 @@ struct LibraryDatabaseTests {
         _ = try context.database.upsertTracks([
             context.importedTrack(identity: "missing", title: "", artist: "", album: "", filename: "missing.mp3"),
             context.importedTrack(identity: "url", title: "Tagged", genre: "http://example.invalid", filename: "url.mp3"),
+            context.importedTrack(identity: "mojibake", title: "I ĐAÈA  ÔÌ¼", artist: "Artist", album: "Album", filename: "garbled.mp3"),
             context.importedTrack(identity: "clean", title: "Clean", filename: "clean.m4a", format: "m4a")
         ], sessionID: 1)
 
@@ -662,7 +1020,187 @@ struct LibraryDatabaseTests {
         #expect(summaries.first(where: { $0.kind == .missingArtist })?.count == 1)
         #expect(summaries.first(where: { $0.kind == .missingAlbum })?.count == 1)
         #expect(summaries.first(where: { $0.kind == .urlInMP3Metadata })?.count == 1)
+        #expect(summaries.first(where: { $0.kind == .suspectedMojibake })?.count == 1)
         #expect(try context.database.pageMetadataIssues(kind: .urlInMP3Metadata).tracks.first?.filename == "url.mp3")
+        #expect(try context.database.pageMetadataIssues(kind: .suspectedMojibake).tracks.first?.filename == "garbled.mp3")
+    }
+
+    @Test func duplicateMetadataDiagnosticsUseBoundedGroupAggregation() throws {
+        let context = try TestContext()
+        _ = try context.database.upsertTracks([
+            context.importedTrack(identity: "duplicate-1", title: "Same", artist: "Artist", album: "Album", filename: "one.mp3"),
+            context.importedTrack(identity: "duplicate-2", title: "same", artist: "artist", album: "album", filename: "two.mp3"),
+            context.importedTrack(identity: "unique", title: "Other", artist: "Artist", album: "Album", filename: "three.mp3")
+        ], sessionID: 1)
+
+        let summaries = try context.database.metadataIssueSummaries()
+        let page = try context.database.pageMetadataIssues(kind: .duplicateTracks)
+
+        #expect(summaries.first(where: { $0.kind == .duplicateTracks })?.count == 2)
+        #expect(page.totalCount == 2)
+        #expect(Set(page.tracks.map(\.filename)) == ["one.mp3", "two.mp3"])
+    }
+
+    @Test func metadataNavigationCancelsStaleSummaryAndPageLoads() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+
+        #expect(source.contains("pageLoadTask?.cancel()"))
+        #expect(source.contains("metadataSummaryTask?.cancel()"))
+        #expect(source.contains("catch is CancellationError"))
+        #expect(source.contains("guard !Task.isCancelled else { return }"))
+    }
+
+    @Test func duplicateDiagnosticsProvideCheckboxesAndConfirmedBulkDeletion() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+
+        #expect(source.contains("private var isDuplicateSelectionMode: Bool"))
+        #expect(source.contains("private func duplicateSelectionCheckbox"))
+        #expect(source.contains("model.selectedTrackIDs.formUnion(model.tracks.map(\\.id))"))
+        #expect(source.contains("tracksPendingDeletion = selectedTracksOnPage"))
+        #expect(source.contains("選択した\\(selectedTracksOnPage.count)曲を削除…"))
+        #expect(source.contains("ライブラリからのみ削除"))
+        #expect(source.contains("実ファイルをゴミ箱へ移動"))
+    }
+
+    @Test func commandASelectsOnlyTheFocusedVisibleTrackPage() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+
+        #expect(source.contains("@FocusState private var isTrackTableFocused: Bool"))
+        #expect(source.contains("private func selectAllVisibleTracks()"))
+        #expect(source.contains("model.selectedTrackIDs = Set(model.tracks.map(\\.id))"))
+        #expect(source.contains(".focused($isTrackTableFocused)"))
+        #expect(source.contains(".onKeyPress(\"a\", phases: .down)"))
+        #expect(source.contains("keyPress.modifiers.contains(.command)"))
+    }
+
+    @Test func cacheRetentionLimitCanBeTypedAndStepped() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+
+        #expect(source.contains("private struct CacheTrackLimitControl: View"))
+        #expect(source.contains("TextField(\"\", value: $value, format: .number)"))
+        #expect(source.contains("Stepper(value: $value, in: limits)"))
+        #expect(source.components(separatedBy: "CacheTrackLimitControl(").count - 1 >= 2)
+    }
+
+    @Test func flacImportDoesNotBlockOnProcessWaitAndAddsPlaylistItemsIncrementally() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let services = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryServices.swift"))
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+
+        #expect(!services.contains("process.waitUntilExit()"))
+        #expect(services.contains("let terminationStatus = process.terminationStatus"))
+        #expect(model.contains("try recordImportedTrack(trackID)"))
+        #expect(model.contains("try self.database.addTracks([trackID], toPlaylist: playlistID)"))
+    }
+
+    @Test func recentDateUpNextAndAutomaticGenreUIAreWired() throws {
+        let sourceRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let content = try String(contentsOf: sourceRoot.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let model = try String(contentsOf: sourceRoot.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+        let models = try String(contentsOf: sourceRoot.appending(path: "Sources/MassiveMusicCore/Models.swift"))
+
+        #expect(content.contains("case .recentlyAdded: \"clock.fill\""))
+        #expect(content.contains("columns.addedDate.visible"))
+        #expect(content.contains("header(.dateAdded)"))
+        #expect(content.contains("formatAddedDate(track.addedAt)"))
+        #expect(models.contains("case upNext = \"次に再生\""))
+        #expect(content.contains("UpNextLibraryView(model: model, player: player)"))
+        #expect(!content.contains("Text(model.text(\"次に再生\", \"Up Next\")).tag(3)"))
+        #expect(model.contains("func autoClassifyGenreIfNeeded(for track: Track)"))
+    }
+
+    @Test func metadataEditorSavesBeforeSequentialNavigation() throws {
+        let sourceRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let content = try String(
+            contentsOf: sourceRoot.appending(path: "Sources/MassiveMusic/ContentView.swift"),
+            encoding: .utf8
+        )
+        let model = try String(
+            contentsOf: sourceRoot.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"),
+            encoding: .utf8
+        )
+
+        #expect(content.contains("saveAndNavigate(by: -1)"))
+        #expect(content.contains("saveAndNavigate(by: 1)"))
+        #expect(content.contains("guard await saveCurrentTrack() else { return }"))
+        #expect(content.contains("Text(positionLabel)"))
+        #expect(content.contains("keyboardShortcut(\"]\", modifiers: .command)"))
+        #expect(model.contains("func updateMetadataFromEditor"))
+    }
+
+    @Test func successfullyEditedTrackSnapshotUsesWrittenMetadata() throws {
+        let context = try TestContext()
+        defer { try? FileManager.default.removeItem(at: context.directory) }
+        _ = try context.database.upsertTracks([
+            context.importedTrack(identity: "sequential-editor", title: "Before")
+        ], sessionID: 1)
+        let fetchedTrack = try context.database.track(id: 1)
+        let track = try #require(fetchedTrack)
+        var edit = TrackMetadataEdit(track: track)
+        edit.title = "After"
+        edit.artist = "Edited Artist"
+        edit.album = "Edited Album"
+        edit.discNumber = 2
+        edit.trackNumber = 7
+        edit.isCompilation = true
+
+        let updated = track.applying(edit)
+
+        #expect(updated.id == track.id)
+        #expect(updated.relativePath == track.relativePath)
+        #expect(updated.title == "After")
+        #expect(updated.artist == "Edited Artist")
+        #expect(updated.album == "Edited Album")
+        #expect(updated.discNumber == 2)
+        #expect(updated.trackNumber == 7)
+        #expect(updated.isCompilation)
+    }
+
+    @Test func genreSuggestionRegistersWithoutMountedSourceAndOnlyWritesExistingFiles() throws {
+        let context = try TestContext()
+        defer { try? FileManager.default.removeItem(at: context.directory) }
+        _ = try context.database.upsertTracks([
+            context.importedTrack(
+                identity: "genre-offline", title: "Arrogant Boy",
+                artist: "Deep Purple", album: "SPLAT!", filename: "missing.mp3"
+            )
+        ], sessionID: 1)
+        let storedTrackID = try context.database.trackID(forIdentityKey: "genre-offline")
+        let trackID = try #require(storedTrackID)
+
+        try context.database.updateTrackGenre(id: trackID, genre: "Hard Rock")
+        #expect(try context.database.track(id: trackID)?.genre == "Hard Rock")
+
+        let sourceRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let model = try String(contentsOf: sourceRoot.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+        let services = try String(contentsOf: sourceRoot.appending(path: "Sources/MassiveMusic/LibraryServices.swift"))
+        let content = try String(contentsOf: sourceRoot.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        #expect(model.contains("try self.database.updateTrackGenre(id: track.id, genre: genre)"))
+        #expect(model.contains("await trackFiles.sourceFileIsAvailable(for: track)"))
+        #expect(services.contains("func sourceFileIsAvailable(for track: Track) -> Bool"))
+        #expect(content.contains("ライブラリへ登録"))
     }
 
     @Test func metadataVariationAnalyzerFindsNormalizationAndLikelyTypo() async throws {
@@ -701,6 +1239,42 @@ struct LibraryDatabaseTests {
         #expect(try context.database.track(id: 1)?.isAvailable == false)
     }
 
+    @Test func aSingleMissingSourceCanBeMarkedUnavailableWithoutDeletingIt() throws {
+        let context = try TestContext()
+        _ = try context.database.upsertTracks(
+            [context.importedTrack(identity: "missing-file", title: "Missing File", rootID: 7)],
+            sessionID: 1
+        )
+
+        try context.database.setTrackAvailability(id: 1, isAvailable: false)
+
+        #expect(try context.database.trackCount() == 1)
+        #expect(try context.database.track(id: 1)?.isAvailable == false)
+    }
+
+    @Test func disconnectedOrMissingTracksAreWarnedBeforePlayback() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let playback = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/PlaybackController.swift"))
+
+        #expect(model.contains("func isTrackPlayable(_ track: Track) -> Bool"))
+        #expect(model.contains("unavailableRootIDs.contains(track.rootID)"))
+        #expect(model.contains("missingVisibleTrackIDs.contains(track.id)"))
+        #expect(model.contains("await refreshVisibleTrackAvailability()"))
+        #expect(model.contains("let visibleTracks = tracks"))
+        #expect(content.contains("let isPlayable = model.isTrackPlayable(track)"))
+        #expect(content.contains("!player.unavailableTrackIDs.contains(track.id) || model.isCached(track)"))
+        #expect(content.contains("externaldrive.badge.exclamationmark"))
+        #expect(content.contains("foregroundStyle(Color.orange)"))
+        #expect(playback.contains("database.setTrackAvailability(id: track.id, isAvailable: false)"))
+        #expect(playback.contains("let sourceDisappeared = resolvedSourceURL.map"))
+        #expect(playback.contains("元ファイルが見つからず、ローカルキャッシュもありません"))
+    }
+
     @Test func interruptedSessionIsResumable() throws {
         let context = try TestContext()
         let rootID = try context.database.addScanRoot(
@@ -734,11 +1308,13 @@ private struct TestContext {
         artist: String = "Artist",
         album: String = "Album",
         genre: String = "",
+        isCompilation: Bool = false,
         filename: String = "track.mp3",
         format: String = "mp3",
         rootID: Int64 = 1,
         discNumber: Int? = nil,
-        trackNumber: Int? = nil
+        trackNumber: Int? = nil,
+        addedAt: Date = Date()
     ) -> TrackImport {
         TrackImport(
             identityKey: identity,
@@ -751,11 +1327,13 @@ private struct TestContext {
                 artist: artist,
                 album: album,
                 genre: genre,
+                isCompilation: isCompilation,
                 discNumber: discNumber,
                 trackNumber: trackNumber,
                 fileSize: 1_024,
                 modifiedAt: Date(timeIntervalSince1970: 1_700_000_000),
-                format: format
+                format: format,
+                addedAt: addedAt
             )
         )
     }

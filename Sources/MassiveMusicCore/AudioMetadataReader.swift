@@ -7,6 +7,7 @@ public struct AudioMetadata: Sendable {
     public var album: String
     public var albumArtist: String
     public var genre: String
+    public var isCompilation: Bool
     public var discNumber: Int?
     public var trackNumber: Int?
     public var duration: Double
@@ -23,6 +24,7 @@ public enum AudioMetadataReader {
             album: "",
             albumArtist: "",
             genre: "",
+            isCompilation: false,
             discNumber: nil,
             trackNumber: nil,
             duration: 0,
@@ -59,6 +61,25 @@ public enum AudioMetadataReader {
                 break
             }
         }
+        if url.pathExtension.lowercased() == "mp3",
+           let info = try? AudioMetadataWriter.infoDictionary(at: url) {
+            result.isCompilation = Self.booleanValue(info["compilation"])
+            result.discNumber = Self.integerValue(info["disc number"]) ?? result.discNumber
+            result.trackNumber = Self.integerValue(info["track number"]) ?? result.trackNumber
+            if let value = info["album artist"] as? String { result.albumArtist = value }
+        }
         return result
+    }
+
+    private static func integerValue(_ value: Any?) -> Int? {
+        if let number = value as? NSNumber { return number.intValue }
+        if let string = value as? String { return Int(string) }
+        return nil
+    }
+
+    private static func booleanValue(_ value: Any?) -> Bool {
+        if let number = value as? NSNumber { return number.boolValue }
+        guard let string = value as? String else { return false }
+        return ["1", "true", "yes"].contains(string.lowercased())
     }
 }

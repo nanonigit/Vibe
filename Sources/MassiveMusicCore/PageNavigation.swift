@@ -35,9 +35,9 @@ public enum PageNavigation {
         }
 
         let increments = [1_000, 100, 10]
-        let backward = increments.map {
+        let backward = increments.filter { current - $0 >= 1 }.map {
             PageJumpEntry(
-                target: max(1, current - $0),
+                target: current - $0,
                 label: "-\($0)",
                 kind: .backward
             )
@@ -45,9 +45,9 @@ public enum PageNavigation {
         let nearby = (max(1, current - 5)...min(pageCount, current + 5)).map {
             PageJumpEntry(target: $0, label: String($0), kind: .page)
         }
-        let forward = increments.reversed().map {
+        let forward = increments.reversed().filter { current + $0 <= pageCount }.map {
             PageJumpEntry(
-                target: min(pageCount, current + $0),
+                target: current + $0,
                 label: "+\($0)",
                 kind: .forward
             )

@@ -1,5 +1,14 @@
 # MassiveMusic v0.2 Progress
 
+# Phase 39 progress
+
+- Reproduced the reported stale `13/14` FLAC conversion status. All 14 source FLAC files pass `ffprobe`, and the last-side source converts successfully in isolation, so the source audio is not the cause.
+- Traced the stall to batch staging and a blocking ffmpeg stderr reader: an exception before the progress-reset `defer` left the previous status visible and prevented already converted files from being registered.
+- Changed importing to a per-file pipeline and replaced pipe reads with ffmpeg progress-file polling. A failed file is reported and skipped while the remaining files continue, and progress is reset on every exit path.
+- Added activity events for library insertion, first cache insertion, immediate main-storage insertion, user-confirmed later movement, and reconnect-time movement.
+- Activity history now prunes transactionally to the newest 1,000 rows and uses 100-row pages.
+- All 77 tests in 3 suites pass, including new activity retention/paging and importer-control regressions. The arm64 Release builds and passes strict deep signature verification.
+
 ## 2026-07-16 17:05 Disc and track number columns
 
 - Added persisted visibility and width settings for independent Disc Number and Track Number columns.
@@ -346,3 +355,128 @@
 - The mini player now requests enrichment when it opens and whenever the current track changes, so embedded, cached, or downloaded album artwork updates without returning to the full window.
 - Added a regression test. All 57 tests in 3 suites pass.
 - Built and deep-signed the arm64 Release, then verified the production mini player with artwork-bearing tracks. The mini player displayed the actual album covers and refreshed the cover after automatic track advancement instead of showing the MassiveMusic application icon.
+
+# Phase 32 progress
+
+- Reproduced the M4A `AudioToolbox error prm?` write failure using a generated AAC/M4A fixture. AudioToolbox exposes that information dictionary as read-only.
+- Added an AVFoundation bridge that replaces only the M4A `moov` header, reads the result back, and proves the `mdat` audio bytes are unchanged. Title, artist, album, album artist, genre, track number, and disc number are covered.
+- Fixed the mini player at 390×180 by removing the native resizable style while it is active; the full player restores normal resizing.
+- Loaded the bounded playlist list during view-model initialization and changed the track context menu to direct playlist choices instead of a difficult nested submenu.
+- Adopted `Vibe` as the app display/product name while retaining `com.local.MassiveMusic` and the existing Application Support path so the production library is not migrated or duplicated.
+- All 65 tests in 3 suites pass. The production database still has 370,270 tracks and 370,270 FTS rows, and `PRAGMA quick_check` returns `ok`.
+- The remaining 13 leading-space titles are all M4A files. Their database/source update is intentionally waiting because `/Volumes/Transcend/Music/Music` is currently not mounted; no missing source was treated as a successful edit.
+
+# Phase 33 progress
+
+- Reproduced the reported SQLite error by starting a scan with a valid selected folder and stale root ID. The pre-fix scanner attempted to insert that ID into `scan_sessions` and failed its foreign key.
+- The scanner now verifies that the supplied root exists and belongs to the selected path. If not, it resolves or registers the selected path and bookmark before creating a session, then uses that effective ID throughout the scan.
+- The production database was not rebuilt or rewritten during diagnosis. It retains 370,270 tracks and 370,270 FTS rows; `PRAGMA foreign_key_check` is empty and `quick_check` is `ok`.
+
+# Phase 34 progress
+
+- Added checkbox selection exclusively to the Duplicate Tracks diagnostic list, without changing normal library browsing behavior.
+- Added page-scoped Select All and Clear Selection controls, a live selected-song count, and a destructive bulk-delete button that is disabled for an empty selection.
+- Bulk deletion reuses the existing mandatory confirmation and clearly separates removal from the Vibe library from moving the selected source files to macOS Trash. Vibe never chooses a duplicate to remove automatically.
+- All 67 tests in 3 suites pass, including a regression that locks the duplicate-selection and confirmation wiring in place.
+- Built and ad-hoc signed the arm64 Release, passed deep strict signature verification, and launched `outputs/Vibe.app` as PID 57353. Read-only production verification retained 370,270 tracks and 370,270 FTS rows with `quick_check=ok`; no source or database row was deleted during verification.
+
+# Phase 35 progress
+
+- Connected the existing three-second scan-root monitor to the paged track table and added a background existence check limited to the current page (at most 200 tracks), so disconnected roots and individually missing visible files receive a persistent orange external-drive warning without probing all 370,270 files.
+- A valid local cache overrides source availability and remains playable. Individual missing source files are detected during bounded playback URL resolution, marked unavailable in SQLite without deletion, and immediately reflected in the current table.
+- Replaced the generic macOS file-open error with Japanese/English guidance that distinguishes a disconnected drive from an individually missing file and points to reconnecting or rescanning.
+- Added database and UI/playback regressions. All 69 tests in 3 suites pass.
+- Built the arm64 Release, ad-hoc signed the embedded framework and app with production entitlements, passed deep strict signature verification, and launched `outputs/Vibe.app` as PID 83538. Read-only production verification retained 370,270 tracks and 370,270 FTS rows with `quick_check=ok`.
+
+# Phase 36 progress
+
+- Added Command-A selection to the focused track table. It replaces the selection with the current bounded page (at most 200 tracks), so the 370,270-track library is never materialized as one selection array.
+- Kept the handler focus-scoped: Command-A in the search field continues to select the search text instead of selecting songs.
+- Added a regression test for focus scoping and bounded visible-page selection. All 70 tests in 3 suites pass.
+- Built the arm64 Release, ad-hoc signed the embedded framework and app, passed deep strict signature verification, and launched `outputs/Vibe.app` as PID 94359. Read-only production verification retained 370,270 tracks and 370,270 FTS rows with `quick_check=ok`.
+
+# Phase 37 progress
+
+- Traced the hidden final track to the root `safeAreaInset`: the fixed player bar could visually overlap the `NavigationSplitView` without consistently reducing the track table's geometry.
+- Replaced the overlay-style inset with a root vertical layout containing the navigation content, divider, and fixed-height player bar as separate regions. The track table and page controls now end above the player bar.
+- Updated the existing bottom-player regression to require dedicated layout space. All 70 tests in 3 suites pass.
+- Built and ad-hoc signed the arm64 Release, passed deep strict signature verification, and launched `outputs/Vibe.app` as PID 7529. Visual verification confirmed that the content/page-control boundary remains above the player bar.
+
+# Phase 38 progress
+
+- Found that the library had not been deleted: Vibe had opened a new empty unsandboxed database while the populated container database still contained 370,270 tracks, 26,857 album rows, 11,806 artist rows, and 370,270 FTS rows.
+- Added deterministic compatibility lookup for the existing container database and promoted its existing scan root to the primary storage destination instead of silently creating a local `~/Music/Vibe` destination.
+- Made the Library section permanently expanded and restored Songs, Albums, Artists, Genres, Folders, and Favorites. Cache is now shown only for an external primary path under `/Volumes`; a local primary destination itself serves as the cache.
+- The Cache page remains an exact paged join of `local_cache` and `tracks`, so it lists cached copies only and never materializes the full library.
+- Automatic leading-space metadata cleanup now waits until every scan root is mounted, avoiding misleading write errors while the SSD is disconnected.
+- All 75 tests in 3 suites pass. The arm64 Release built successfully, passed deep strict code-signature verification, and is running from `outputs/Vibe.app` as PID 16791 against the populated container database. `PRAGMA quick_check` is `ok`.
+- Visual verification confirmed the restored Library rows, 370,270-track count, conditional Cache row, and the clear disconnected-drive warning. `diskutil list external physical` currently returns no external disk, so `/Volumes/Transcend` is not mounted by macOS at final verification time.
+
+# Phase 40 progress
+
+- Reproduced the FLAC importer frozen at 100% on item 11/13. `ffmpeg` had already exited; `Process.waitUntilExit()` was blocking the actor after the termination event had been delivered through the main run loop.
+- Removed the redundant blocking wait and read the already-available termination status. Verified all 13 reported Deep Purple FLAC files sequentially through the same MP3 encoder; items 12 and 13 completed, originals were unchanged, and temporary outputs were removed.
+- Playlist-targeted imports now add each successfully registered track immediately, so a later conversion failure cannot leave the playlist empty.
+- The cache retention count is now both directly editable and adjustable with stepper arrows in the Cache page and Settings.
+- Added the sortable/resizable/hideable Date Added column and a reliable icon for Recently Added.
+- Moved Up Next from the right inspector into its own Library page with bounded queue paging, play/remove actions, and Clear All.
+- Missing genres are now classified automatically on playback by the bundled local classifier without API cost or Keychain prompts; explicit OpenAI/Gemini suggestions remain available.
+- All 83 tests in 3 suites pass. The arm64 Release built, passed deep strict signature verification, and is running from `outputs/Vibe.app`.
+
+# Phase 41 progress
+
+- Traced the AI genre registration error to the metadata writer: it required the original source file even after classification had succeeded, so cached tracks failed while the external main storage was disconnected.
+- Genre suggestions now update Vibe's SQLite library first. The source audio tag is also updated only when the original file is currently available; an offline cached track no longer fails with `The file doesn’t exist.`
+- Renamed the confirmation action from `ファイルへ適用` to `ライブラリへ登録` so the UI accurately describes the offline-safe behavior.
+- Added an offline-source regression. All 84 tests in 3 suites pass.
+
+# Phase 42 progress
+
+- MusicBrainz results are now proposals: title, artist, and album remain untouched. Optional disc/track-number filling requires normalized title, artist, album, and local album track-count agreement.
+- Fixed metadata writes for real M4A variants that reject direct movie-header mutation by falling back to AVFoundation passthrough export on the untouched work copy, followed by read-back validation before replacement.
+- URL diagnostic cards refresh from the exact paged result total. Added a conservative paged `文字化け候補` diagnostic covering title, artist, album, album artist, genre, and filename without loading the library.
+- Library navigation rows can be dragged vertically and store their order. Conditional Cache visibility does not erase its saved position.
+- Added optional, resumable character-width normalization. It streams 200 available tracks per ID page, writes only changed tags, converts half-width kana and full-width ASCII, and preserves ordinary spaces and unrelated compatibility characters.
+- Added focused regressions for normalization boundaries, persisted cursor/toggle behavior, sidebar order, MusicBrainz safety, URL totals, mojibake diagnostics, M4A passthrough fallback, and offline AI genre registration.
+- All 87 tests in 3 suites pass.
+- Built and ad-hoc signed the arm64 Release, passed deep strict signature verification, and launched `outputs/Vibe.app` as PID 27578. The production database retains 370,238 tracks and matching FTS rows with `quick_check=ok`; width normalization remains safely OFF until enabled in Display settings. The current diagnostics find 16 URL-bearing MP3 rows and 883 conservative mojibake candidates.
+
+# Phase 43 progress
+
+- Added Previous and Next controls to the single-track metadata editor, together with a visible current-position count and Command-[ / Command-] shortcuts.
+- The editor captures only the currently loaded bounded page in its displayed search/sort order. Moving first writes and verifies the current file; a failed write or repair confirmation keeps the editor on the same track without discarding the fields.
+- Successfully edited metadata is retained in the navigation snapshot, so returning to an earlier item in the same session shows the newly saved values. MusicBrainz candidates and status are cleared when the target changes.
+- Added regressions for save-before-navigation wiring and edited-track snapshot updates. The complete suite passes with 89 tests across 3 suites.
+- Built the arm64 Release, ad-hoc signed the embedded framework and app with the production entitlements, passed deep strict signature verification, and launched `outputs/Vibe.app` as PID 48068.
+
+# Phase 44 progress
+
+- Reproduced the persistent Songs spinner after Metadata Diagnostics navigation and sampled the live process. Multiple `refreshMetadataDiagnostics()` readers were spending the full sample inside the correlated duplicate-track `EXISTS` query, starving ordinary page reads.
+- The production-sized duplicate count did not finish within 38 seconds before interruption. Its grouped equivalent returned the available duplicate-row count in about 0.39 seconds.
+- Replaced the correlated duplicate count/page queries with grouped duplicate keys, combined the five ordinary diagnostic totals into one table pass, and made page/summary refresh tasks cancel stale navigation work.
+- Added duplicate-count/page and stale-task regressions. All 91 tests in 3 suites pass.
+- Built and ad-hoc signed the arm64 Release with production entitlements, passed deep strict signature verification, and launched `outputs/Vibe.app` as PID 61339. A post-launch runtime sample found no long-running metadata-diagnostics reader.
+
+# Phase 45 progress
+
+- Added a discoverable Library reorder mode. Rows retain drag-and-drop ordering and now also expose explicit Up/Down controls, with the complete order persisted across launches.
+- Renamed “Storage & Inbox” to “Storage & Imports” and separated it from SSD Differences so the two sidebar actions open different settings pages.
+- Relative page controls are now emitted only when their destination is valid. Page 1 no longer shows -10, -100, or -1000.
+- Strengthened MP3 repair for legacy or damaged ID3 size fields: Vibe searches for the audio boundary only when three consecutive, structurally valid MPEG Layer III frames agree. The MPEG payload is kept byte-for-byte.
+- Automatic width normalization now records a failed track, advances its resumable cursor, and continues with later tracks instead of repeatedly stopping at the first unreadable file.
+- All 93 tests in 3 suites pass. Production database verification retained 370,238 tracks and 370,238 FTS rows with `quick_check=ok`.
+
+# Phase 46 progress
+
+- Reproduced the reported failure after audio-boundary recovery: the enclosing ID3v2.2 tag boundary was valid, but an individual legacy frame declared an impossible size.
+- Explicit repair now preserves readable v2.2 frames and artwork. If the v2.2 frame table is itself unreadable, Vibe discards only that damaged tag table, rebuilds the primary fields from the library edit, and retains the verified MPEG payload byte-for-byte.
+- Added a damaged-v2.2 regression alongside the existing readable-v2.2 artwork-preservation test. All 94 tests in 3 suites pass.
+
+# Phase 47 progress
+
+- Metadata-variation links now carry both the metadata field and its displayed value into the Songs view. The resulting SQLite query uses an exact comparison, so an Album link shows only that exact album value and does not mix in a same-named title or a differently cased album.
+- Added persisted drag-resizing for Album/Artist summary columns, compact grouped batch metadata editing, and stale-detail cancellation when leaving an artist page.
+- MP3 compilation albums can be marked with the TCMP frame in both single and batch editors. Individual track artists are intentionally preserved; Album Artist remains independently editable.
+- Explicit repair can rebuild an unreadable ID3v2.2 frame table from library metadata after validating the MPEG boundary, without re-encoding or changing the audio payload.
+- All 98 tests in 3 suites pass, including exact album-link isolation, compilation-tag round trips, resizable summary wiring, and damaged-ID3 audio preservation.
+- Built the arm64 Release, ad-hoc signed the embedded framework and app with the production entitlements, passed deep strict signature verification, and launched `outputs/Vibe.app` as PID 16491. Production verification retained 370,238 tracks and matching FTS rows with `quick_check=ok`.

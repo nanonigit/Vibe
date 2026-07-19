@@ -6,4 +6,6 @@ MassiveMusic.xcodeproj/xcuserdata/
 *.xcresult
 *.sqlite*
 PerformanceArtifacts/
+work/
+outputs/
 

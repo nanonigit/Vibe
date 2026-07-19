@@ -1,7 +1,9 @@
 import Foundation
 
-public enum LibrarySection: String, CaseIterable, Identifiable, Sendable {
+public enum LibrarySection: String, CaseIterable, Identifiable, Hashable, Sendable {
     case tracks = "曲"
+    case recentlyAdded = "最近追加した曲"
+    case upNext = "次に再生"
     case albums = "アルバム"
     case artists = "アーティスト"
     case genres = "ジャンル"
@@ -15,8 +17,21 @@ public enum LibrarySection: String, CaseIterable, Identifiable, Sendable {
     public var id: String { rawValue }
 }
 
+public enum StorageTopology {
+    /// A separate Mac-local cache is only useful while the primary library is
+    /// mounted outside the startup volume. Keep this path based so a detached
+    /// external drive retains the same topology while it is unavailable.
+    public static func usesSeparateLocalCache(primaryPath: String?) -> Bool {
+        guard let primaryPath, !primaryPath.isEmpty else { return false }
+        let standardized = URL(fileURLWithPath: primaryPath).standardizedFileURL.path
+        return standardized == "/Volumes" || standardized.hasPrefix("/Volumes/")
+    }
+}
+
 public enum LibraryActivityKind: String, CaseIterable, Identifiable, Codable, Hashable, Sendable {
     case added
+    case addedToCache
+    case addedToMainStorage
     case fileModified
     case metadataChanged
     case unavailable
@@ -83,6 +98,7 @@ public enum MetadataIssueKind: String, CaseIterable, Identifiable, Equatable, Se
     case missingArtist
     case missingAlbum
     case urlInMP3Metadata
+    case suspectedMojibake
     case duplicateTracks
     case suspectedVariations
     public var id: String { rawValue }
@@ -93,6 +109,16 @@ public enum MetadataField: String, CaseIterable, Identifiable, Sendable {
     case artist
     case album
     public var id: String { rawValue }
+}
+
+public struct ExactMetadataFilter: Hashable, Sendable {
+    public let field: MetadataField
+    public let value: String
+
+    public init(field: MetadataField, value: String) {
+        self.field = field
+        self.value = value
+    }
 }
 
 public enum MetadataVariationReason: String, Sendable {
@@ -199,6 +225,7 @@ public enum ArtistSort: String, CaseIterable, Identifiable, Equatable, Sendable 
 
 public enum TrackPlaybackScope: Equatable, Sendable {
     case library(query: String)
+    case recentlyAdded(query: String)
     case album(name: String, artist: String)
     case artist(name: String)
     case genre(name: String)
@@ -206,6 +233,7 @@ public enum TrackPlaybackScope: Equatable, Sendable {
     case cache(query: String)
     case playlist(id: Int64)
     case metadataIssue(kind: MetadataIssueKind)
+    case metadataValue(field: MetadataField, value: String)
 }
 
 public struct TrackPlaybackContext: Equatable, Sendable {
@@ -230,6 +258,7 @@ public struct Track: Identifiable, Hashable, Sendable {
     public let album: String
     public let albumArtist: String
     public let genre: String
+    public let isCompilation: Bool
     public let discNumber: Int?
     public let trackNumber: Int?
     public let duration: Double
@@ -252,6 +281,7 @@ public struct Track: Identifiable, Hashable, Sendable {
         album: String = "",
         albumArtist: String = "",
         genre: String = "",
+        isCompilation: Bool = false,
         discNumber: Int? = nil,
         trackNumber: Int? = nil,
         duration: Double = 0,
@@ -273,6 +303,7 @@ public struct Track: Identifiable, Hashable, Sendable {
         self.album = album
         self.albumArtist = albumArtist
         self.genre = genre
+        self.isCompilation = isCompilation
         self.discNumber = discNumber
         self.trackNumber = trackNumber
         self.duration = duration
@@ -287,12 +318,13 @@ public struct Track: Identifiable, Hashable, Sendable {
     }
 }
 
-public struct TrackMetadataEdit: Hashable, Sendable {
+public struct TrackMetadataEdit: Hashable, Codable, Sendable {
     public var title: String
     public var artist: String
     public var album: String
     public var albumArtist: String
     public var genre: String
+    public var isCompilation: Bool
     public var discNumber: Int?
     public var trackNumber: Int?
     public var artworkData: Data?
@@ -303,6 +335,7 @@ public struct TrackMetadataEdit: Hashable, Sendable {
         album = track.album
         albumArtist = track.albumArtist
         genre = track.genre
+        isCompilation = track.isCompilation
         discNumber = track.discNumber
         trackNumber = track.trackNumber
         artworkData = nil
@@ -315,6 +348,97 @@ public struct TrackMetadataEdit: Hashable, Sendable {
         normalized.title = String(title.drop(while: { $0 == " " || $0 == "　" }))
         return normalized
     }
+
+    /// Normalizes only character-width variants. Broad compatibility
+    /// normalization is intentionally avoided so Roman numerals, circled
+    /// numbers, ligatures, and intentional spacing remain untouched.
+    public func normalizingCharacterWidths() -> TrackMetadataEdit {
+        var normalized = self
+        normalized.title = MetadataTextNormalizer.normalizedWidths(title)
+        normalized.artist = MetadataTextNormalizer.normalizedWidths(artist)
+        normalized.album = MetadataTextNormalizer.normalizedWidths(album)
+        normalized.albumArtist = MetadataTextNormalizer.normalizedWidths(albumArtist)
+        normalized.genre = MetadataTextNormalizer.normalizedWidths(genre)
+        return normalized
+    }
+
+    public func hasTextChanges(comparedWith track: Track) -> Bool {
+        title != track.title || artist != track.artist || album != track.album
+            || albumArtist != track.albumArtist || genre != track.genre
+    }
+}
+
+public struct PendingMetadataEdit: Identifiable, Hashable, Sendable {
+    public let id: Int64
+    public let trackID: Int64
+    public let edit: TrackMetadataEdit
+    public let updatedAt: Date
+
+    public init(id: Int64, trackID: Int64, edit: TrackMetadataEdit, updatedAt: Date) {
+        self.id = id
+        self.trackID = trackID
+        self.edit = edit
+        self.updatedAt = updatedAt
+    }
+}
+
+public extension Track {
+    /// Returns an in-memory representation of metadata that was successfully written to the file.
+    func applying(_ edit: TrackMetadataEdit) -> Track {
+        Track(
+            id: id,
+            rootID: rootID,
+            relativePath: relativePath,
+            filename: filename,
+            title: edit.title,
+            artist: edit.artist,
+            album: edit.album,
+            albumArtist: edit.albumArtist,
+            genre: edit.genre,
+            isCompilation: edit.isCompilation,
+            discNumber: edit.discNumber,
+            trackNumber: edit.trackNumber,
+            duration: duration,
+            fileSize: fileSize,
+            modifiedAt: modifiedAt,
+            format: format,
+            bitrate: bitrate,
+            hasArtwork: edit.artworkData != nil || hasArtwork,
+            isAvailable: isAvailable,
+            addedAt: addedAt,
+            isFavorite: isFavorite
+        )
+    }
+}
+
+public enum MetadataTextNormalizer {
+    public static func normalizedWidths(_ value: String) -> String {
+        var result = ""
+        var halfwidthKana = String.UnicodeScalarView()
+
+        func appendKana() {
+            guard !halfwidthKana.isEmpty else { return }
+            result.append(String(halfwidthKana).precomposedStringWithCompatibilityMapping)
+            halfwidthKana.removeAll(keepingCapacity: true)
+        }
+
+        for scalar in value.unicodeScalars {
+            switch scalar.value {
+            case 0xFF61...0xFF9F:
+                halfwidthKana.append(scalar)
+            case 0xFF01...0xFF5E:
+                appendKana()
+                if let ascii = UnicodeScalar(scalar.value - 0xFEE0) {
+                    result.unicodeScalars.append(ascii)
+                }
+            default:
+                appendKana()
+                result.unicodeScalars.append(scalar)
+            }
+        }
+        appendKana()
+        return result
+    }
 }
 
 public struct MusicMetadataCandidate: Identifiable, Hashable, Sendable {
@@ -326,6 +450,7 @@ public struct MusicMetadataCandidate: Identifiable, Hashable, Sendable {
     public let albumArtist: String
     public let discNumber: Int
     public let trackNumber: Int
+    public let mediumTrackCount: Int?
     public let releaseDate: String?
     public let releaseStatus: String?
     public let matchScore: Int
@@ -339,6 +464,7 @@ public struct MusicMetadataCandidate: Identifiable, Hashable, Sendable {
         albumArtist: String,
         discNumber: Int,
         trackNumber: Int,
+        mediumTrackCount: Int?,
         releaseDate: String?,
         releaseStatus: String?,
         matchScore: Int
@@ -351,6 +477,7 @@ public struct MusicMetadataCandidate: Identifiable, Hashable, Sendable {
         self.albumArtist = albumArtist
         self.discNumber = discNumber
         self.trackNumber = trackNumber
+        self.mediumTrackCount = mediumTrackCount
         self.releaseDate = releaseDate
         self.releaseStatus = releaseStatus
         self.matchScore = matchScore
@@ -391,6 +518,7 @@ public enum MusicBrainzMetadataMatcher {
                             albumArtist: albumArtist,
                             discNumber: medium.position,
                             trackNumber: trackNumber,
+                            mediumTrackCount: medium.trackCount,
                             releaseDate: release.date,
                             releaseStatus: release.status,
                             matchScore: score
@@ -493,11 +621,13 @@ public enum MusicBrainzMetadataMatcher {
         let format: String?
         let tracks: [ReleaseTrack]?
         let trackOffset: Int?
+        let trackCount: Int?
 
         enum CodingKeys: String, CodingKey {
             case position, format
             case tracks = "track"
             case trackOffset = "track-offset"
+            case trackCount = "track-count"
         }
     }
 
@@ -521,6 +651,7 @@ public struct BatchMetadataChanges: Equatable, Sendable {
     public var album: String?
     public var albumArtist: String?
     public var genre: String?
+    public var isCompilation: Bool?
     public var discNumber: Int?
     public var changesDiscNumber: Bool
     public var trackNumber: Int?
@@ -534,6 +665,7 @@ public struct BatchMetadataChanges: Equatable, Sendable {
         album: String? = nil,
         albumArtist: String? = nil,
         genre: String? = nil,
+        isCompilation: Bool? = nil,
         discNumber: Int? = nil,
         changesDiscNumber: Bool = false,
         trackNumber: Int? = nil,
@@ -546,6 +678,7 @@ public struct BatchMetadataChanges: Equatable, Sendable {
         self.album = album
         self.albumArtist = albumArtist
         self.genre = genre
+        self.isCompilation = isCompilation
         self.discNumber = discNumber
         self.changesDiscNumber = changesDiscNumber
         self.trackNumber = trackNumber
@@ -555,7 +688,7 @@ public struct BatchMetadataChanges: Equatable, Sendable {
     }
 
     public var isEmpty: Bool {
-        title == nil && artist == nil && album == nil && albumArtist == nil && genre == nil &&
+        title == nil && artist == nil && album == nil && albumArtist == nil && genre == nil && isCompilation == nil &&
             !changesDiscNumber && !changesTrackNumber && artworkData == nil
     }
 
@@ -566,6 +699,7 @@ public struct BatchMetadataChanges: Equatable, Sendable {
         if let album { edit.album = album }
         if let albumArtist { edit.albumArtist = albumArtist }
         if let genre { edit.genre = genre }
+        if let isCompilation { edit.isCompilation = isCompilation }
         if changesDiscNumber { edit.discNumber = discNumber }
         if changesTrackNumber {
             edit.trackNumber = trackNumber.map { $0 + (incrementsTrackNumber ? offset : 0) }

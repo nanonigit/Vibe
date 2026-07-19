@@ -19,6 +19,9 @@ public enum AudioMetadataWriter {
         if edit.artworkData != nil, ext != "mp3" {
             throw MassiveMusicError.metadataWriteFailed("ジャケットのファイル書き込みは現在MP3に対応しています。元のファイルは変更していません。")
         }
+        if edit.isCompilation, ext != "mp3" {
+            throw MassiveMusicError.metadataWriteFailed("コンピレーションタグのファイル書き込みは現在MP3に対応しています。元のファイルは変更していません。")
+        }
         let fileManager = FileManager.default
         let temporaryDirectory = fileManager.temporaryDirectory
             .appending(path: "MassiveMusicMetadataWrites", directoryHint: .isDirectory)
@@ -73,6 +76,13 @@ public enum AudioMetadataWriter {
     public static func infoDictionary(at url: URL) throws -> [String: Any] {
         if url.pathExtension.lowercased() == "wav" { return try riffInfoDictionary(at: url) }
         if url.pathExtension.lowercased() == "mp3" { return try id3InfoDictionary(at: url) }
+        if url.pathExtension.lowercased() == "m4a" {
+            var readError: NSError?
+            if let info = MassiveMusicReadM4AMetadata(url, &readError) { return info }
+            throw MassiveMusicError.metadataWriteFailed(
+                readError?.localizedDescription ?? "M4Aメタデータを読み込めませんでした。"
+            )
+        }
         var file: AudioFileID?
         let openStatus = AudioFileOpenURL(url as CFURL, .readPermission, 0, &file)
         guard openStatus == noErr, let file else { throw statusError(openStatus) }
@@ -83,33 +93,6 @@ public enum AudioMetadataWriter {
         let status = AudioFileGetProperty(file, kAudioFilePropertyInfoDictionary, &size, &dictionary)
         guard status == noErr, let dictionary else { throw statusError(status) }
         return dictionary.takeRetainedValue() as NSDictionary as? [String: Any] ?? [:]
-    }
-
-    private static func setInfoDictionary(_ edit: TrackMetadataEdit, at url: URL) throws {
-        var file: AudioFileID?
-        let openStatus = AudioFileOpenURL(url as CFURL, .readWritePermission, 0, &file)
-        guard openStatus == noErr, let file else { throw statusError(openStatus) }
-        defer { AudioFileClose(file) }
-
-        var info = (try? infoDictionary(at: url)) ?? [:]
-        info["title"] = edit.title
-        info["artist"] = edit.artist
-        info["album"] = edit.album
-        info["album artist"] = edit.albumArtist
-        info["genre"] = edit.genre
-        if let trackNumber = edit.trackNumber { info["track number"] = String(trackNumber) }
-        else { info.removeValue(forKey: "track number") }
-        if let discNumber = edit.discNumber { info["disc number"] = String(discNumber) }
-        else { info.removeValue(forKey: "disc number") }
-
-        var dictionary: CFDictionary = info as CFDictionary
-        let status = withUnsafePointer(to: &dictionary) {
-            AudioFileSetProperty(
-                file, kAudioFilePropertyInfoDictionary,
-                UInt32(MemoryLayout<CFDictionary>.size), $0
-            )
-        }
-        guard status == noErr else { throw statusError(status) }
     }
 
     /// M4A exposes its AudioToolbox info dictionary as read-only (`prm?`).
@@ -158,7 +141,7 @@ public enum AudioMetadataWriter {
             throw MassiveMusicError.metadataWriteFailed("ID3v2.2以前のMP3タグは、安全な変換確認後に修復できます。")
         }
 
-        var replacedIDs: Set<String> = ["TIT2", "TPE1", "TALB", "TPE2", "TCON", "TRCK", "TPOS"]
+        var replacedIDs: Set<String> = ["TIT2", "TPE1", "TALB", "TPE2", "TCON", "TRCK", "TPOS", "TCMP"]
         if edit.artworkData != nil { replacedIDs.insert("APIC") }
         var frames = existing.frames.filter { !replacedIDs.contains($0.id) }.map { frame in
             // ID3v2.4 frame sizes are synchsafe while ID3v2.3 frame sizes are
@@ -176,6 +159,7 @@ public enum AudioMetadataWriter {
             ("TPOS", edit.discNumber.map(String.init) ?? "")
         ]
         for (id, value) in values where !value.isEmpty { frames.append(id3v23TextFrame(id: id, value: value)) }
+        if edit.isCompilation { frames.append(id3v23TextFrame(id: "TCMP", value: "1")) }
         if let artworkData = edit.artworkData {
             frames.append(try id3v23ArtworkFrame(artworkData))
         }
@@ -211,15 +195,26 @@ public enum AudioMetadataWriter {
             throw MassiveMusicError.metadataWriteFailed("ID3タグの音声開始位置を安全に判定できません。元のファイルは変更していません。")
         }
         let bodySize = synchsafeInteger(data[6...9])
-        let audioOffset = 10 + bodySize
-        guard audioOffset + 1 < data.count,
-              data[audioOffset] == 0xFF,
-              data[audioOffset + 1] & 0xE0 == 0xE0 else {
+        let declaredAudioOffset = 10 + bodySize
+        let audioOffset: Int
+        if hasMPEGSync(data, at: declaredAudioOffset) {
+            audioOffset = declaredAudioOffset
+        } else if let recoveredOffset = validatedMPEGAudioOffset(in: data, after: 10) {
+            // Some old taggers wrote a plausible but incorrect ID3 allocation.
+            // Accept a recovered boundary only after three structurally valid,
+            // consecutive MPEG Layer III frames. This avoids treating 0xFF bytes
+            // in artwork or damaged tag payloads as the start of the audio stream.
+            audioOffset = recoveredOffset
+        } else {
             throw MassiveMusicError.metadataWriteFailed("MP3音声の開始位置を確認できないため修復を中止しました。元のファイルは変更していません。")
         }
         let frames: [ID3Frame]
         if version == 2 {
-            frames = try convertedID3v22Frames(data, audioOffset: audioOffset)
+            // Preserve readable v2.2 frames (notably artwork), but an explicit
+            // repair must still be able to rebuild a tag whose frame table is
+            // damaged. In that case the database-backed edit supplies the
+            // primary fields and only the verified MPEG payload is retained.
+            frames = (try? convertedID3v22Frames(data, audioOffset: audioOffset)) ?? []
         } else {
             // v2.0/v2.1 did not standardize a frame layout that can be preserved
             // safely. The database-backed edit supplies the primary fields while
@@ -227,6 +222,81 @@ public enum AudioMetadataWriter {
             frames = []
         }
         return ParsedID3(majorVersion: version, bodySize: bodySize, audioOffset: audioOffset, frames: frames)
+    }
+
+    private struct MPEGFrameLayout {
+        let length: Int
+        let version: Int
+        let layer: Int
+        let sampleRate: Int
+    }
+
+    private static func hasMPEGSync(_ data: Data, at offset: Int) -> Bool {
+        guard offset >= 0, offset + 1 < data.count else { return false }
+        return data[offset] == 0xFF && data[offset + 1] & 0xE0 == 0xE0
+    }
+
+    private static func validatedMPEGAudioOffset(in data: Data, after start: Int) -> Int? {
+        guard data.count >= 12 else { return nil }
+        let upperBound = data.count - 4
+        var candidate = max(0, start)
+        while candidate <= upperBound {
+            guard hasMPEGSync(data, at: candidate),
+                  let first = mpegFrameLayout(in: data, at: candidate) else {
+                candidate += 1
+                continue
+            }
+            if hasValidatedMPEGFrames(in: data, at: candidate, first: first) { return candidate }
+            candidate += 1
+        }
+        return nil
+    }
+
+    private static func hasValidatedMPEGFrames(
+        in data: Data, at offset: Int, first: MPEGFrameLayout
+    ) -> Bool {
+        var nextOffset = offset + first.length
+        var validFrames = 1
+        while validFrames < 3,
+              let next = mpegFrameLayout(in: data, at: nextOffset),
+              next.version == first.version,
+              next.layer == first.layer,
+              next.sampleRate == first.sampleRate {
+            validFrames += 1
+            nextOffset += next.length
+        }
+        return validFrames == 3
+    }
+
+    private static func mpegFrameLayout(in data: Data, at offset: Int) -> MPEGFrameLayout? {
+        guard offset >= 0, offset + 3 < data.count else { return nil }
+        let header = UInt32(data[offset]) << 24
+            | UInt32(data[offset + 1]) << 16
+            | UInt32(data[offset + 2]) << 8
+            | UInt32(data[offset + 3])
+        guard header & 0xFFE0_0000 == 0xFFE0_0000 else { return nil }
+        let version = Int((header >> 19) & 0x3)
+        let layer = Int((header >> 17) & 0x3)
+        let bitrateIndex = Int((header >> 12) & 0xF)
+        let sampleRateIndex = Int((header >> 10) & 0x3)
+        let padding = Int((header >> 9) & 0x1)
+        guard version != 1, layer == 1,
+              (1...14).contains(bitrateIndex), sampleRateIndex < 3 else { return nil }
+
+        let mpeg1Bitrates = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320]
+        let mpeg2Bitrates = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160]
+        let sampleRates: [Int]
+        switch version {
+        case 3: sampleRates = [44_100, 48_000, 32_000]
+        case 2: sampleRates = [22_050, 24_000, 16_000]
+        default: sampleRates = [11_025, 12_000, 8_000]
+        }
+        let bitrate = (version == 3 ? mpeg1Bitrates : mpeg2Bitrates)[bitrateIndex] * 1_000
+        let sampleRate = sampleRates[sampleRateIndex]
+        let coefficient = version == 3 ? 144 : 72
+        let length = coefficient * bitrate / sampleRate + padding
+        guard length >= 4, offset + length <= data.count else { return nil }
+        return MPEGFrameLayout(length: length, version: version, layer: layer, sampleRate: sampleRate)
     }
 
     /// Converts recoverable ID3v2.2 frames to v2.3. Unknown three-character
@@ -344,7 +414,7 @@ public enum AudioMetadataWriter {
         let data = try Data(contentsOf: url, options: .mappedIfSafe)
         let parsed = try parseID3(data)
         let names = ["TIT2": "title", "TPE1": "artist", "TALB": "album", "TPE2": "album artist",
-                     "TCON": "genre", "TRCK": "track number", "TPOS": "disc number"]
+                     "TCON": "genre", "TRCK": "track number", "TPOS": "disc number", "TCMP": "compilation"]
         var result: [String: Any] = [:]
         for frame in parsed.frames {
             guard let key = names[frame.id], let value = decodeID3Text(frame.payload) else { continue }
@@ -547,6 +617,13 @@ public enum AudioMetadataWriter {
             && normalized(values["album"]) == normalized(edit.album)
             && normalized(values["track number"]) == normalized(edit.trackNumber.map(String.init))
             && normalized(values["disc number"]) == normalized(edit.discNumber.map(String.init))
+            && compilationValue(values["compilation"]) == edit.isCompilation
+    }
+
+    private static func compilationValue(_ value: Any?) -> Bool {
+        if let number = value as? NSNumber { return number.boolValue }
+        let text = normalized(value).lowercased()
+        return text == "1" || text == "true" || text == "yes"
     }
 
     private static func artworkMatches(_ edit: TrackMetadataEdit, at url: URL) throws -> Bool {

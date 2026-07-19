@@ -47,6 +47,28 @@ struct ScannerTests {
         #expect(try database.journalMode().lowercased() == "wal")
     }
 
+    @Test func staleScanRootIDIsResolvedFromTheSelectedFolderBeforeCreatingSession() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "MassiveMusicStaleRoot-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try makeWAV().write(to: directory.appending(path: "tone.wav"))
+        let database = try LibraryDatabase(url: directory.appending(path: "library.sqlite"))
+        let scanner = LibraryScanner(database: database)
+
+        // Reproduces a rescan started from a stale view-model/root identifier.
+        // The selected folder and bookmark are still valid, so the scanner must
+        // resolve/register that folder before inserting the foreign-keyed session.
+        try await scanner.scan(
+            root: SecurityScopedRoot(url: directory, bookmark: Data()),
+            rootID: 9_999
+        )
+
+        let root = try #require(database.scanRoots().first)
+        #expect(root.lastKnownPath == directory.path)
+        #expect(try database.trackCount() == 1)
+        #expect(try database.resumableSession(rootID: root.id) == nil)
+    }
+
     private func makeWAV() -> Data {
         let sampleRate: UInt32 = 8_000
         let sampleCount: UInt32 = 800

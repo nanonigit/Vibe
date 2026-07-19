@@ -30,19 +30,36 @@ public actor LibraryScanner {
             try database.setRootAvailability(id: rootID, isAvailable: false)
             throw MassiveMusicError.scanRootUnavailable
         }
-        try database.setRootAvailability(id: rootID, isAvailable: true, path: rootURL.path)
-        let resumable = try database.resumableSession(rootID: rootID)
+        // A rescan can be initiated from view state that predates a scan-root
+        // refresh. Never insert a foreign-keyed session with that stale ID:
+        // resolve the selected folder against the current database first.
+        let normalizedPath = rootURL.path.precomposedStringWithCanonicalMapping
+        let registeredRoot = try database.scanRoot(id: rootID)
+        let effectiveRootID: Int64
+        if registeredRoot?.lastKnownPath.precomposedStringWithCanonicalMapping == normalizedPath {
+            effectiveRootID = rootID
+        } else {
+            let values = try rootURL.resourceValues(forKeys: [.volumeUUIDStringKey, .nameKey])
+            effectiveRootID = try database.addScanRoot(
+                displayName: values.name ?? rootURL.lastPathComponent,
+                bookmark: root.bookmark,
+                volumeUUID: values.volumeUUIDString,
+                path: normalizedPath
+            )
+        }
+        try database.setRootAvailability(id: effectiveRootID, isAvailable: true, path: normalizedPath)
+        let resumable = try database.resumableSession(rootID: effectiveRootID)
         let sessionID: Int64
         if let existingID = resumable?.id {
             sessionID = existingID
         } else {
-            sessionID = try database.createScanSession(rootID: rootID)
+            sessionID = try database.createScanSession(rootID: effectiveRootID)
         }
         activeSessionID = sessionID
         defer { activeSessionID = nil }
         try await performScan(
             rootURL: rootURL,
-            rootID: rootID,
+            rootID: effectiveRootID,
             sessionID: sessionID,
             resumeCursor: resumable?.cursor,
             progress: handler
@@ -158,6 +175,7 @@ public actor LibraryScanner {
                         album: metadata.album,
                         albumArtist: metadata.albumArtist,
                         genre: metadata.genre,
+                        isCompilation: metadata.isCompilation,
                         discNumber: metadata.discNumber,
                         trackNumber: metadata.trackNumber,
                         duration: metadata.duration,

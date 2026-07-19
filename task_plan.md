@@ -4,7 +4,7 @@
 Extend MassiveMusic with safe local ingest, configurable storage/cache, library-vs-disk reconciliation, favorites, web metadata, lyrics, recommendations, news/wiki, a mini player, and visible task status without risking the existing 370,270-track library.
 
 ## Current Phase
-Phase 28 — full-cell artist and album navigation hit targets (complete)
+Phase 42 — metadata width normalization and library ordering (complete)
 
 ## Feature Status
 
@@ -323,4 +323,154 @@ Phase 28 — full-cell artist and album navigation hit targets (complete)
 - [x] Refresh artwork when playback changes tracks while the mini player is visible
 - [x] Add a regression test and run the complete suite
 - [x] Build, sign, install, and verify the arm64 Release interactively
+- **Status:** complete
+
+### Phase 32: M4A metadata safety, fixed mini player, and playlist visibility
+- [x] Reproduce the M4A `AudioToolbox error prm?` failure with a real AAC/M4A fixture
+- [x] Replace only the M4A movie header and verify that the `mdat` audio payload is byte-identical
+- [x] Disable native mini-player resizing while restoring resizing in the full player
+- [x] Load playlists before the first context menu and show them as direct choices
+- [x] Keep the existing bundle ID and database location while adopting the Vibe display name
+- [x] Run the complete unit/integration suite and rebuild the arm64 Release
+- [ ] Apply the remaining 13 M4A leading-space fixes after `/Volumes/Transcend/Music/Music` is mounted
+- **Status:** complete except for the connection-dependent source-file pass
+
+### Phase 33: Rescan stale-root recovery
+- [x] Reproduce the reported `scan_sessions.root_id` foreign-key failure
+- [x] Resolve the selected folder against current `scan_roots` before session insertion
+- [x] Re-register a valid selected folder when the UI-supplied root ID is stale
+- [x] Verify scanner behavior and database integrity without rebuilding the library
+- **Status:** complete
+
+### Phase 34: Duplicate bulk selection and deletion
+- [x] Add an explicit checkbox to every row in Duplicate Tracks diagnostics
+- [x] Add page-scoped Select All and Clear Selection actions with a live selected count
+- [x] Add one bulk-delete action that remains disabled until at least one row is checked
+- [x] Reuse the required confirmation that separates library-only removal from moving source files to Trash
+- [x] Add a regression test and run the complete suite
+- [x] Build, sign, and launch the updated arm64 Release
+- **Status:** complete
+
+### Phase 35: Missing-source playback status
+- [x] Reflect disconnected scan roots in visible track rows without loading the full library
+- [x] Keep tracks playable when a valid local cache exists
+- [x] Show a persistent orange external-drive warning for tracks with neither source nor cache
+- [x] Mark an individually missing source file unavailable after bounded playback resolution
+- [x] Replace the generic file-open error with localized reconnect/rescan guidance
+- [x] Add regressions and run the complete test suite
+- [x] Build, sign, and launch the updated arm64 Release
+- **Status:** complete
+
+### Phase 36: Command-A page selection
+- [x] Keep Command-A scoped to the focused track table instead of text fields
+- [x] Select every track in the current bounded page without loading the full library
+- [x] Preserve normal search-field Command-A behavior
+- [x] Add a regression test
+- [x] Run the complete suite and deploy the arm64 Release
+- **Status:** complete
+
+### Phase 37: Keep the final track above the player bar
+- [x] Trace the clipped final row to the root safe-area overlay layout
+- [x] Reserve a dedicated vertical region for the full player bar
+- [x] Add a regression and run the complete test suite
+- [x] Build, sign, launch, and visually verify the arm64 Release
+- **Status:** complete
+
+### Phase 38: Restore the library and separate external cache
+- [x] Trace the empty library to an unintended second Application Support database
+- [x] Reopen the populated 370,270-track container database without rebuilding it
+- [x] Keep the Library section expanded so Songs, Albums, and Artists cannot disappear
+- [x] Show Cache only when the primary storage is external; use local primary storage as its own cache
+- [x] Limit the Cache page to rows backed by `local_cache`, using the existing paged query
+- [x] Preserve the external-storage topology while the drive is disconnected
+- [x] Prevent automatic source-tag cleanup from running while a scan root is unavailable
+- [x] Add regressions, run the complete suite, build/sign/launch, and visually verify the arm64 Release
+- **Status:** complete; the external drive is currently not mounted by macOS
+
+### Phase 39: Import progress recovery and bounded activity log
+- [x] Reproduce the stale FLAC-to-MP3 `13/14` progress state and validate all 14 source FLAC files
+- [x] Process conversion, registration, cache, and storage movement one file at a time
+- [x] Continue after a per-file failure and always clear import progress on every exit path
+- [x] Record library, local-cache, and main-storage additions with their actual paths
+- [x] Keep only the newest 1,000 activity rows and display exactly 100 rows per page
+- [x] Add retention, paging, storage-event, and importer-control regressions
+- [x] Run the complete suite, build/sign the arm64 Release, and launch Vibe
+- **Status:** complete
+
+### Phase 40: Complete FLAC imports and library navigation additions
+- [x] Remove the post-termination FLAC conversion deadlock
+- [x] Add successful imports to the target playlist incrementally
+- [x] Verify the reported 13-file Deep Purple album through item 13
+- [x] Make the cache retention count directly editable
+- [x] Add the Recently Added icon and Date Added column
+- [x] Move Up Next from the inspector to the Library sidebar
+- [x] Automatically register a local genre classification during playback
+- [x] Run all tests, build/sign the arm64 Release, launch, and visually verify Vibe
+- **Status:** complete
+
+### Phase 41: Register AI genre while main storage is offline
+- [x] Reproduce the missing-file failure after a successful AI genre suggestion
+- [x] Save the suggested genre to SQLite without requiring the original source file
+- [x] Write the source audio tag only when the original file is currently available
+- [x] Rename the confirmation action to describe library registration
+- [x] Add an offline-source regression and run the complete test suite
+- [x] Build, sign, launch, and verify the updated arm64 Release
+- **Status:** complete
+
+### Phase 42: Safe metadata proposals, diagnostics, width normalization, and library ordering
+- [x] Keep MusicBrainz title, artist, and album results proposal-only
+- [x] Auto-fill disc/track suggestions only when names and album track count match, with an ON/OFF setting
+- [x] Fix M4A metadata updates that reject direct header rewriting by using a verified passthrough fallback
+- [x] Refresh URL diagnostic counts from the exact result query and add paged mojibake candidates
+- [x] Allow Library sidebar rows to be drag-reordered and persist their complete order
+- [x] Add resumable 200-row width normalization for half-width kana and full-width ASCII metadata
+- [x] Add a Display setting to stop and resume automatic normalization
+- [x] Run the complete regression suite
+- [x] Build, sign, launch, and verify the updated arm64 Release
+- **Status:** complete
+
+### Phase 43: Sequential track metadata editing
+- [x] Keep a bounded snapshot of the currently displayed track order when opening the editor
+- [x] Add Previous and Next controls with the current position and Command-[ / Command-] shortcuts
+- [x] Save and verify the current source file before moving to the adjacent track
+- [x] Keep the editor on the current track with its input intact when saving fails or needs ID3 repair
+- [x] Refresh all editor fields and MusicBrainz suggestion state after navigation
+- [x] Add regressions and run the complete test suite
+- [x] Build, sign, launch, and verify the updated arm64 Release
+- **Status:** complete
+
+### Phase 44: Metadata diagnostics loading recovery
+- [x] Capture a live process sample while the spinner is stuck
+- [x] Replace the duplicate-track correlated subquery with bounded group aggregation
+- [x] Compute ordinary metadata issue totals in one table pass
+- [x] Cancel stale page loads and metadata-summary refresh tasks during navigation
+- [x] Add regressions and run the complete test suite
+- [x] Build, sign, launch, and verify the updated arm64 Release
+- **Status:** complete
+
+### Phase 45: Sidebar navigation, bounded page jumps, and safe MP3 boundary recovery
+- [x] Add a visible Library reorder mode with drag handles and Up/Down controls
+- [x] Rename Storage & Inbox to Storage & Imports
+- [x] Open storage/import management and SSD differences as distinct settings pages
+- [x] Hide relative page jumps whose destination is outside the valid page range
+- [x] Recover an incorrect ID3 allocation only after validating consecutive MPEG audio frames
+- [x] Continue automatic width normalization after an individual unreadable track and persist the cursor
+- [x] Run the complete regression suite, build/sign the arm64 Release, and launch Vibe
+- **Status:** complete
+
+### Phase 46: Damaged ID3v2.2 frame-table recovery
+- [x] Reproduce an ID3v2.2 tag whose enclosing boundary is valid but frame allocation is corrupt
+- [x] Preserve readable legacy frames while rebuilding unreadable frame tables from library metadata
+- [x] Verify that the MPEG audio payload remains byte-identical
+- [x] Run the complete suite, rebuild/sign Vibe, and retry skipped width-normalization rows
+- **Status:** complete
+
+### Phase 47: Metadata editing and exact diagnostic navigation
+- [x] Rebuild damaged ID3v2.2 tag tables while preserving the verified MPEG audio payload
+- [x] Add MP3 compilation-album editing through the TCMP frame without replacing per-track artists
+- [x] Redesign the batch editor into compact, clearly grouped rows
+- [x] Prevent stale artist-detail headers from returning over Metadata Diagnostics
+- [x] Add persistent drag-resizing to Album and Artist summary columns
+- [x] Open metadata-variation links as exact field-and-value track lists
+- [x] Add regressions and run the complete arm64 build and test suite
 - **Status:** complete
