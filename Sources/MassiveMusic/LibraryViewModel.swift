@@ -2112,25 +2112,36 @@ final class LibraryViewModel: ObservableObject {
                 
                 // Reusable track registration closure
                 let processAndCommitTrack = { @MainActor (localURL: URL, relativePath: String, isPendingImportItem: PendingImport?) async throws -> Int64 in
-                    let metadata = await AudioMetadataReader.read(url: localURL)
-                    let format = localURL.pathExtension.uppercased()
-                    let fileSize = (try? localURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) } ?? 0
+                    var activeURL = localURL
+                    var activeRelativePath = relativePath
+                    var movedItem: URL?
+                    
+                    if let item = isPendingImportItem, primaryAvailable, let primaryDest = primary {
+                        let targetURL = try await self.storage.move(item, to: primaryDest)
+                        activeURL = targetURL
+                        activeRelativePath = getRelativePath(targetURL)
+                        movedItem = targetURL
+                    }
+                    
+                    let metadata = await AudioMetadataReader.read(url: activeURL)
+                    let format = activeURL.pathExtension.uppercased()
+                    let fileSize = (try? activeURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) } ?? 0
                     let resKeys: Set<URLResourceKey> = [.fileResourceIdentifierKey, .volumeUUIDStringKey]
-                    let resValues = try? localURL.resourceValues(forKeys: resKeys)
+                    let resValues = try? activeURL.resourceValues(forKeys: resKeys)
                     let volumeUUID = resValues?.volumeUUIDString ?? "unknown-volume"
                     let resourceID = resValues?.fileResourceIdentifier.map { String(describing: $0) }
                     let identityKey: String
                     if let resourceID, !resourceID.isEmpty {
                         identityKey = "\(volumeUUID)|resource|\(resourceID)"
                     } else {
-                        identityKey = "\(volumeUUID)|path|\(relativePath)"
+                        identityKey = "\(volumeUUID)|path|\(activeRelativePath)"
                     }
                     
                     let track = Track(
                         id: 0,
                         rootID: primaryRootID,
-                        relativePath: relativePath,
-                        filename: localURL.lastPathComponent,
+                        relativePath: activeRelativePath,
+                        filename: activeURL.lastPathComponent,
                         title: metadata.title,
                         artist: metadata.artist,
                         album: metadata.album,
@@ -2164,7 +2175,7 @@ final class LibraryViewModel: ObservableObject {
                     if self.isStorageExternal {
                         let cacheURL = OfflineCacheManager.cacheDirectoryURL().appending(path: "\(trackID).\(format.lowercased())")
                         if !FileManager.default.fileExists(atPath: cacheURL.path) {
-                            try FileManager.default.copyItem(at: localURL, to: cacheURL)
+                            try FileManager.default.copyItem(at: activeURL, to: cacheURL)
                         }
                         try self.database.recordCachedTrack(
                             trackID: trackID, path: cacheURL.path, fileSize: fileSize,
@@ -2177,8 +2188,7 @@ final class LibraryViewModel: ObservableObject {
                     }
                     
                     if let item = isPendingImportItem {
-                        if primaryAvailable, let primaryDest = primary {
-                            let targetURL = try await self.storage.move(item, to: primaryDest)
+                        if let targetURL = movedItem {
                             try? self.database.recordTrackActivity(
                                 trackID: trackID, kind: .addedToMainStorage,
                                 absolutePath: targetURL.path
@@ -2188,12 +2198,12 @@ final class LibraryViewModel: ObservableObject {
                                 try self.database.updatePendingImport(
                                     id: item.id, state: .keptLocal, localPath: cacheURL.path
                                 )
-                                if localURL.standardizedFileURL != cacheURL.standardizedFileURL {
-                                    try? FileManager.default.removeItem(at: localURL)
+                                if activeURL.standardizedFileURL != cacheURL.standardizedFileURL {
+                                    try? FileManager.default.removeItem(at: activeURL)
                                 }
                             } else {
                                 try self.database.updatePendingImport(
-                                    id: item.id, state: .keptLocal, localPath: localURL.path
+                                    id: item.id, state: .keptLocal, localPath: activeURL.path
                                 )
                             }
                         }
