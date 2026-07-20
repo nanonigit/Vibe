@@ -1616,10 +1616,26 @@ struct ContentView: View {
 
     private var scanStatus: some View {
         HStack(spacing: 12) {
-            ProgressView().controlSize(.small)
-            Text(model.text("\(model.scanProgress.processed.formatted()) 曲", "\(model.scanProgress.processed.formatted()) songs"))
+            if model.scanProgress.state == .running {
+                ProgressView().controlSize(.small)
+            } else {
+                Image(systemName: "pause.circle.fill")
+                    .foregroundStyle(.secondary)
+            }
+            
+            let stateText = model.scanProgress.state == .paused
+                ? model.text("スキャン一時停止中", "Scan paused")
+                : model.text("ライブラリをスキャン中...", "Scanning library...")
+            
+            Text(stateText)
+                .fontWeight(.semibold)
+            
+            Text(model.text("(\(model.scanProgress.processed.formatted()) 曲スキャン済み)", "(\(model.scanProgress.processed.formatted()) songs scanned)"))
+                .foregroundStyle(.secondary)
+            
             let speed = String(format: "%.1f", model.scanProgress.tracksPerSecond)
             Text(model.text("\(speed) 曲/秒", "\(speed) songs/sec"))
+                .foregroundStyle(.secondary)
             if model.scanProgress.errors > 0 {
                 Label(model.text("\(model.scanProgress.errors) エラー", "\(model.scanProgress.errors) errors"), systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
