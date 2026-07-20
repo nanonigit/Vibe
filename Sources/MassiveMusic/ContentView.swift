@@ -2644,6 +2644,14 @@ private struct CurrentTrackInfoEditorView: View {
                             browserURL = model.youtubeURL(for: track)
                         }
                     }
+                    HStack(spacing: 8) {
+                        Button(model.text("Wikipedia (アルバム)", "Wikipedia (Album)")) {
+                            browserURL = model.albumWikipediaURL(for: track)
+                        }.disabled(track.album.isEmpty)
+                        Button(model.text("Google (アルバム)", "Google (Album)")) {
+                            browserURL = model.albumGoogleURL(for: track)
+                        }.disabled(track.album.isEmpty)
+                    }
                 }
                 
                 Divider()

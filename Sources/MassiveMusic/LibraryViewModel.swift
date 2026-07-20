@@ -990,6 +990,27 @@ final class LibraryViewModel: ObservableObject {
         ]
         return components?.url
     }
+
+    func albumWikipediaURL(for track: Track) -> URL? {
+        guard !track.album.isEmpty else { return nil }
+        let host = language == .japanese ? "ja.wikipedia.org" : "en.wikipedia.org"
+        var components = URLComponents(string: "https://\(host)/w/index.php")
+        let query = track.artist.isEmpty ? track.album : "\(track.artist) \(track.album)"
+        components?.queryItems = [
+            URLQueryItem(name: "search", value: query)
+        ]
+        return components?.url
+    }
+
+    func albumGoogleURL(for track: Track) -> URL? {
+        guard !track.album.isEmpty else { return nil }
+        var components = URLComponents(string: "https://www.google.com/search")
+        let query = track.artist.isEmpty ? track.album : "\(track.artist) \(track.album)"
+        components?.queryItems = [
+            URLQueryItem(name: "q", value: query)
+        ]
+        return components?.url
+    }
     func previousPage() {
         guard offset > 0 else { return }
         if usesKeysetPaging, !usesDirectOffsetPaging, trackPageCursors.count > 1 { trackPageCursors.removeLast() }
