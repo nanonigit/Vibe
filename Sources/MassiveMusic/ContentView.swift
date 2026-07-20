@@ -465,8 +465,9 @@ struct ContentView: View {
                         model.addTrackIDsToPlaylist(trackIDs, playlistID: playlist.id)
                         return true
                     }
-                    .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-                        handleDroppedProviders(providers, playlistID: playlist.id)
+                    .dropDestination(for: URL.self) { urls, _ in
+                        guard !urls.isEmpty else { return false }
+                        model.importURLs(urls, toPlaylist: playlist.id)
                         return true
                     }
                 }
@@ -534,8 +535,10 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color.clear)
         .contentShape(Rectangle())
-        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-            handleDroppedProviders(providers)
+        .dropDestination(for: URL.self) { urls, _ in
+            guard !urls.isEmpty else { return false }
+            let activePlaylistID = model.section == .playlists ? model.selectedPlaylistID : nil
+            model.importURLs(urls, toPlaylist: activePlaylistID)
             return true
         }
     }
@@ -1637,15 +1640,40 @@ struct ContentView: View {
 
     private var importStatus: some View {
         HStack(spacing: 12) {
-            ProgressView(value: model.importProgress.fileProgress)
+            let overallProgress: Double = {
+                guard model.importProgress.totalFiles > 0 else { return 0.0 }
+                let completedFiles = Double(max(0, model.importProgress.currentFileIndex - 1))
+                let currentFileProgress = model.importProgress.state == .moving ? 1.0 : model.importProgress.fileProgress
+                return (completedFiles + currentFileProgress) / Double(model.importProgress.totalFiles)
+            }()
+            
+            ProgressView(value: overallProgress)
                 .progressViewStyle(.linear)
                 .frame(width: 80)
             
-            let percentStr = String(format: "%.0f%%", model.importProgress.fileProgress * 100)
-            Text(model.text(
-                "MP3に変換中... (\(model.importProgress.currentFileIndex)/\(model.importProgress.totalFiles)) \(percentStr)",
-                "Converting... (\(model.importProgress.currentFileIndex)/\(model.importProgress.totalFiles)) \(percentStr)"
-            ))
+            let statusText: String = {
+                switch model.importProgress.state {
+                case .converting:
+                    let percentStr = String(format: "%.0f%%", model.importProgress.fileProgress * 100)
+                    return model.text(
+                        "MP3に変換中... (\(model.importProgress.currentFileIndex)/\(model.importProgress.totalFiles)) \(percentStr)",
+                        "Converting... (\(model.importProgress.currentFileIndex)/\(model.importProgress.totalFiles)) \(percentStr)"
+                    )
+                case .moving:
+                    return model.text(
+                        "保存中... (\(model.importProgress.currentFileIndex)/\(model.importProgress.totalFiles))",
+                        "Saving... (\(model.importProgress.currentFileIndex)/\(model.importProgress.totalFiles))"
+                    )
+                case .completed:
+                    return model.text("取り込み完了", "Import completed")
+                case .failed(let err):
+                    return model.text("エラー: \(err)", "Error: \(err)")
+                case .idle:
+                    return ""
+                }
+            }()
+            
+            Text(statusText)
             
             Text(model.importProgress.currentFileName)
                 .lineLimit(1)

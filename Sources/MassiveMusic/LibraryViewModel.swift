@@ -2231,6 +2231,15 @@ final class LibraryViewModel: ObservableObject {
                             }
                             guard let item = staged.first else { continue }
                             let localURL = URL(filePath: item.localPath)
+                            await MainActor.run {
+                                self.importProgress = ImportProgress(
+                                    state: .moving,
+                                    currentFileIndex: currentIndex,
+                                    totalFiles: totalStageFiles,
+                                    fileProgress: 1.0,
+                                    currentFileName: displayName
+                                )
+                            }
                             let trackID = try await processAndCommitTrack(localURL, item.filename, item)
                             try recordImportedTrack(trackID)
                         } catch {
@@ -2483,6 +2492,9 @@ final class LibraryViewModel: ObservableObject {
                     try self.database.addTracks(ids, toPlaylist: playlistID)
                 }.value
                 refreshPlaylists()
+                if selectedPlaylistID == playlistID {
+                    loadCurrentPage(reset: false)
+                }
             } catch { errorMessage = error.localizedDescription }
         }
     }
