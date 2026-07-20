@@ -44,6 +44,8 @@ targets:
         NSPrincipalClass: NSApplication
         NSSupportsAutomaticTermination: true
         NSSupportsSuddenTermination: false
+        CFBundleShortVersionString: "0.14"
+        CFBundleVersion: "14"
     entitlements:
       path: Config/MassiveMusic.entitlements
       properties:
