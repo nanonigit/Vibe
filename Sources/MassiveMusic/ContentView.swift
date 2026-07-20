@@ -531,6 +531,7 @@ struct ContentView: View {
             }
             if [.running, .paused].contains(model.scanProgress.state) { scanStatus }
             if model.importProgress.state != .idle { importStatus }
+            if model.isBulkAutoFilling { bulkAutoFillStatus }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color.clear)
@@ -1696,6 +1697,17 @@ struct ContentView: View {
                 .truncationMode(.middle)
                 .foregroundStyle(.secondary)
             
+            Spacer()
+        }
+        .font(.caption)
+        .padding(8)
+        .background(.bar)
+    }
+
+    private var bulkAutoFillStatus: some View {
+        HStack(spacing: 12) {
+            ProgressView().controlSize(.small)
+            Text(model.bulkAutoFillProgress)
             Spacer()
         }
         .font(.caption)

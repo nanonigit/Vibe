@@ -426,6 +426,71 @@ actor MusicBrainzMetadataService {
         return try MusicBrainzMetadataMatcher.candidates(from: data, matching: track)
     }
 
+    func lookupRelease(releaseID: String) async throws -> [ReleaseTrack] {
+        if let lastRequestAt {
+            let elapsed = lastRequestAt.duration(to: clock.now)
+            let minimumInterval = Duration.milliseconds(1_100)
+            if elapsed < minimumInterval { try await clock.sleep(for: minimumInterval - elapsed) }
+        }
+        try Task.checkCancellation()
+        let url = URL(string: "https://musicbrainz.org/ws/2/release/\(releaseID)?inc=recordings&fmt=json")!
+        lastRequestAt = clock.now
+        let (data, response) = try await session.data(from: url)
+        guard let http = response as? HTTPURLResponse else { throw MusicMetadataLookupError.invalidResponse }
+        guard http.statusCode == 200 else { throw MusicMetadataLookupError.serviceUnavailable(http.statusCode) }
+        
+        struct MBArtistCredit: Decodable {
+            let name: String
+        }
+        struct MBRecording: Decodable {
+            let id: String
+            let title: String
+            let artistCredit: [MBArtistCredit]?
+            
+            enum CodingKeys: String, CodingKey {
+                case id, title
+                case artistCredit = "artist-credit"
+            }
+        }
+        struct MBTrack: Decodable {
+            let position: Int
+            let title: String
+            let recording: MBRecording
+        }
+        struct MBMedium: Decodable {
+            let position: Int
+            let trackCount: Int
+            let tracks: [MBTrack]
+            
+            enum CodingKeys: String, CodingKey {
+                case position
+                case trackCount = "track-count"
+                case tracks
+            }
+        }
+        struct MBReleaseResponse: Decodable {
+            let media: [MBMedium]?
+        }
+        
+        let release = try JSONDecoder().decode(MBReleaseResponse.self, from: data)
+        var result: [ReleaseTrack] = []
+        if let media = release.media {
+            for medium in media {
+                let disc = medium.position
+                for track in medium.tracks {
+                    let artistName = track.recording.artistCredit?.map(\.name).joined(separator: " & ") ?? ""
+                    result.append(ReleaseTrack(
+                        discNumber: disc,
+                        trackNumber: track.position,
+                        title: track.recording.title,
+                        artist: artistName
+                    ))
+                }
+            }
+        }
+        return result
+    }
+
     private func quotedPhrase(_ value: String) -> String {
         value.replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")

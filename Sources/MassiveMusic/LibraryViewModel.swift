@@ -152,6 +152,8 @@ final class LibraryViewModel: ObservableObject {
     @Published var cacheEnabled = true
     @Published var cacheTrackLimit = 24
     @Published var autoFillMusicBrainzTrackNumbers = true
+    @Published var isBulkAutoFilling = false
+    @Published var bulkAutoFillProgress = ""
     @Published var normalizeMetadataCharacterWidths = false
     @Published private(set) var cachedTrackIDs: Set<Int64> = []
     @Published private(set) var unavailableRootIDs: Set<Int64> = []
@@ -216,6 +218,7 @@ final class LibraryViewModel: ObservableObject {
     private var batchMetadataTask: Task<Void, Never>?
     private var leadingTitleSpaceCleanupTask: Task<Void, Never>?
     private var widthNormalizationTask: Task<Void, Never>?
+    private var bulkAutoFillTask: Task<Void, Never>?
     private var enrichmentTask: Task<Void, Never>?
     private var loadingAlbumArtworkIDs: Set<String> = []
     private var loadingArtistImageNames: Set<String> = []
@@ -2383,7 +2386,141 @@ final class LibraryViewModel: ObservableObject {
                 autoFillMusicBrainzTrackNumbers ? "true" : "false",
                 forKey: "musicbrainz.autoFillTrackNumbers"
             )
+            startBulkAutoFillIfNeeded()
         } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func startBulkAutoFillIfNeeded() {
+        guard autoFillMusicBrainzTrackNumbers else {
+            bulkAutoFillTask?.cancel()
+            bulkAutoFillTask = nil
+            isBulkAutoFilling = false
+            bulkAutoFillProgress = ""
+            return
+        }
+        
+        bulkAutoFillTask?.cancel()
+        bulkAutoFillTask = Task {
+            await runBulkAutoFill()
+        }
+    }
+
+    private func runBulkAutoFill() async {
+        await MainActor.run {
+            isBulkAutoFilling = true
+            bulkAutoFillProgress = text("一括オートフィル準備中...", "Preparing bulk auto-fill...")
+        }
+        
+        defer {
+            Task { @MainActor in
+                isBulkAutoFilling = false
+                bulkAutoFillProgress = ""
+            }
+        }
+        
+        let logPath = "/tmp/vibe_bulk_autofill.log"
+        let logMessage = "=== Bulk Auto-Fill Started at \(Date()) ===\n"
+        try? logMessage.write(toFile: logPath, atomically: true, encoding: .utf8)
+        
+        guard let tracks = try? database.allTracksMissingNumbers() else { return }
+        guard !tracks.isEmpty else {
+            try? "No tracks missing track/disc numbers found.\n".write(toFile: logPath, atomically: true, encoding: .utf8)
+            return
+        }
+        
+        // Group tracks by (artist, album)
+        var groups: [String: [Track]] = [:]
+        for track in tracks {
+            let artist = track.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+            let album = track.album.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !artist.isEmpty, !album.isEmpty else { continue }
+            let key = "\(artist.lowercased())|\(album.lowercased())"
+            groups[key, default: []].append(track)
+        }
+        
+        let totalAlbums = groups.count
+        var processedAlbums = 0
+        var updatedCount = 0
+        
+        let fileLogger = { (msg: String) in
+            if let fileHandle = FileHandle(forWritingAtPath: logPath) {
+                fileHandle.seekToEndOfFile()
+                if let data = msg.data(using: .utf8) {
+                    fileHandle.write(data)
+                }
+                fileHandle.closeFile()
+            }
+            print(msg, terminator: "")
+        }
+        
+        fileLogger("Found \(tracks.count) tracks missing numbers, grouped into \(totalAlbums) albums.\n")
+        
+        let normalized = { (val: String) -> String in
+            val.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: .current)
+                .filter { $0.isLetter || $0.isNumber }
+        }
+        
+        for (artistAlbumKey, localTracks) in groups {
+            guard !Task.isCancelled else { break }
+            guard let firstTrack = localTracks.first else { continue }
+            
+            processedAlbums += 1
+            let albumName = firstTrack.album
+            let artistName = firstTrack.artist
+            
+            await MainActor.run {
+                bulkAutoFillProgress = text(
+                    "解析中 (\(processedAlbums)/\(totalAlbums)): \(artistName) - \(albumName)",
+                    "Processing (\(processedAlbums)/\(totalAlbums)): \(artistName) - \(albumName)"
+                )
+            }
+            
+            do {
+                // Fetch candidates
+                let candidates = try await musicMetadata.candidates(for: firstTrack)
+                let localCount = try self.database.albumTrackCount(album: albumName, artist: artistName)
+                
+                // Find matching release candidate
+                guard let candidate = candidates.first(where: { cand in
+                    normalized(cand.artist) == normalized(artistName) &&
+                    normalized(cand.album) == normalized(albumName) &&
+                    cand.mediumTrackCount == localCount
+                }) else {
+                    continue
+                }
+                
+                fileLogger("Matching album found: \(artistName) - \(albumName) (ReleaseID: \(candidate.releaseID))\n")
+                
+                // Fetch full tracklist for this release
+                let mbTracks = try await musicMetadata.lookupRelease(releaseID: candidate.releaseID)
+                
+                // Match local tracks with MusicBrainz tracks by title
+                for localTrack in localTracks {
+                    guard !Task.isCancelled else { break }
+                    let localTitleNorm = normalized(localTrack.title)
+                    if let matchedMBTrack = mbTracks.first(where: { normalized($0.title) == localTitleNorm }) {
+                        // Apply numbers!
+                        var edit = TrackMetadataEdit(track: localTrack)
+                        edit.discNumber = matchedMBTrack.discNumber
+                        edit.trackNumber = matchedMBTrack.trackNumber
+                        
+                        // Update
+                        try await self.updateMetadataAsync(for: localTrack, edit: edit)
+                        updatedCount += 1
+                        
+                        let updateLog = "  -> Updated: \(localTrack.title) -> Disc: \(matchedMBTrack.discNumber), Track: \(matchedMBTrack.trackNumber) (File: \(localTrack.filename))\n"
+                        fileLogger(updateLog)
+                    }
+                }
+            } catch {
+                fileLogger("  Error processing \(artistName) - \(albumName): \(error.localizedDescription)\n")
+            }
+        }
+        
+        fileLogger("=== Bulk Auto-Fill Finished. Total updated: \(updatedCount) tracks ===\n")
+        await MainActor.run {
+            loadCurrentPage(reset: false)
+        }
     }
 
     func saveMetadataNormalizationSettings() {

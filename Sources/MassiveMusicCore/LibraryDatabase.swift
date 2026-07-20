@@ -447,6 +447,16 @@ public final class LibraryDatabase: @unchecked Sendable {
         }
     }
 
+    public func allTracksMissingNumbers() throws -> [Track] {
+        try pool.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: "SELECT * FROM tracks WHERE track_number IS NULL OR disc_number IS NULL"
+            )
+            return rows.map(Self.decodeTrack)
+        }
+    }
+
     public func pageTracks(
         query: String = "",
         sort: TrackSort = .title,

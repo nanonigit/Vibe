@@ -441,6 +441,20 @@ public enum MetadataTextNormalizer {
     }
 }
 
+public struct ReleaseTrack: Codable, Hashable, Sendable {
+    public let discNumber: Int
+    public let trackNumber: Int
+    public let title: String
+    public let artist: String
+    
+    public init(discNumber: Int, trackNumber: Int, title: String, artist: String) {
+        self.discNumber = discNumber
+        self.trackNumber = trackNumber
+        self.title = title
+        self.artist = artist
+    }
+}
+
 public struct MusicMetadataCandidate: Identifiable, Hashable, Sendable {
     public let id: String
     public let releaseID: String
