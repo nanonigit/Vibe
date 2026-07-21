@@ -1399,7 +1399,7 @@ struct ContentView: View {
 
     private var activityLogView: some View {
         VStack(spacing: 0) {
-            HStack {
+            HStack(spacing: 12) {
                 Picker(
                     model.text("ログの種類", "Log Type"),
                     selection: Binding(
@@ -1413,6 +1413,30 @@ struct ContentView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
+
+                Spacer()
+
+                Menu {
+                    Picker(
+                        model.text("保持件数", "Retention Limit"),
+                        selection: $model.maxLogRetentionLimit
+                    ) {
+                        ForEach(LogRetentionLimit.allCases) { limit in
+                            Text(limit.title(isJapanese: model.language == .japanese)).tag(limit)
+                        }
+                    }
+                    .onChange(of: model.maxLogRetentionLimit) { _, _ in
+                        model.saveLogRetentionSettings()
+                    }
+                } label: {
+                    Label(
+                        model.text("保持: \(model.maxLogRetentionLimit.rawValue.formatted())件", "Max: \(model.maxLogRetentionLimit.rawValue.formatted())"),
+                        systemImage: "slider.horizontal.3"
+                    )
+                    .font(.caption)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
@@ -3712,6 +3736,33 @@ private struct LibrarySettingsView: View {
                     Text(model.text(
                         "すべての曲をバックグラウンドで確認し、古いID3v2.2以前のMP3タグを検出した場合は、音声データを保ったまま最新互換のID3v2.3ヘッダーへ全自動で変換・保存します。",
                         "Scans all tracks in the background and automatically converts legacy ID3v2.2 or earlier MP3 tags to ID3v2.3 format while preserving audio data."
+                    ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    Divider()
+                    HStack {
+                        Text(model.text(
+                            "ログ保持件数の上限",
+                            "Log Retention Limit"
+                        ))
+                        Spacer()
+                        Picker(
+                            "",
+                            selection: $model.maxLogRetentionLimit
+                        ) {
+                            ForEach(LogRetentionLimit.allCases) { limit in
+                                Text(limit.title(isJapanese: model.language == .japanese)).tag(limit)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 180)
+                        .onChange(of: model.maxLogRetentionLimit) { _, _ in
+                            model.saveLogRetentionSettings()
+                        }
+                    }
+                    Text(model.text(
+                        "アクティビティログに保持する最大件数を設定します。上限を超えた古いログは1,000件単位で自動クリーンアップされます。",
+                        "Set the maximum number of log events to retain. Older logs exceeding this limit will be cleaned up in batches of 1,000."
                     ))
                     .font(.caption)
                     .foregroundStyle(.secondary)

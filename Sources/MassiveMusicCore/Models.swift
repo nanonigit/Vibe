@@ -72,6 +72,24 @@ public enum ActivityLogCategoryFilter: String, CaseIterable, Identifiable, Codab
     }
 }
 
+public enum LogRetentionLimit: Int, CaseIterable, Identifiable, Codable, Hashable, Sendable {
+    case count1000 = 1000
+    case count5000 = 5000
+    case count10000 = 10000
+    case count50000 = 50000
+
+    public var id: Int { rawValue }
+
+    public func title(isJapanese: Bool) -> String {
+        switch self {
+        case .count1000: isJapanese ? "1,000 件" : "1,000 items"
+        case .count5000: isJapanese ? "5,000 件 (標準)" : "5,000 items (Default)"
+        case .count10000: isJapanese ? "10,000 件" : "10,000 items"
+        case .count50000: isJapanese ? "50,000 件" : "50,000 items"
+        }
+    }
+}
+
 public struct LibraryActivityChange: Codable, Hashable, Sendable {
     public let field: String
     public let oldValue: String

@@ -112,6 +112,7 @@ final class LibraryViewModel: ObservableObject {
     @Published private(set) var storageSyncEvents: [LibraryActivityEvent] = []
     @Published var activityKindFilter: LibraryActivityKind? = nil
     @Published var activityCategoryFilter: ActivityLogCategoryFilter = .all
+    @Published var maxLogRetentionLimit: LogRetentionLimit = .count5000
     @Published private(set) var facets: [Facet] = []
     @Published private(set) var playlists: [Playlist] = []
     @Published var selectedTrackIDs: Set<Int64> = []
@@ -251,6 +252,11 @@ final class LibraryViewModel: ObservableObject {
         autoFillMusicBrainzTrackNumbers = (try? database.setting(forKey: "musicbrainz.autoFillTrackNumbers")) != "false"
         normalizeMetadataCharacterWidths = (try? database.setting(forKey: "metadata.normalizeCharacterWidths")) == "true"
         autoMigrateID3v22ToV23 = (try? database.setting(forKey: "metadata.autoMigrateID3v22ToV23")) != "false"
+        if let stored = try? database.setting(forKey: "activityLog.maxRetentionLimit"),
+           let val = Int(stored),
+           let limit = LogRetentionLimit(rawValue: val) {
+            maxLogRetentionLimit = limit
+        }
         librarySectionOrder = Self.decodeLibrarySectionOrder(
             (try? database.setting(forKey: "sidebar.libraryOrder"))
         )
@@ -481,6 +487,15 @@ final class LibraryViewModel: ObservableObject {
 
     func setActivityCategoryFilter(_ category: ActivityLogCategoryFilter) {
         activityCategoryFilter = category
+        loadCurrentPage(reset: true)
+    }
+
+    func saveLogRetentionSettings() {
+        try? database.setSetting(String(maxLogRetentionLimit.rawValue), forKey: "activityLog.maxRetentionLimit")
+        let limit = maxLogRetentionLimit.rawValue
+        Task.detached {
+            try? self.database.pruneActivityLog(maximumCount: limit)
+        }
         loadCurrentPage(reset: true)
     }
 

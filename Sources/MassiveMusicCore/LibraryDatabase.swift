@@ -168,7 +168,7 @@ public final class LibraryDatabase: @unchecked Sendable {
         offset: Int = 0,
         limit: Int = defaultPageSize
     ) throws -> LibraryActivityPage {
-        guard (1...1_000).contains(limit) else { throw MassiveMusicError.invalidPageSize }
+        guard (1...5_000).contains(limit) else { throw MassiveMusicError.invalidPageSize }
         let safeOffset = max(0, offset)
         return try pool.read { db in
             var predicates: [String] = []
@@ -2458,9 +2458,16 @@ public final class LibraryDatabase: @unchecked Sendable {
         )
     }
 
-    private static func pruneActivityLog(db: Database, maximumCount: Int = 1_000) throws {
+    public func pruneActivityLog(maximumCount: Int = 5_000, batchSize: Int = 1_000) throws {
+        try pool.write { db in
+            try Self.pruneActivityLog(db: db, maximumCount: maximumCount, batchSize: batchSize)
+        }
+    }
+
+    private static func pruneActivityLog(db: Database, maximumCount: Int = 5_000, batchSize: Int = 1_000) throws {
         let count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM library_activity_log") ?? 0
-        guard count > maximumCount else { return }
+        guard count >= maximumCount + batchSize else { return }
+        let pruneCount = count - maximumCount
         try db.execute(
             sql: """
                 DELETE FROM library_activity_log
@@ -2470,7 +2477,7 @@ public final class LibraryDatabase: @unchecked Sendable {
                     LIMIT ?
                 )
                 """,
-            arguments: [count - maximumCount]
+            arguments: [pruneCount]
         )
     }
 
