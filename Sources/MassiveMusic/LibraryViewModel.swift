@@ -1132,6 +1132,7 @@ final class LibraryViewModel: ObservableObject {
         let requestedDiagnosticKind = diagnosticKind
         let requestedActivityKind = activityKindFilter
         let requestedCategoryKinds = activityCategoryFilter.kinds
+        let requestedActivityLimit = maxLogRetentionLimit.rawValue
         let requestedGenre = selectedGenre
         let requestedGenreMode = genreDetailMode
         let requestedAlbum = selectedAlbum
@@ -1161,7 +1162,7 @@ final class LibraryViewModel: ObservableObject {
                     let page = try await Task.detached(priority: .userInitiated) {
                         try self.database.activityLogPage(
                             kinds: requestedActivityKind.map { [$0] } ?? requestedCategoryKinds,
-                            query: requestedQuery, offset: requestedOffset, limit: self.activityPageSize
+                            query: requestedQuery, offset: requestedOffset, limit: requestedActivityLimit
                         )
                     }.value
                     activityEvents = page.events

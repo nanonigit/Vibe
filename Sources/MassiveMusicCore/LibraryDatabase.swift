@@ -168,7 +168,7 @@ public final class LibraryDatabase: @unchecked Sendable {
         offset: Int = 0,
         limit: Int = defaultPageSize
     ) throws -> LibraryActivityPage {
-        guard (1...5_000).contains(limit) else { throw MassiveMusicError.invalidPageSize }
+        guard (1...50_000).contains(limit) else { throw MassiveMusicError.invalidPageSize }
         let safeOffset = max(0, offset)
         return try pool.read { db in
             var predicates: [String] = []
