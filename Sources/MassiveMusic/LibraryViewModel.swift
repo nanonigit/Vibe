@@ -707,11 +707,11 @@ final class LibraryViewModel: ObservableObject {
         let trimmedGeminiModel = geminiModel.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
             if !trimmedOpenAIKey.isEmpty {
-                try openAIKeychain.save(trimmedOpenAIKey)
+                try openAIKeychain.save(trimmedOpenAIKey, database: database)
                 try database.setSetting("true", forKey: "openai.keyConfigured")
             }
             if !trimmedGeminiKey.isEmpty {
-                try geminiKeychain.save(trimmedGeminiKey)
+                try geminiKeychain.save(trimmedGeminiKey, database: database)
                 try database.setSetting("true", forKey: "gemini.keyConfigured")
             }
             self.openAIModel = trimmedOpenAIModel.isEmpty ? "gpt-5.6-luna" : trimmedOpenAIModel
@@ -720,13 +720,13 @@ final class LibraryViewModel: ObservableObject {
             try database.setSetting(self.geminiModel, forKey: "gemini.model")
             if !trimmedOpenAIKey.isEmpty { hasOpenAIAPIKey = true }
             if !trimmedGeminiKey.isEmpty { hasGeminiAPIKey = true }
-            refreshAIProviderStates(allowAuthenticationUI: true, validateRemotely: true)
+            refreshAIProviderStates(allowAuthenticationUI: false, validateRemotely: true)
         } catch { errorMessage = error.localizedDescription }
     }
 
     func removeOpenAIAPIKey() {
         do {
-            try openAIKeychain.delete()
+            try openAIKeychain.delete(database: database)
             try database.setSetting("false", forKey: "openai.keyConfigured")
             hasOpenAIAPIKey = false
             genreSuggestion = nil
@@ -736,7 +736,7 @@ final class LibraryViewModel: ObservableObject {
 
     func removeGeminiAPIKey() {
         do {
-            try geminiKeychain.delete()
+            try geminiKeychain.delete(database: database)
             try database.setSetting("false", forKey: "gemini.keyConfigured")
             hasGeminiAPIKey = false
             geminiStatus = .notConfigured
@@ -745,7 +745,7 @@ final class LibraryViewModel: ObservableObject {
     }
 
     func validateAIProviders() {
-        refreshAIProviderStates(allowAuthenticationUI: true, validateRemotely: true)
+        refreshAIProviderStates(allowAuthenticationUI: false, validateRemotely: true)
     }
 
     func classifyGenre(for track: Track) {
@@ -758,10 +758,11 @@ final class LibraryViewModel: ObservableObject {
         let languageCode = language.rawValue
         Task { [weak self] in
             guard let self else { return }
+            let db = database
             let openKeychain = openAIKeychain
             let googleKeychain = geminiKeychain
-            async let openAIRead = Task.detached { openKeychain.readResult(allowAuthenticationUI: true) }.value
-            async let geminiRead = Task.detached { googleKeychain.readResult(allowAuthenticationUI: true) }.value
+            async let openAIRead = Task.detached { openKeychain.readResult(database: db, allowAuthenticationUI: false) }.value
+            async let geminiRead = Task.detached { googleKeychain.readResult(database: db, allowAuthenticationUI: false) }.value
             let reads = await (openAIRead, geminiRead)
             var failures: [String] = []
 
@@ -860,10 +861,11 @@ final class LibraryViewModel: ObservableObject {
 
     private func refreshOpenAIProviderState(allowAuthenticationUI: Bool, validateRemotely: Bool) {
         let keychain = openAIKeychain
+        let db = database
         Task { [weak self] in
             guard let self else { return }
             let result = await Task.detached {
-                keychain.readResult(allowAuthenticationUI: allowAuthenticationUI)
+                keychain.readResult(database: db, allowAuthenticationUI: false)
             }.value
             guard !Task.isCancelled else { return }
             let key: String?
@@ -892,11 +894,12 @@ final class LibraryViewModel: ObservableObject {
 
     private func refreshGeminiProviderState(allowAuthenticationUI: Bool, validateRemotely: Bool) {
         let keychain = geminiKeychain
+        let db = database
         let model = geminiModel
         Task { [weak self] in
             guard let self else { return }
             let result = await Task.detached {
-                keychain.readResult(allowAuthenticationUI: allowAuthenticationUI)
+                keychain.readResult(database: db, allowAuthenticationUI: false)
             }.value
             guard !Task.isCancelled else { return }
             let key: String?

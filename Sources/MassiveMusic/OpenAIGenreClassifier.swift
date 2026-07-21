@@ -46,24 +46,60 @@ enum OpenAIIntegrationError: LocalizedError {
 struct ProviderAPIKeychain: Sendable {
     let service: String
     private let account = "api-key"
+    private let dbKey: String
 
-    static let openAI = ProviderAPIKeychain(service: "com.local.MassiveMusic.openai")
-    static let gemini = ProviderAPIKeychain(service: "com.local.MassiveMusic.gemini")
+    static let openAI = ProviderAPIKeychain(
+        service: "com.local.MassiveMusic.openai",
+        dbKey: "openai.key"
+    )
+    static let gemini = ProviderAPIKeychain(
+        service: "com.local.MassiveMusic.gemini",
+        dbKey: "gemini.key"
+    )
 
-    var hasKey: Bool { (try? read()) != nil }
-
-    func readResult(allowAuthenticationUI: Bool) -> APIKeyReadResult {
-        do {
-            return .value(try read(allowAuthenticationUI: allowAuthenticationUI))
-        } catch OpenAIIntegrationError.keychain(let status)
-            where status == errSecInteractionNotAllowed || status == errSecAuthFailed {
-            return .authenticationRequired
-        } catch {
-            return .failure(error.localizedDescription)
+    func readResult(database: LibraryDatabase? = nil, allowAuthenticationUI: Bool = false) -> APIKeyReadResult {
+        if let database, let stored = try? database.setting(forKey: dbKey), !stored.isEmpty {
+            return .value(stored)
         }
+        if let legacy = try? readLegacyKeychain(allowAuthenticationUI: allowAuthenticationUI), !legacy.isEmpty {
+            if let database {
+                try? database.setSetting(legacy, forKey: dbKey)
+                deleteLegacyKeychain()
+            }
+            return .value(legacy)
+        }
+        return .value(nil)
     }
 
-    func read(allowAuthenticationUI: Bool = true) throws -> String? {
+    func read(database: LibraryDatabase? = nil, allowAuthenticationUI: Bool = false) throws -> String? {
+        if let database, let stored = try? database.setting(forKey: dbKey), !stored.isEmpty {
+            return stored
+        }
+        if let legacy = try? readLegacyKeychain(allowAuthenticationUI: allowAuthenticationUI), !legacy.isEmpty {
+            if let database {
+                try? database.setSetting(legacy, forKey: dbKey)
+                deleteLegacyKeychain()
+            }
+            return legacy
+        }
+        return nil
+    }
+
+    func save(_ value: String, database: LibraryDatabase? = nil) throws {
+        if let database {
+            try database.setSetting(value, forKey: dbKey)
+        }
+        deleteLegacyKeychain()
+    }
+
+    func delete(database: LibraryDatabase? = nil) throws {
+        if let database {
+            try database.removeSetting(forKey: dbKey)
+        }
+        deleteLegacyKeychain()
+    }
+
+    private func readLegacyKeychain(allowAuthenticationUI: Bool) throws -> String? {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -72,49 +108,25 @@ struct ProviderAPIKeychain: Sendable {
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
         if !allowAuthenticationUI {
-            query.merge([
-                kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail
-            ]) { _, new in new }
+            query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail
         }
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecItemNotFound { return nil }
         guard status == errSecSuccess else { throw OpenAIIntegrationError.keychain(status) }
         guard let data = result as? Data, let value = String(data: data, encoding: .utf8) else {
-            throw OpenAIIntegrationError.invalidResponse
+            return nil
         }
         return value
     }
 
-    func save(_ value: String) throws {
-        let match: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        let update: [String: Any] = [
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-            kSecValueData as String: Data(value.utf8)
-        ]
-        let updateStatus = SecItemUpdate(match as CFDictionary, update as CFDictionary)
-        if updateStatus == errSecSuccess { return }
-        guard updateStatus == errSecItemNotFound else { throw OpenAIIntegrationError.keychain(updateStatus) }
-        var addition = match
-        addition.merge(update) { _, new in new }
-        let status = SecItemAdd(addition as CFDictionary, nil)
-        guard status == errSecSuccess else { throw OpenAIIntegrationError.keychain(status) }
-    }
-
-    func delete() throws {
+    private func deleteLegacyKeychain() {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
-        let status = SecItemDelete(query as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw OpenAIIntegrationError.keychain(status)
-        }
+        _ = SecItemDelete(query as CFDictionary)
     }
 }
 

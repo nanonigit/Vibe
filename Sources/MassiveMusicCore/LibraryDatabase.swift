@@ -878,6 +878,12 @@ public final class LibraryDatabase: @unchecked Sendable {
         try pool.read { db in try String.fetchOne(db, sql: "SELECT value FROM app_settings WHERE key = ?", arguments: [key]) }
     }
 
+    public func removeSetting(forKey key: String) throws {
+        try pool.write { db in
+            try db.execute(sql: "DELETE FROM app_settings WHERE key = ?", arguments: [key])
+        }
+    }
+
     public func addStorageDestination(name: String, path: String, bookmark: Data, makePrimary: Bool = true) throws -> Int64 {
         try pool.write { db in
             if makePrimary { try db.execute(sql: "UPDATE storage_destinations SET is_primary = 0") }
