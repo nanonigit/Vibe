@@ -1416,27 +1416,20 @@ struct ContentView: View {
 
                 Spacer()
 
-                Menu {
-                    Picker(
-                        model.text("保持件数", "Retention Limit"),
-                        selection: $model.maxLogRetentionLimit
-                    ) {
-                        ForEach(LogRetentionLimit.allCases) { limit in
-                            Text(limit.title(isJapanese: model.language == .japanese)).tag(limit)
-                        }
+                Picker(
+                    model.text("保持: \(model.maxLogRetentionLimit.rawValue.formatted())件", "Max: \(model.maxLogRetentionLimit.rawValue.formatted())"),
+                    selection: $model.maxLogRetentionLimit
+                ) {
+                    ForEach(LogRetentionLimit.allCases) { limit in
+                        Text(limit.title(isJapanese: model.language == .japanese)).tag(limit)
                     }
-                    .onChange(of: model.maxLogRetentionLimit) { _, _ in
-                        model.saveLogRetentionSettings()
-                    }
-                } label: {
-                    Label(
-                        model.text("保持: \(model.maxLogRetentionLimit.rawValue.formatted())件", "Max: \(model.maxLogRetentionLimit.rawValue.formatted())"),
-                        systemImage: "slider.horizontal.3"
-                    )
-                    .font(.caption)
                 }
-                .menuStyle(.borderlessButton)
+                .pickerStyle(.menu)
+                .font(.caption)
                 .fixedSize()
+                .onChange(of: model.maxLogRetentionLimit) { _, _ in
+                    model.saveLogRetentionSettings()
+                }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
