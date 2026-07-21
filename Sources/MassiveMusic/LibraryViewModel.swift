@@ -111,6 +111,7 @@ final class LibraryViewModel: ObservableObject {
     @Published private(set) var activityEvents: [LibraryActivityEvent] = []
     @Published private(set) var storageSyncEvents: [LibraryActivityEvent] = []
     @Published var activityKindFilter: LibraryActivityKind? = nil
+    @Published var activityCategoryFilter: ActivityLogCategoryFilter = .all
     @Published private(set) var facets: [Facet] = []
     @Published private(set) var playlists: [Playlist] = []
     @Published var selectedTrackIDs: Set<Int64> = []
@@ -475,6 +476,11 @@ final class LibraryViewModel: ObservableObject {
 
     func changeActivityKind(_ kind: LibraryActivityKind?) {
         activityKindFilter = kind
+        loadCurrentPage(reset: true)
+    }
+
+    func setActivityCategoryFilter(_ category: ActivityLogCategoryFilter) {
+        activityCategoryFilter = category
         loadCurrentPage(reset: true)
     }
 
@@ -1110,6 +1116,7 @@ final class LibraryViewModel: ObservableObject {
         let knownTotal = requestedOffset == 0 ? nil : totalCount
         let requestedDiagnosticKind = diagnosticKind
         let requestedActivityKind = activityKindFilter
+        let requestedCategoryKinds = activityCategoryFilter.kinds
         let requestedGenre = selectedGenre
         let requestedGenreMode = genreDetailMode
         let requestedAlbum = selectedAlbum
@@ -1138,7 +1145,7 @@ final class LibraryViewModel: ObservableObject {
                 if requestedSection == .activityLog {
                     let page = try await Task.detached(priority: .userInitiated) {
                         try self.database.activityLogPage(
-                            kinds: requestedActivityKind.map { [$0] } ?? [],
+                            kinds: requestedActivityKind.map { [$0] } ?? requestedCategoryKinds,
                             query: requestedQuery, offset: requestedOffset, limit: self.activityPageSize
                         )
                     }.value

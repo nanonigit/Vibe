@@ -42,6 +42,36 @@ public enum LibraryActivityKind: String, CaseIterable, Identifiable, Codable, Ha
     public var id: String { rawValue }
 }
 
+public enum ActivityLogCategoryFilter: String, CaseIterable, Identifiable, Codable, Hashable, Sendable {
+    case all
+    case metadataChanged
+    case added
+    case removed
+    case fileModified
+
+    public var id: String { rawValue }
+
+    public func title(isJapanese: Bool) -> String {
+        switch self {
+        case .all: isJapanese ? "すべて" : "All"
+        case .metadataChanged: isJapanese ? "タグ・情報変更" : "Metadata Edits"
+        case .added: isJapanese ? "曲追加" : "Added"
+        case .removed: isJapanese ? "削除・ゴミ箱" : "Removed / Trashed"
+        case .fileModified: isJapanese ? "ファイル変更" : "File Modified"
+        }
+    }
+
+    public var kinds: Set<LibraryActivityKind> {
+        switch self {
+        case .all: []
+        case .metadataChanged: [.metadataChanged]
+        case .added: [.added, .addedToCache, .addedToMainStorage]
+        case .removed: [.removedFromLibrary, .movedToTrash]
+        case .fileModified: [.fileModified]
+        }
+    }
+}
+
 public struct LibraryActivityChange: Codable, Hashable, Sendable {
     public let field: String
     public let oldValue: String

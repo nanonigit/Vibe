@@ -1398,60 +1398,83 @@ struct ContentView: View {
     }
 
     private var activityLogView: some View {
-        List(model.activityEvents) { event in
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: activityKindIcon(event.kind))
-                    .font(.title3)
-                    .foregroundStyle(activityKindColor(event.kind))
-                    .frame(width: 28, height: 28)
-                    .background(activityKindColor(event.kind).opacity(0.12), in: Circle())
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(activityKindTitle(event.kind)).font(.headline)
-                        Text(event.title.isEmpty ? event.filename : event.title)
-                            .fontWeight(.semibold).lineLimit(1)
-                        Spacer(minLength: 16)
-                        Text(event.occurredAt.formatted(date: .abbreviated, time: .standard))
-                            .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+        VStack(spacing: 0) {
+            HStack {
+                Picker(
+                    model.text("ログの種類", "Log Type"),
+                    selection: Binding(
+                        get: { model.activityCategoryFilter },
+                        set: { model.setActivityCategoryFilter($0) }
+                    )
+                ) {
+                    ForEach(ActivityLogCategoryFilter.allCases) { filter in
+                        Text(filter.title(isJapanese: model.language == .japanese)).tag(filter)
                     }
-                    if !event.artist.isEmpty || !event.album.isEmpty {
-                        Text([event.artist, event.album].filter { !$0.isEmpty }.joined(separator: " — "))
-                            .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-                    }
-                    ForEach(event.changes.prefix(4), id: \.self) { change in
-                        HStack(spacing: 6) {
-                            Text(activityFieldTitle(change.field)).fontWeight(.medium)
-                            Text(change.oldValue.isEmpty ? model.text("（空）", "(empty)") : change.oldValue)
-                                .foregroundStyle(.secondary).lineLimit(1)
-                            Image(systemName: "arrow.right").foregroundStyle(.tertiary)
-                            Text(change.newValue.isEmpty ? model.text("（空）", "(empty)") : change.newValue)
-                                .lineLimit(1)
-                        }
-                        .font(.caption)
-                    }
-                    if event.changes.count > 4 {
-                        Text(model.text("ほか\(event.changes.count - 4)件の変更", "\(event.changes.count - 4) more changes"))
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    Text(event.absolutePath)
-                        .font(.caption2.monospaced())
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1).truncationMode(.middle)
-                        .help(event.absolutePath).textSelection(.enabled)
                 }
+                .pickerStyle(.segmented)
+                .labelsHidden()
             }
-            .padding(.vertical, 5)
-        }
-        .overlay {
-            if !model.isLoading && model.activityEvents.isEmpty {
-                ContentUnavailableView(
-                    model.text("ログはまだありません", "No Activity Yet"),
-                    systemImage: "clock.arrow.circlepath",
-                    description: Text(model.text(
-                        "スキャンや曲情報の編集、ライブラリからの削除がここに記録されます。",
-                        "Scans, metadata edits, and library removals will appear here."
-                    ))
-                )
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(.bar)
+
+            Divider()
+
+            List(model.activityEvents) { event in
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: activityKindIcon(event.kind))
+                        .font(.title3)
+                        .foregroundStyle(activityKindColor(event.kind))
+                        .frame(width: 28, height: 28)
+                        .background(activityKindColor(event.kind).opacity(0.12), in: Circle())
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(activityKindTitle(event.kind)).font(.headline)
+                            Text(event.title.isEmpty ? event.filename : event.title)
+                                .fontWeight(.semibold).lineLimit(1)
+                            Spacer(minLength: 16)
+                            Text(event.occurredAt.formatted(date: .abbreviated, time: .standard))
+                                .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                        }
+                        if !event.artist.isEmpty || !event.album.isEmpty {
+                            Text([event.artist, event.album].filter { !$0.isEmpty }.joined(separator: " — "))
+                                .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        ForEach(event.changes.prefix(4), id: \.self) { change in
+                            HStack(spacing: 6) {
+                                Text(activityFieldTitle(change.field)).fontWeight(.medium)
+                                Text(change.oldValue.isEmpty ? model.text("（空）", "(empty)") : change.oldValue)
+                                    .foregroundStyle(.secondary).lineLimit(1)
+                                Image(systemName: "arrow.right").foregroundStyle(.tertiary)
+                                Text(change.newValue.isEmpty ? model.text("（空）", "(empty)") : change.newValue)
+                                    .lineLimit(1)
+                            }
+                            .font(.caption)
+                        }
+                        if event.changes.count > 4 {
+                            Text(model.text("ほか\(event.changes.count - 4)件の変更", "\(event.changes.count - 4) more changes"))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Text(event.absolutePath)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1).truncationMode(.middle)
+                            .help(event.absolutePath).textSelection(.enabled)
+                    }
+                }
+                .padding(.vertical, 5)
+            }
+            .overlay {
+                if !model.isLoading && model.activityEvents.isEmpty {
+                    ContentUnavailableView(
+                        model.text("ログはまだありません", "No Activity Yet"),
+                        systemImage: "clock.arrow.circlepath",
+                        description: Text(model.text(
+                            "選択したカテゴリのログはまだありません。",
+                            "There are no log events in this category yet."
+                        ))
+                    )
+                }
             }
         }
     }

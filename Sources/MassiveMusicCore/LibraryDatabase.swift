@@ -347,8 +347,10 @@ public final class LibraryDatabase: @unchecked Sendable {
                 let changes = Self.activityChanges(from: previous, to: updated)
                 if !changes.isEmpty {
                     try Self.insertActivity(db: db, kind: .metadataChanged, trackRow: updated, changes: changes)
-                    try Self.pruneActivityLog(db: db)
+                } else {
+                    try Self.insertActivity(db: db, kind: .fileModified, trackRow: updated, changes: [])
                 }
+                try Self.pruneActivityLog(db: db)
             }
         }
     }
