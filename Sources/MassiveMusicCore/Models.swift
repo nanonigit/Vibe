@@ -371,10 +371,29 @@ public struct TrackMetadataEdit: Hashable, Codable, Sendable {
     public var artist: String
     public var album: String
     public var albumArtist: String
+    public var composer: String
+    public var lyricist: String
+    public var arranger: String
+    public var conductor: String
+    public var publisher: String
     public var genre: String
+    public var year: String
     public var isCompilation: Bool
     public var discNumber: Int?
+    public var totalDiscs: Int?
     public var trackNumber: Int?
+    public var totalTracks: Int?
+    public var bpm: String
+    public var initialKey: String
+    public var isrc: String
+    public var copyright: String
+    public var grouping: String
+    public var subtitle: String
+    public var originalAlbum: String
+    public var originalArtist: String
+    public var comment: String
+    public var lyrics: String
+    public var url: String
     public var artworkData: Data?
 
     public init(track: Track) {
@@ -382,10 +401,29 @@ public struct TrackMetadataEdit: Hashable, Codable, Sendable {
         artist = track.artist
         album = track.album
         albumArtist = track.albumArtist
+        composer = ""
+        lyricist = ""
+        arranger = ""
+        conductor = ""
+        publisher = ""
         genre = track.genre
+        year = ""
         isCompilation = track.isCompilation
         discNumber = track.discNumber
+        totalDiscs = nil
         trackNumber = track.trackNumber
+        totalTracks = nil
+        bpm = ""
+        initialKey = ""
+        isrc = ""
+        copyright = ""
+        grouping = ""
+        subtitle = ""
+        originalAlbum = ""
+        originalArtist = ""
+        comment = ""
+        lyrics = ""
+        url = ""
         artworkData = nil
     }
 
@@ -406,7 +444,16 @@ public struct TrackMetadataEdit: Hashable, Codable, Sendable {
         normalized.artist = MetadataTextNormalizer.normalizedWidths(artist)
         normalized.album = MetadataTextNormalizer.normalizedWidths(album)
         normalized.albumArtist = MetadataTextNormalizer.normalizedWidths(albumArtist)
+        normalized.composer = MetadataTextNormalizer.normalizedWidths(composer)
+        normalized.lyricist = MetadataTextNormalizer.normalizedWidths(lyricist)
+        normalized.arranger = MetadataTextNormalizer.normalizedWidths(arranger)
+        normalized.conductor = MetadataTextNormalizer.normalizedWidths(conductor)
+        normalized.publisher = MetadataTextNormalizer.normalizedWidths(publisher)
         normalized.genre = MetadataTextNormalizer.normalizedWidths(genre)
+        normalized.grouping = MetadataTextNormalizer.normalizedWidths(grouping)
+        normalized.subtitle = MetadataTextNormalizer.normalizedWidths(subtitle)
+        normalized.originalAlbum = MetadataTextNormalizer.normalizedWidths(originalAlbum)
+        normalized.originalArtist = MetadataTextNormalizer.normalizedWidths(originalArtist)
         return normalized
     }
 

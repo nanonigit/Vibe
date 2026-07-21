@@ -2956,14 +2956,35 @@ private struct AIProviderStatusBadge: View {
     }
 }
 
+private enum EditorTab: String, CaseIterable, Identifiable {
+    case basic
+    case credits
+    case details
+    case commentLyrics
+
+    var id: String { rawValue }
+
+    func title(isJapanese: Bool) -> String {
+        switch self {
+        case .basic: isJapanese ? "基本情報" : "Basic Info"
+        case .credits: isJapanese ? "クレジット・制作" : "Credits"
+        case .details: isJapanese ? "詳細・コード" : "Details & Codes"
+        case .commentLyrics: isJapanese ? "歌詞・コメント・URL" : "Lyrics & Links"
+        }
+    }
+}
+
 private struct TrackMetadataEditor: View {
     @ObservedObject var model: LibraryViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var navigationTracks: [Track]
     @State private var track: Track
     @State private var edit: TrackMetadataEdit
+    @State private var selectedTab: EditorTab = .basic
     @State private var discNumber: String
+    @State private var totalDiscs: String = ""
     @State private var trackNumber: String
+    @State private var totalTracks: String = ""
     @State private var metadataCandidates: [MusicMetadataCandidate] = []
     @State private var selectedCandidateID: String?
     @State private var isLookingUpMetadata = false
@@ -2982,90 +3003,122 @@ private struct TrackMetadataEditor: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            Picker("", selection: $selectedTab) {
+                ForEach(EditorTab.allCases) { tab in
+                    Text(tab.title(isJapanese: model.language == .japanese)).tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+            .padding(.bottom, 8)
+
             Form {
-                LabeledContent(model.text("ファイル", "File")) {
-                    Text(track.filename).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
-                }
-                TextField(model.text("タイトル", "Title"), text: $edit.title)
-                TextField(model.text("アーティスト", "Artist"), text: $edit.artist)
-                TextField(model.text("アルバム", "Album"), text: $edit.album)
-                TextField(model.text("アルバムアーティスト", "Album Artist"), text: $edit.albumArtist)
-                TextField(model.text("ジャンル", "Genre"), text: $edit.genre)
-                Toggle(model.text("コンピレーションアルバム", "Compilation Album"), isOn: $edit.isCompilation)
-                    .disabled(track.format.lowercased() != "mp3")
-                    .help(model.text(
-                        "MP3のTCMPタグを設定します。曲ごとのアーティスト名は変更しません。",
-                        "Sets the MP3 TCMP tag without changing each song's artist."
-                    ))
-                HStack {
-                    TextField(model.text("ディスク番号", "Disc Number"), text: $discNumber)
-                    TextField(model.text("トラック番号", "Track Number"), text: $trackNumber)
-                }
-                LabeledContent(model.text("Web情報", "Web Metadata")) {
-                    HStack(spacing: 10) {
-                        Button(model.text("MusicBrainzから候補を検索", "Find Suggestions on MusicBrainz"), action: lookUpMetadata)
-                            .disabled(isLookingUpMetadata || edit.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        if isLookingUpMetadata {
-                            ProgressView().controlSize(.small)
-                            Text(model.text("検索中…", "Searching…"))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                switch selectedTab {
+                case .basic:
+                    LabeledContent(model.text("ファイル", "File")) {
+                        Text(track.filename).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
+                    }
+                    TextField(model.text("曲名 (TIT2)", "Title (TIT2)"), text: $edit.title)
+                    TextField(model.text("アーティスト (TPE1)", "Artist (TPE1)"), text: $edit.artist)
+                    TextField(model.text("アルバム (TALB)", "Album (TALB)"), text: $edit.album)
+                    TextField(model.text("アルバムアーティスト (TPE2)", "Album Artist (TPE2)"), text: $edit.albumArtist)
+                    TextField(model.text("ジャンル (TCON)", "Genre (TCON)"), text: $edit.genre)
+                    TextField(model.text("年・リリース日 (TYER/TDRC)", "Year / Release Date (TYER/TDRC)"), text: $edit.year)
+                    HStack {
+                        TextField(model.text("トラック番号 (TRCK)", "Track Number (TRCK)"), text: $trackNumber)
+                        TextField(model.text("総トラック数", "Total Tracks"), text: $totalTracks)
+                    }
+                    HStack {
+                        TextField(model.text("ディスク番号 (TPOS)", "Disc Number (TPOS)"), text: $discNumber)
+                        TextField(model.text("総ディスク数", "Total Discs"), text: $totalDiscs)
+                    }
+                    Toggle(model.text("コンピレーションアルバム (TCMP)", "Compilation Album (TCMP)"), isOn: $edit.isCompilation)
+                        .disabled(track.format.lowercased() != "mp3")
+
+                    LabeledContent(model.text("Web情報", "Web Metadata")) {
+                        HStack(spacing: 10) {
+                            Button(model.text("MusicBrainzから候補を検索", "Find Suggestions on MusicBrainz"), action: lookUpMetadata)
+                                .disabled(isLookingUpMetadata || edit.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            if isLookingUpMetadata {
+                                ProgressView().controlSize(.small)
+                                Text(model.text("検索中…", "Searching…"))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
-                }
-                if let candidate = selectedCandidate {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Label(model.text("MusicBrainzの候補", "MusicBrainz Suggestion"), systemImage: "magnifyingglass.circle.fill")
-                                .foregroundStyle(.green)
-                            Spacer()
-                            if metadataCandidates.count > 1 {
-                                Menu(model.text("他の候補（\(metadataCandidates.count)件）", "Other Matches (\(metadataCandidates.count))")) {
-                                    ForEach(metadataCandidates) { item in
-                                        Button(candidateLabel(item)) { select(item) }
+                    if let candidate = selectedCandidate {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Label(model.text("MusicBrainzの候補", "MusicBrainz Suggestion"), systemImage: "magnifyingglass.circle.fill")
+                                    .foregroundStyle(.green)
+                                Spacer()
+                                if metadataCandidates.count > 1 {
+                                    Menu(model.text("他の候補（\(metadataCandidates.count)件）", "Other Matches (\(metadataCandidates.count))")) {
+                                        ForEach(metadataCandidates) { item in
+                                            Button(candidateLabel(item)) { select(item) }
+                                        }
                                     }
                                 }
                             }
-                        }
-                        Text(candidateLabel(candidate)).font(.caption).foregroundStyle(.secondary)
-                        HStack {
-                            Button(model.text("この候補の番号を入力", "Use Suggested Numbers")) {
-                                useNumbers(from: candidate)
-                            }
-                            Text(model.text(
-                                "曲名・アーティスト・アルバム名は自動変更しません。",
-                                "Title, artist, and album are never changed automatically."
-                            ))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        }
-                        if let metadataLookupMessage {
-                            Text(metadataLookupMessage).font(.caption).foregroundStyle(.secondary)
-                        }
-                        if let url = URL(string: "https://musicbrainz.org/release/\(candidate.releaseID)") {
-                            Link(model.text("MusicBrainzで確認", "Review on MusicBrainz"), destination: url)
+                            Text(candidateLabel(candidate)).font(.caption).foregroundStyle(.secondary)
+                            HStack {
+                                Button(model.text("この候補の番号を入力", "Use Suggested Numbers")) {
+                                    useNumbers(from: candidate)
+                                }
+                                Text(model.text(
+                                    "曲名・アーティスト・アルバム名は自動変更しません。",
+                                    "Title, artist, and album are never changed automatically."
+                                ))
                                 .font(.caption)
+                                .foregroundStyle(.secondary)
+                            }
+                            if let metadataLookupMessage {
+                                Text(metadataLookupMessage).font(.caption).foregroundStyle(.secondary)
+                            }
+                            if let url = URL(string: "https://musicbrainz.org/release/\(candidate.releaseID)") {
+                                Link(model.text("MusicBrainzで確認", "Review on MusicBrainz"), destination: url)
+                                    .font(.caption)
+                            }
                         }
-                        Text(model.text(
-                            "候補を表示しているだけで、まだファイルは変更していません。番号を確認して「ファイルへ保存」を押してください。",
-                            "This only shows a suggestion; the file has not changed. Review the numbers, then choose Save to File."
-                        ))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .padding(10)
+                        .background(.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
                     }
-                    .padding(10)
-                    .background(.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-                } else if let metadataLookupMessage {
-                    Text(metadataLookupMessage)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+
+                case .credits:
+                    TextField(model.text("作曲者 (TCOM)", "Composer (TCOM)"), text: $edit.composer)
+                    TextField(model.text("作詞者 (TEXT)", "Lyricist / Writer (TEXT)"), text: $edit.lyricist)
+                    TextField(model.text("編曲者・リミキサー (TPE4)", "Arranger / Remixer (TPE4)"), text: $edit.arranger)
+                    TextField(model.text("指揮者 (TPE3)", "Conductor (TPE3)"), text: $edit.conductor)
+                    TextField(model.text("出版社・レーベル (TPUB)", "Publisher / Label (TPUB)"), text: $edit.publisher)
+
+                case .details:
+                    TextField(model.text("BPM / テンポ (TBPM)", "BPM / Tempo (TBPM)"), text: $edit.bpm)
+                    TextField(model.text("キー (TKEY)", "Initial Key (TKEY)"), text: $edit.initialKey)
+                    TextField(model.text("ISRC コード (TSRC)", "ISRC Code (TSRC)"), text: $edit.isrc)
+                    TextField(model.text("著作権情報 (TCOP)", "Copyright (TCOP)"), text: $edit.copyright)
+                    TextField(model.text("グループ化 / ワーク名 (TIT1)", "Grouping / Work (TIT1)"), text: $edit.grouping)
+                    TextField(model.text("サブタイトル / バージョン (TIT3)", "Subtitle / Version (TIT3)"), text: $edit.subtitle)
+                    TextField(model.text("原題アルバム (TOAL)", "Original Album (TOAL)"), text: $edit.originalAlbum)
+                    TextField(model.text("原曲アーティスト (TOPE)", "Original Artist (TOPE)"), text: $edit.originalArtist)
+
+                case .commentLyrics:
+                    TextField(model.text("関連WebURL (WXXX)", "Related Web URL (WXXX)"), text: $edit.url)
+                    TextField(model.text("コメント (COMM)", "Comment (COMM)"), text: $edit.comment)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(model.text("歌詞 (USLT)", "Unsynchronised Lyrics (USLT)"))
+                            .font(.headline)
+                        TextEditor(text: $edit.lyrics)
+                            .font(.system(.body, design: .monospaced))
+                            .frame(height: 160)
+                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.gray.opacity(0.3)))
+                    }
                 }
-                Text(model.text(
-                    "アプリ内の一時領域へコピーして書き込み結果を確認してから、元ファイルへ反映します。失敗時はバックアップから復元し、音声データは再エンコードしません。",
-                    "An app-local temporary copy is written and verified before updating the source. Failures restore the backup, and audio is not re-encoded."
-                )).font(.caption).foregroundStyle(.secondary)
             }
-            .padding(20)
+            .padding(.horizontal, 20)
+            .padding(.bottom, 10)
+
             Divider()
             HStack {
                 Button {
@@ -3103,7 +3156,43 @@ private struct TrackMetadataEditor: View {
             .padding(14)
             .background(.bar)
         }
-        .frame(width: 620, height: 650)
+        .frame(width: 650, height: 680)
+        .task(id: track.id) {
+            await loadExtendedID3Async(for: track)
+        }
+    }
+
+    private func loadExtendedID3Async(for targetTrack: Track) async {
+        let fields = await model.readExtendedID3(for: targetTrack)
+        if let val = fields["TCOM"] { edit.composer = val }
+        if let val = fields["TEXT"] { edit.lyricist = val }
+        if let val = fields["TPE4"] { edit.arranger = val }
+        if let val = fields["TPE3"] { edit.conductor = val }
+        if let val = fields["TPUB"] { edit.publisher = val }
+        if let val = fields["TYER"] ?? fields["TDRC"] { edit.year = val }
+        if let val = fields["TBPM"] { edit.bpm = val }
+        if let val = fields["TKEY"] { edit.initialKey = val }
+        if let val = fields["TSRC"] { edit.isrc = val }
+        if let val = fields["TCOP"] { edit.copyright = val }
+        if let val = fields["TIT1"] { edit.grouping = val }
+        if let val = fields["TIT3"] { edit.subtitle = val }
+        if let val = fields["TOAL"] { edit.originalAlbum = val }
+        if let val = fields["TOPE"] { edit.originalArtist = val }
+        if let val = fields["COMM"] { edit.comment = val }
+        if let val = fields["USLT"] { edit.lyrics = val }
+        if let val = fields["WXXX"] ?? fields["WOAR"] ?? fields["WCOM"] { edit.url = val }
+        if let trkStr = fields["TRCK"] {
+            if trkStr.contains("/") {
+                let parts = trkStr.components(separatedBy: "/")
+                if parts.count >= 2 { totalTracks = parts[1] }
+            }
+        }
+        if let dscStr = fields["TPOS"] {
+            if dscStr.contains("/") {
+                let parts = dscStr.components(separatedBy: "/")
+                if parts.count >= 2 { totalDiscs = parts[1] }
+            }
+        }
     }
 
     private var selectedCandidate: MusicMetadataCandidate? {
@@ -3159,7 +3248,9 @@ private struct TrackMetadataEditor: View {
         defer { isSaving = false }
         var pendingEdit = edit
         pendingEdit.discNumber = positiveInteger(discNumber)
+        pendingEdit.totalDiscs = positiveInteger(totalDiscs)
         pendingEdit.trackNumber = positiveInteger(trackNumber)
+        pendingEdit.totalTracks = positiveInteger(totalTracks)
         let saved = await model.updateMetadataFromEditor(for: track, edit: pendingEdit)
         if saved, let currentIndex {
             let updated = track.applying(pendingEdit)
@@ -3173,11 +3264,16 @@ private struct TrackMetadataEditor: View {
         track = destination
         edit = TrackMetadataEdit(track: destination)
         discNumber = destination.discNumber.map(String.init) ?? ""
+        totalDiscs = ""
         trackNumber = destination.trackNumber.map(String.init) ?? ""
+        totalTracks = ""
         metadataCandidates = []
         selectedCandidateID = nil
         metadataLookupMessage = nil
         isLookingUpMetadata = false
+        Task {
+            await loadExtendedID3Async(for: destination)
+        }
     }
 
     private func lookUpMetadata() {

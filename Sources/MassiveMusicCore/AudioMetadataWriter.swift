@@ -152,7 +152,11 @@ public enum AudioMetadataWriter {
             throw MassiveMusicError.metadataWriteFailed("ID3v2.2以前のMP3タグは、安全な変換確認後に修復できます。")
         }
 
-        var replacedIDs: Set<String> = ["TIT2", "TPE1", "TALB", "TPE2", "TCON", "TRCK", "TPOS", "TCMP"]
+        var replacedIDs: Set<String> = [
+            "TIT2", "TPE1", "TALB", "TPE2", "TCOM", "TEXT", "TPE4", "TPE3",
+            "TPUB", "TCON", "TYER", "TDRC", "TRCK", "TPOS", "TCMP", "TBPM",
+            "TKEY", "TSRC", "TCOP", "TIT1", "TIT3", "TOAL", "TOPE", "COMM", "USLT", "WXXX", "WOAR", "WCOM"
+        ]
         if edit.artworkData != nil { replacedIDs.insert("APIC") }
         var frames = existing.frames.filter { !replacedIDs.contains($0.id) }.map { frame in
             // ID3v2.4 frame sizes are synchsafe while ID3v2.3 frame sizes are
@@ -163,14 +167,34 @@ public enum AudioMetadataWriter {
                 ? id3v23Frame(id: frame.id, payload: frame.payload)
                 : frame.rawData
         }
+
+        let trackStr: String
+        if let trk = edit.trackNumber {
+            if let tot = edit.totalTracks { trackStr = "\(trk)/\(tot)" }
+            else { trackStr = "\(trk)" }
+        } else { trackStr = "" }
+
+        let discStr: String
+        if let dsc = edit.discNumber {
+            if let tot = edit.totalDiscs { discStr = "\(dsc)/\(tot)" }
+            else { discStr = "\(dsc)" }
+        } else { discStr = "" }
+
         let values: [(String, String)] = [
             ("TIT2", edit.title), ("TPE1", edit.artist), ("TALB", edit.album),
-            ("TPE2", edit.albumArtist), ("TCON", edit.genre),
-            ("TRCK", edit.trackNumber.map(String.init) ?? ""),
-            ("TPOS", edit.discNumber.map(String.init) ?? "")
+            ("TPE2", edit.albumArtist), ("TCOM", edit.composer), ("TEXT", edit.lyricist),
+            ("TPE4", edit.arranger), ("TPE3", edit.conductor), ("TPUB", edit.publisher),
+            ("TCON", edit.genre), ("TYER", edit.year), ("TDRC", edit.year),
+            ("TRCK", trackStr), ("TPOS", discStr), ("TBPM", edit.bpm),
+            ("TKEY", edit.initialKey), ("TSRC", edit.isrc), ("TCOP", edit.copyright),
+            ("TIT1", edit.grouping), ("TIT3", edit.subtitle), ("TOAL", edit.originalAlbum),
+            ("TOPE", edit.originalArtist)
         ]
         for (id, value) in values where !value.isEmpty { frames.append(id3v23TextFrame(id: id, value: value)) }
         if edit.isCompilation { frames.append(id3v23TextFrame(id: "TCMP", value: "1")) }
+        if !edit.comment.isEmpty { frames.append(id3v23CommentFrame(value: edit.comment)) }
+        if !edit.lyrics.isEmpty { frames.append(id3v23LyricsFrame(value: edit.lyrics)) }
+        if !edit.url.isEmpty { frames.append(id3v23UserURLFrame(value: edit.url)) }
         if let artworkData = edit.artworkData {
             frames.append(try id3v23ArtworkFrame(artworkData))
         }
@@ -448,6 +472,86 @@ public enum AudioMetadataWriter {
             payload.append(value.data(using: .utf16LittleEndian) ?? Data())
         }
         return id3v23Frame(id: id, payload: payload)
+    }
+
+    private static func id3v23CommentFrame(value: String) -> Data {
+        var payload = Data([1])
+        payload.append(Data("eng".utf8))
+        payload.append(contentsOf: [0xFF, 0xFE, 0x00, 0x00])
+        payload.append(value.data(using: .utf16LittleEndian) ?? Data())
+        return id3v23Frame(id: "COMM", payload: payload)
+    }
+
+    private static func id3v23LyricsFrame(value: String) -> Data {
+        var payload = Data([1])
+        payload.append(Data("eng".utf8))
+        payload.append(contentsOf: [0xFF, 0xFE, 0x00, 0x00])
+        payload.append(value.data(using: .utf16LittleEndian) ?? Data())
+        return id3v23Frame(id: "USLT", payload: payload)
+    }
+
+    private static func id3v23UserURLFrame(value: String) -> Data {
+        var payload = Data([0, 0])
+        payload.append(value.data(using: .utf8) ?? Data())
+        return id3v23Frame(id: "WXXX", payload: payload)
+    }
+
+    public static func readExtendedID3(at url: URL) -> [String: String] {
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
+              let parsed = try? parseID3(data) else { return [:] }
+        var result: [String: String] = [:]
+        for frame in parsed.frames {
+            if frame.id == "COMM" || frame.id == "USLT" {
+                if let str = decodeID3CommentOrLyrics(frame.payload), !str.isEmpty {
+                    result[frame.id] = str
+                }
+            } else if frame.id.hasPrefix("W") {
+                if let str = decodeID3URL(frame.payload), !str.isEmpty {
+                    result[frame.id] = str
+                }
+            } else if let str = decodeID3Text(frame.payload), !str.isEmpty {
+                result[frame.id] = str
+            }
+        }
+        return result
+    }
+
+    private static func decodeID3CommentOrLyrics(_ data: Data) -> String? {
+        guard data.count > 4 else { return nil }
+        let encoding = data[0]
+        let body = data.dropFirst(4)
+        if encoding == 0 {
+            if let nullPos = body.firstIndex(of: 0) {
+                let textData = body.suffix(from: nullPos + 1)
+                return String(data: textData, encoding: .isoLatin1) ?? String(data: textData, encoding: .utf8)
+            }
+            return String(data: body, encoding: .isoLatin1)
+        } else if encoding == 1 {
+            let bytes = Array(body)
+            var idx = 0
+            while idx + 1 < bytes.count {
+                if bytes[idx] == 0 && bytes[idx+1] == 0 {
+                    let textData = Data(bytes[(idx+2)...])
+                    return String(data: textData, encoding: .utf16)
+                }
+                idx += 2
+            }
+            return String(data: body, encoding: .utf16)
+        }
+        return nil
+    }
+
+    private static func decodeID3URL(_ data: Data) -> String? {
+        guard !data.isEmpty else { return nil }
+        if data[0] == 0 {
+            let body = data.dropFirst()
+            if let nullPos = body.firstIndex(of: 0) {
+                let urlData = body.suffix(from: nullPos + 1)
+                return String(data: urlData, encoding: .utf8) ?? String(data: urlData, encoding: .isoLatin1)
+            }
+            return String(data: body, encoding: .utf8)
+        }
+        return String(data: data, encoding: .utf8)
     }
 
     private static func id3v23ArtworkFrame(_ artworkData: Data) throws -> Data {

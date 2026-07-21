@@ -1585,6 +1585,10 @@ final class LibraryViewModel: ObservableObject {
             if let url { artistImageURLs[name] = url }
         }
     }
+    func readExtendedID3(for track: Track) async -> [String: String] {
+        await trackFiles.readExtendedID3(for: track)
+    }
+
     func updateMetadata(for track: Track, edit: TrackMetadataEdit) {
         Task {
             _ = await updateMetadataFromEditor(for: track, edit: edit)

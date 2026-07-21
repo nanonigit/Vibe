@@ -55,6 +55,15 @@ actor TrackFileCoordinator {
         }) ?? false
     }
 
+    func readExtendedID3(for track: Track) -> [String: String] {
+        guard let (scope, sourceURL) = try? scopedSource(for: track, authorizedRoot: nil) else {
+            return [:]
+        }
+        return (try? scope.withAccess { _ in
+            AudioMetadataWriter.readExtendedID3(at: sourceURL)
+        }) ?? [:]
+    }
+
     func removeFromLibrary(track: Track) throws {
         _ = try database.removeTrackFromLibrary(id: track.id, fileWasTrashed: false)
     }
