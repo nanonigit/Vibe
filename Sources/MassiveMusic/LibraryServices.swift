@@ -46,6 +46,15 @@ actor TrackFileCoordinator {
         }) ?? false
     }
 
+    func isID3v22Tag(for track: Track) -> Bool {
+        guard let (scope, sourceURL) = try? scopedSource(for: track, authorizedRoot: nil) else {
+            return false
+        }
+        return (try? scope.withAccess { _ in
+            AudioMetadataWriter.isID3v22Tag(at: sourceURL)
+        }) ?? false
+    }
+
     func removeFromLibrary(track: Track) throws {
         _ = try database.removeTrackFromLibrary(id: track.id, fileWasTrashed: false)
     }

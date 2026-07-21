@@ -275,6 +275,18 @@ public final class LibraryDatabase: @unchecked Sendable {
         }
     }
 
+    public func mp3TracksForID3Migration(afterID: Int64, limit: Int = defaultPageSize) throws -> [Track] {
+        guard (1...1_000).contains(limit) else { throw MassiveMusicError.invalidPageSize }
+        return try pool.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: "SELECT * FROM tracks WHERE id > ? AND is_available = 1 AND lower(format) = 'mp3' ORDER BY id LIMIT ?",
+                arguments: [afterID, limit]
+            )
+            return rows.map(Self.decodeTrack)
+        }
+    }
+
     public func isExcluded(identityKey: String) throws -> Bool {
         try pool.read { db in
             try Bool.fetchOne(

@@ -155,6 +155,9 @@ final class LibraryViewModel: ObservableObject {
     @Published var isBulkAutoFilling = false
     @Published var bulkAutoFillProgress = ""
     @Published var normalizeMetadataCharacterWidths = false
+    @Published var autoMigrateID3v22ToV23 = true
+    @Published var isID3Migrating = false
+    @Published var id3MigrationProgress = ""
     @Published private(set) var cachedTrackIDs: Set<Int64> = []
     @Published private(set) var unavailableRootIDs: Set<Int64> = []
     @Published private(set) var missingVisibleTrackIDs: Set<Int64> = []
@@ -219,6 +222,7 @@ final class LibraryViewModel: ObservableObject {
     private var leadingTitleSpaceCleanupTask: Task<Void, Never>?
     private var widthNormalizationTask: Task<Void, Never>?
     private var bulkAutoFillTask: Task<Void, Never>?
+    private var id3MigrationTask: Task<Void, Never>?
     private var enrichmentTask: Task<Void, Never>?
     private var loadingAlbumArtworkIDs: Set<String> = []
     private var loadingArtistImageNames: Set<String> = []
@@ -245,6 +249,7 @@ final class LibraryViewModel: ObservableObject {
         cacheTrackLimit = Int((try? database.setting(forKey: "cache.trackLimit")) ?? "24") ?? 24
         autoFillMusicBrainzTrackNumbers = (try? database.setting(forKey: "musicbrainz.autoFillTrackNumbers")) != "false"
         normalizeMetadataCharacterWidths = (try? database.setting(forKey: "metadata.normalizeCharacterWidths")) == "true"
+        autoMigrateID3v22ToV23 = (try? database.setting(forKey: "metadata.autoMigrateID3v22ToV23")) != "false"
         librarySectionOrder = Self.decodeLibrarySectionOrder(
             (try? database.setting(forKey: "sidebar.libraryOrder"))
         )
@@ -261,6 +266,8 @@ final class LibraryViewModel: ObservableObject {
         ensureDefaultStorageDestination()
         driveMonitor = Task { [weak self] in await self?.monitorDrives() }
         startLeadingTitleSpaceCleanup()
+        startBulkAutoFillIfNeeded()
+        startID3Migration()
     }
 
     var canGoPrevious: Bool { offset > 0 }
@@ -2535,6 +2542,110 @@ final class LibraryViewModel: ObservableObject {
                 widthNormalizationTask?.cancel()
             }
         } catch { errorMessage = error.localizedDescription }
+    }
+
+    func saveID3MigrationSettings() {
+        do {
+            try database.setSetting(
+                autoMigrateID3v22ToV23 ? "true" : "false",
+                forKey: "metadata.autoMigrateID3v22ToV23"
+            )
+            if autoMigrateID3v22ToV23 {
+                startID3Migration()
+            } else {
+                id3MigrationTask?.cancel()
+                id3MigrationTask = nil
+                isID3Migrating = false
+                id3MigrationProgress = ""
+            }
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func startID3Migration() {
+        guard autoMigrateID3v22ToV23, id3MigrationTask == nil else { return }
+        guard allScanRootsAreConnected() else { return }
+        id3MigrationTask = Task(priority: .utility) { [weak self] in
+            guard let self else { return }
+            await MainActor.run {
+                self.isID3Migrating = true
+                self.id3MigrationProgress = self.text("ID3v2.2移行のスキャン準備中...", "Preparing ID3v2.2 migration scan...")
+            }
+            defer {
+                Task { @MainActor in
+                    self.isID3Migrating = false
+                    self.id3MigrationProgress = ""
+                    self.id3MigrationTask = nil
+                }
+            }
+
+            let logPath = "/tmp/vibe_id3_migration.log"
+            let logMessage = "=== ID3v2.2 Migration Started at \(Date()) ===\n"
+            try? logMessage.write(toFile: logPath, atomically: true, encoding: .utf8)
+
+            let fileLogger = { (msg: String) in
+                if let fileHandle = FileHandle(forWritingAtPath: logPath) {
+                    fileHandle.seekToEndOfFile()
+                    if let data = msg.data(using: .utf8) {
+                        fileHandle.write(data)
+                    }
+                    fileHandle.closeFile()
+                }
+                print(msg, terminator: "")
+            }
+
+            var afterID: Int64 = 0
+            var migratedCount = 0
+            var scannedCount = 0
+            var failedCount = 0
+
+            do {
+                while !Task.isCancelled, self.autoMigrateID3v22ToV23 {
+                    let requestedAfterID = afterID
+                    let page = try await Task.detached(priority: .utility) {
+                        try self.database.mp3TracksForID3Migration(afterID: requestedAfterID, limit: 200)
+                    }.value
+                    guard !page.isEmpty else { break }
+
+                    for track in page {
+                        try Task.checkCancellation()
+                        afterID = track.id
+                        scannedCount += 1
+
+                        if await self.trackFiles.isID3v22Tag(for: track) {
+                            await MainActor.run {
+                                self.id3MigrationProgress = self.text(
+                                    "ID3v2.2タグをv2.3へ移行中 (\(migratedCount)曲変換済み): \(track.artist) - \(track.title)",
+                                    "Migrating ID3v2.2 tag to v2.3 (\(migratedCount) converted): \(track.artist) - \(track.title)"
+                                )
+                            }
+
+                            let edit = TrackMetadataEdit(track: track)
+                            do {
+                                try await self.trackFiles.updateMetadata(
+                                    track: track, edit: edit, repairingCorruptID3: true
+                                )
+                                migratedCount += 1
+                                fileLogger("  -> Migrated ID3v2.2 to ID3v2.3: \(track.artist) - \(track.title) (\(track.filename))\n")
+                            } catch {
+                                failedCount += 1
+                                fileLogger("  Error migrating \(track.filename): \(error.localizedDescription)\n")
+                            }
+                        }
+                    }
+                }
+
+                fileLogger("=== ID3v2.2 Migration Finished. Scanned: \(scannedCount), Migrated: \(migratedCount), Failed: \(failedCount) ===\n")
+                await MainActor.run {
+                    self.loadCurrentPage(reset: false)
+                }
+            } catch is CancellationError {
+                // Task cancelled
+            } catch {
+                await MainActor.run {
+                    self.errorMessage = error.localizedDescription
+                }
+            }
+        }
     }
 
     func enrich(_ track: Track?) {

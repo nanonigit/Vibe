@@ -73,6 +73,17 @@ public enum AudioMetadataWriter {
         }
     }
 
+    public static func isID3v22Tag(at url: URL) -> Bool {
+        guard url.pathExtension.lowercased() == "mp3" else { return false }
+        guard let fileHandle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? fileHandle.closeFile() }
+        guard let data = try? fileHandle.readData(ofLength: 10),
+              data.count >= 4,
+              data.prefix(3) == Data("ID3".utf8) else { return false }
+        let version = data[3]
+        return version < 3
+    }
+
     public static func infoDictionary(at url: URL) throws -> [String: Any] {
         if url.pathExtension.lowercased() == "wav" { return try riffInfoDictionary(at: url) }
         if url.pathExtension.lowercased() == "mp3" { return try id3InfoDictionary(at: url) }

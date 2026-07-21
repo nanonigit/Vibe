@@ -532,6 +532,7 @@ struct ContentView: View {
             if [.running, .paused].contains(model.scanProgress.state) { scanStatus }
             if model.importProgress.state != .idle { importStatus }
             if model.isBulkAutoFilling { bulkAutoFillStatus }
+            if model.isID3Migrating { id3MigrationStatus }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color.clear)
@@ -1708,6 +1709,17 @@ struct ContentView: View {
         HStack(spacing: 12) {
             ProgressView().controlSize(.small)
             Text(model.bulkAutoFillProgress)
+            Spacer()
+        }
+        .font(.caption)
+        .padding(8)
+        .background(.bar)
+    }
+
+    private var id3MigrationStatus: some View {
+        HStack(spacing: 12) {
+            ProgressView().controlSize(.small)
+            Text(model.id3MigrationProgress)
             Spacer()
         }
         .font(.caption)
@@ -3660,6 +3672,23 @@ private struct LibrarySettingsView: View {
                     Text(model.text(
                         "半角カナを全角カナへ、全角英数字・記号を半角へ変換して音源ファイルへ保存します。通常のひらがな、アクセント付き文字、文字間の空白は変更しません。処理は小分けで実行され、中断後も続きから再開します。",
                         "Converts half-width kana to full-width kana and full-width ASCII letters, digits, and punctuation to half-width, then saves the tags to the audio file. Hiragana, accented letters, and spaces between characters are preserved. Processing is resumable and runs in small batches."
+                    ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    Divider()
+                    Toggle(
+                        model.text(
+                            "ID3v2.2タグを自動でv2.3へ移行",
+                            "Automatically migrate ID3v2.2 tags to v2.3"
+                        ),
+                        isOn: $model.autoMigrateID3v22ToV23
+                    )
+                    .onChange(of: model.autoMigrateID3v22ToV23) { _, _ in
+                        model.saveID3MigrationSettings()
+                    }
+                    Text(model.text(
+                        "すべての曲をバックグラウンドで確認し、古いID3v2.2以前のMP3タグを検出した場合は、音声データを保ったまま最新互換のID3v2.3ヘッダーへ全自動で変換・保存します。",
+                        "Scans all tracks in the background and automatically converts legacy ID3v2.2 or earlier MP3 tags to ID3v2.3 format while preserving audio data."
                     ))
                     .font(.caption)
                     .foregroundStyle(.secondary)
