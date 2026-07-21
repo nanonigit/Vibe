@@ -3016,22 +3016,38 @@ private struct TrackMetadataEditor: View {
             Form {
                 switch selectedTab {
                 case .basic:
-                    LabeledContent(model.text("ファイル", "File")) {
+                    LabeledContent(model.text("ファイル名", "Filename")) {
                         Text(track.filename).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
                     }
                     TextField(model.text("曲名 (TIT2)", "Title (TIT2)"), text: $edit.title)
                     TextField(model.text("アーティスト (TPE1)", "Artist (TPE1)"), text: $edit.artist)
                     TextField(model.text("アルバム (TALB)", "Album (TALB)"), text: $edit.album)
                     TextField(model.text("アルバムアーティスト (TPE2)", "Album Artist (TPE2)"), text: $edit.albumArtist)
-                    TextField(model.text("ジャンル (TCON)", "Genre (TCON)"), text: $edit.genre)
-                    TextField(model.text("年・リリース日 (TYER/TDRC)", "Year / Release Date (TYER/TDRC)"), text: $edit.year)
-                    HStack {
-                        TextField(model.text("トラック番号 (TRCK)", "Track Number (TRCK)"), text: $trackNumber)
-                        TextField(model.text("総トラック数", "Total Tracks"), text: $totalTracks)
+                    HStack(spacing: 12) {
+                        TextField(model.text("ジャンル (TCON)", "Genre (TCON)"), text: $edit.genre)
+                        TextField(model.text("リリース年 (TYER/TDRC)", "Release Year (TYER/TDRC)"), text: $edit.year)
                     }
-                    HStack {
-                        TextField(model.text("ディスク番号 (TPOS)", "Disc Number (TPOS)"), text: $discNumber)
-                        TextField(model.text("総ディスク数", "Total Discs"), text: $totalDiscs)
+                    HStack(spacing: 12) {
+                        LabeledContent(model.text("トラック番号", "Track Number")) {
+                            HStack(spacing: 4) {
+                                TextField(model.text("番号", "No."), text: $trackNumber)
+                                    .textFieldStyle(.roundedBorder)
+                                Text("/")
+                                    .foregroundStyle(.secondary)
+                                TextField(model.text("総数", "Total"), text: $totalTracks)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                        }
+                        LabeledContent(model.text("ディスク番号", "Disc Number")) {
+                            HStack(spacing: 4) {
+                                TextField(model.text("番号", "No."), text: $discNumber)
+                                    .textFieldStyle(.roundedBorder)
+                                Text("/")
+                                    .foregroundStyle(.secondary)
+                                TextField(model.text("総数", "Total"), text: $totalDiscs)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                        }
                     }
                     Toggle(model.text("コンピレーションアルバム (TCMP)", "Compilation Album (TCMP)"), isOn: $edit.isCompilation)
                         .disabled(track.format.lowercased() != "mp3")
@@ -3344,6 +3360,9 @@ private struct TrackMetadataEditor: View {
     private func useNumbers(from candidate: MusicMetadataCandidate) {
         discNumber = String(candidate.discNumber)
         trackNumber = String(candidate.trackNumber)
+        if let total = candidate.mediumTrackCount, total > 0 {
+            totalTracks = String(total)
+        }
     }
 
     private func namesMatch(_ candidate: MusicMetadataCandidate) -> Bool {
@@ -3366,7 +3385,7 @@ private struct TrackMetadataEditor: View {
     }
 
     private var numbersAreValid: Bool {
-        [discNumber, trackNumber].allSatisfy { value in
+        [discNumber, totalDiscs, trackNumber, totalTracks].allSatisfy { value in
             value.trimmingCharacters(in: .whitespaces).isEmpty || positiveInteger(value) != nil
         }
     }
