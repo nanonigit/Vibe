@@ -149,7 +149,6 @@ struct ContentView: View {
             PlayerBar(player: player, model: model)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .toolbar { toolbar }
         .onChange(of: player.currentTrack) { _, track in model.enrich(track) }
         .onChange(of: model.language) { _, _ in
             model.savePresentationSettings()
@@ -451,6 +450,109 @@ struct ContentView: View {
                     )
                 }
                 .buttonStyle(.plain)
+                if model.isStorageExternal {
+                    Menu {
+                        Button(
+                            model.text("Finderでキャッシュフォルダーを表示", "Show Cache Folder in Finder"),
+                            action: model.revealLocalCache
+                        )
+                        Divider()
+                        Text(model.text(
+                            "場所: \(model.localCacheDirectoryPath)",
+                            "Path: \(model.localCacheDirectoryPath)"
+                        ))
+                    } label: {
+                        SidebarNavigationLabel(
+                            title: model.text("キャッシュ", "Cache"), systemImage: "internaldrive.fill"
+                        )
+                    }
+                    .menuStyle(.borderlessButton)
+                    .help(model.text(
+                        "キャッシュ保存場所: \(model.localCacheDirectoryPath)",
+                        "Cache Location: \(model.localCacheDirectoryPath)"
+                    ))
+                }
+                Menu {
+                    Label(
+                        model.primaryStorageIsConnected
+                            ? model.text("接続中", "Connected")
+                            : model.text("未接続", "Disconnected"),
+                        systemImage: model.primaryStorageIsConnected
+                            ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+                    )
+                    Button(
+                        model.text("保管先を変更…", "Change Storage Destination…"),
+                        action: model.chooseStorageDestination
+                    )
+                    if let primary = model.storageDestinations.first(where: \.isPrimary) {
+                        Button(model.text("Finderで保管先フォルダーを表示", "Show Storage in Finder")) {
+                            NSWorkspace.shared.open(URL(filePath: primary.path))
+                        }
+                        .disabled(!model.primaryStorageIsConnected)
+                        Button(model.text("保管先フォルダを再スキャン", "Rescan Storage Folder")) {
+                            model.startScan(url: URL(filePath: primary.path))
+                        }
+                        .disabled(!model.primaryStorageIsConnected)
+                        Divider()
+                        Text(model.text("場所: \(primary.path)", "Path: \(primary.path)"))
+                    } else {
+                        Divider()
+                        Text(model.text("保管先が設定されていません", "No storage destination set"))
+                    }
+                } label: {
+                    SidebarNavigationLabel(
+                        title: model.storageDestinations.first(where: \.isPrimary)?.name
+                            ?? model.text("メイン保管先", "Main Storage"),
+                        systemImage: "externaldrive.fill",
+                        trailingText: model.primaryStorageIsConnected
+                            ? model.text("接続中", "Connected")
+                            : model.text("未接続", "Disconnected"),
+                        trailingColor: model.primaryStorageIsConnected ? .green : .orange
+                    )
+                }
+                .menuStyle(.borderlessButton)
+                Button { isMiniPlayer = true } label: {
+                    SidebarNavigationLabel(
+                        title: model.text("ミニプレイヤーに切り替え", "Switch to Mini Player"),
+                        systemImage: "pip"
+                    )
+                }
+                .buttonStyle(.plain)
+                Button { showInspector.toggle() } label: {
+                    SidebarNavigationLabel(
+                        title: model.text("再生情報", "Now Playing Info"), systemImage: "sidebar.right"
+                    )
+                }
+                .buttonStyle(.plain)
+                Menu {
+                    Button(
+                        model.text("M3U/M3U8を読み込む", "Import M3U/M3U8"),
+                        action: model.importPlaylist
+                    )
+                    Button(
+                        model.text("選択中をM3U8へ書き出す", "Export Selected as M3U8"),
+                        action: model.exportSelectedPlaylist
+                    )
+                    .disabled(model.selectedPlaylistID == nil)
+                    Button(
+                        model.text("選択中の名前を変更", "Rename Selected"),
+                        action: model.renameSelectedPlaylist
+                    )
+                    .disabled(model.selectedPlaylistID == nil)
+                    Divider()
+                    Button(
+                        model.text("選択中を削除", "Delete Selected"),
+                        role: .destructive,
+                        action: model.deleteSelectedPlaylist
+                    )
+                    .disabled(model.selectedPlaylistID == nil)
+                } label: {
+                    SidebarNavigationLabel(
+                        title: model.text("プレイリスト操作", "Playlist Actions"),
+                        systemImage: "ellipsis.circle"
+                    )
+                }
+                .menuStyle(.borderlessButton)
                 Button { model.changeSection(.activityLog) } label: {
                     SidebarNavigationLabel(
                         title: model.sectionTitle(.activityLog), systemImage: icon(for: .activityLog)
@@ -1835,102 +1937,6 @@ struct ContentView: View {
         .font(.caption)
         .padding(8)
         .background(.bar)
-    }
-
-    @ToolbarContentBuilder
-    private var toolbar: some ToolbarContent {
-        ToolbarItemGroup {
-            // 1. ローカルキャッシュ
-            if model.isStorageExternal {
-                Menu {
-                    Button(model.text("Finderでキャッシュフォルダーを表示", "Show Cache Folder in Finder"), action: model.revealLocalCache)
-                    Divider()
-                    Text(model.text("場所: \(model.localCacheDirectoryPath)", "Path: \(model.localCacheDirectoryPath)"))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "internaldrive.fill")
-                        Text(model.text("キャッシュ", "Cache"))
-                    }
-                }
-                .help(model.text("キャッシュ保存場所: \(model.localCacheDirectoryPath)", "Cache Location: \(model.localCacheDirectoryPath)"))
-            }
-
-            // 2. 外付けSSD (保管先)
-            Menu {
-                Label(
-                    model.primaryStorageIsConnected
-                        ? model.text("接続中", "Connected")
-                        : model.text("未接続", "Disconnected"),
-                    systemImage: model.primaryStorageIsConnected
-                        ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
-                )
-                Button(model.text("保管先を変更…", "Change Storage Destination…"), action: model.chooseStorageDestination)
-                if let primary = model.storageDestinations.first(where: \.isPrimary) {
-                    Button(model.text("Finderで保管先フォルダーを表示", "Show Storage in Finder")) {
-                        NSWorkspace.shared.open(URL(filePath: primary.path))
-                    }
-                    .disabled(!model.primaryStorageIsConnected)
-                    
-                    Button(model.text("保管先フォルダを再スキャン", "Rescan Storage Folder")) {
-                        model.startScan(url: URL(filePath: primary.path))
-                    }
-                    .disabled(!model.primaryStorageIsConnected)
-                    
-                    Divider()
-                    Text(model.text("場所: \(primary.path)", "Path: \(primary.path)"))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Divider()
-                    Text(model.text("保管先が設定されていません", "No storage destination set"))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "externaldrive.fill")
-                    Image(systemName: model.primaryStorageIsConnected
-                        ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                    Text(
-                        "\(model.storageDestinations.first(where: \.isPrimary)?.name ?? model.text("保管先未設定", "No Storage"))・"
-                        + (model.primaryStorageIsConnected
-                            ? model.text("接続中", "Connected")
-                            : model.text("未接続", "Disconnected"))
-                    )
-                }
-                .font(.caption)
-                .foregroundStyle(model.primaryStorageIsConnected ? Color.green : Color.orange)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 4)
-                .background(
-                    (model.primaryStorageIsConnected ? Color.green : Color.orange).opacity(0.14),
-                    in: Capsule()
-                )
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(model.primaryStorageIsConnected ? Color.green : Color.orange)
-            .help(model.text(
-                "保管先: \(model.storageDestinations.first(where: \.isPrimary)?.path ?? "未設定")",
-                "Storage: \(model.storageDestinations.first(where: \.isPrimary)?.path ?? "Not set")"
-            ))
-
-            Divider()
-
-            Button { isMiniPlayer = true } label: { Label(model.text("ミニプレイヤーに切り替え", "Switch to Mini Player"), systemImage: "pip") }
-            Button { showInspector.toggle() } label: { Label(model.text("再生情報", "Now Playing Info"), systemImage: "sidebar.right") }
-            Menu {
-                Button(model.text("M3U/M3U8を読み込む", "Import M3U/M3U8"), action: model.importPlaylist)
-                Button(model.text("選択中をM3U8へ書き出す", "Export Selected as M3U8"), action: model.exportSelectedPlaylist)
-                    .disabled(model.selectedPlaylistID == nil)
-                Button(model.text("選択中の名前を変更", "Rename Selected"), action: model.renameSelectedPlaylist)
-                    .disabled(model.selectedPlaylistID == nil)
-                Divider()
-                Button(model.text("選択中を削除", "Delete Selected"), role: .destructive, action: model.deleteSelectedPlaylist)
-                    .disabled(model.selectedPlaylistID == nil)
-            } label: { Label(model.text("プレイリスト操作", "Playlist Actions"), systemImage: "ellipsis.circle") }
-        }
     }
 
     private var headerTitle: String {

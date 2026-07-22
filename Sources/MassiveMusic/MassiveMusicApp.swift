@@ -10,6 +10,7 @@ struct MassiveMusicApp: App {
             PlayerWindowRoot(environment: environment)
         }
         .windowStyle(.titleBar)
+        .windowToolbarStyle(.unified(showsTitle: false))
         .defaultSize(width: 1_280, height: 800)
         .commands {
             CommandGroup(after: .newItem) {

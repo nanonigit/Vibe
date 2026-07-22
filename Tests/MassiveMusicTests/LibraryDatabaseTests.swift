@@ -140,10 +140,11 @@ struct LibraryDatabaseTests {
         #expect(source.contains("moveTrackColumn(source, before: column)"))
     }
 
-    @Test func playlistsAppearAboveManageAndLibraryActionsLeaveTheToolbar() throws {
+    @Test func playlistsAppearAboveManageAndToolbarActionsMoveIntoManage() throws {
         let repository = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let app = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/MassiveMusicApp.swift"))
         let sidebarStart = try #require(source.range(of: "    private var sidebar: some View"))
         let sidebarEnd = try #require(source.range(of: "    private var libraryContent: some View", range: sidebarStart.upperBound..<source.endIndex))
         let sidebar = String(source[sidebarStart.lowerBound..<sidebarEnd.lowerBound])
@@ -153,12 +154,14 @@ struct LibraryDatabaseTests {
         #expect(playlists.lowerBound < manage.lowerBound)
         #expect(sidebar.contains("action: model.chooseAndScanFolder"))
         #expect(sidebar.contains("action: model.importNewTracks"))
-
-        let toolbarStart = try #require(source.range(of: "    private var toolbar: some ToolbarContent"))
-        let toolbarEnd = try #require(source.range(of: "    private var headerTitle: String", range: toolbarStart.upperBound..<source.endIndex))
-        let toolbar = String(source[toolbarStart.lowerBound..<toolbarEnd.lowerBound])
-        #expect(!toolbar.contains("model.chooseAndScanFolder"))
-        #expect(!toolbar.contains("model.importNewTracks"))
+        #expect(sidebar.contains("model.revealLocalCache"))
+        #expect(sidebar.contains("model.chooseStorageDestination"))
+        #expect(sidebar.contains("isMiniPlayer = true"))
+        #expect(sidebar.contains("showInspector.toggle()"))
+        #expect(sidebar.contains("action: model.importPlaylist"))
+        #expect(!source.contains(".toolbar { toolbar }"))
+        #expect(!source.contains("private var toolbar: some ToolbarContent"))
+        #expect(app.contains(".windowToolbarStyle(.unified(showsTitle: false))"))
     }
 
     @Test func idleInspectorShowsDiscoveryLinksWithoutLyricsFailure() throws {
@@ -266,8 +269,8 @@ struct LibraryDatabaseTests {
             .deletingLastPathComponent()
         let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
         let bodyStart = try #require(source.range(of: "    var body: some View {"))
-        let toolbarStart = try #require(source.range(of: "        .toolbar { toolbar }", range: bodyStart.upperBound..<source.endIndex))
-        let rootLayout = String(source[bodyStart.lowerBound..<toolbarStart.lowerBound])
+        let bodyEnd = try #require(source.range(of: "        .onChange(of: player.currentTrack)", range: bodyStart.upperBound..<source.endIndex))
+        let rootLayout = String(source[bodyStart.lowerBound..<bodyEnd.lowerBound])
 
         #expect(source.contains("private struct PlayerArtwork: View"))
         #expect(source.components(separatedBy: "PlayerArtwork(").count - 1 >= 2)
