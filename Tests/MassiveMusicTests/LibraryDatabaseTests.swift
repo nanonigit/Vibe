@@ -246,6 +246,17 @@ struct LibraryDatabaseTests {
         #expect(content.contains("management:"))
     }
 
+    @Test func sidebarNavigationLabelsUseOneExplicitFontSize() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let labelStart = try #require(content.range(of: "private struct SidebarNavigationLabel: View"))
+        let labelEnd = try #require(content.range(of: "\nprivate struct CacheTrackLimitControl", range: labelStart.upperBound..<content.endIndex))
+        let label = content[labelStart.lowerBound..<labelEnd.lowerBound]
+
+        #expect(label.contains(".font(.body)"))
+    }
+
     @Test func inspectorDividerUsesStableGlobalDragCoordinates() throws {
         let repository = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

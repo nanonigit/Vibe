@@ -59,6 +59,7 @@ private struct SidebarNavigationLabel: View {
                     .fixedSize()
             }
         }
+        .font(.body)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
     }
