@@ -390,6 +390,12 @@ final class LibraryViewModel: ObservableObject {
         searchText = ""
     }
 
+    private func cancelPendingSearchNavigation() {
+        searchTask?.cancel()
+        searchTask = nil
+        isSearchPending = false
+    }
+
     func dismissError() { errorMessage = nil }
 
     func cancelMetadataRepair() { metadataRepairRequest = nil }
@@ -588,6 +594,7 @@ final class LibraryViewModel: ObservableObject {
     }
 
     func openAlbum(_ album: AlbumSummary) {
+        cancelPendingSearchNavigation()
         captureBrowseReturnState()
         usesDirectOffsetPaging = false
         selectedIndexToken = nil
@@ -598,6 +605,7 @@ final class LibraryViewModel: ObservableObject {
     }
 
     func openGenre(_ genre: String) {
+        cancelPendingSearchNavigation()
         captureBrowseReturnState()
         usesDirectOffsetPaging = false
         selectedIndexToken = nil
@@ -615,6 +623,7 @@ final class LibraryViewModel: ObservableObject {
     }
 
     func openArtist(_ artist: ArtistSummary) {
+        cancelPendingSearchNavigation()
         captureBrowseReturnState()
         let requestedSection = section
         usesDirectOffsetPaging = false
@@ -626,7 +635,7 @@ final class LibraryViewModel: ObservableObject {
             if let exact = try? await Task.detached(operation: { try self.database.artistSummary(named: artist.name) }).value {
                 // The lookup may finish after the user has moved to diagnostics
                 // or another section. Never resurrect a stale detail header.
-                guard section == requestedSection, selectedArtist?.name == artist.name else { return }
+                guard section == requestedSection, selectedAlbum == nil, selectedArtist?.name == artist.name else { return }
                 selectedArtist = exact
             }
         }
@@ -1259,6 +1268,7 @@ final class LibraryViewModel: ObservableObject {
                             )
                         }.value
                         try Task.checkCancellation()
+                        guard selectedAlbum == nil, selectedArtist?.name == artist.name else { return }
                         apply(albumPage: page)
                     }
                 } else if let genre = requestedGenre {
@@ -1699,13 +1709,21 @@ final class LibraryViewModel: ObservableObject {
     }
 
     private func handleCompletedMetadataEdit(for track: Track, edit: TrackMetadataEdit) {
+        let originalAlbumIdentity = AlbumSummary(
+            name: track.album,
+            artist: track.albumArtist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? track.artist : track.albumArtist,
+            trackCount: 0
+        ).id
         let editedAlbumIdentity = AlbumSummary(
             name: edit.album,
             artist: edit.albumArtist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? edit.artist : edit.albumArtist,
             trackCount: 0
         ).id
-        if let selectedAlbum, selectedAlbum.id != editedAlbumIdentity {
+        if let selectedAlbum,
+           selectedAlbum.id == originalAlbumIdentity,
+           selectedAlbum.id != editedAlbumIdentity {
             // The open detail points at the old metadata value. Keeping it open
             // would show a misleading empty album after a successful rename.
             // Use the browse return state so page, query, sort and index jump

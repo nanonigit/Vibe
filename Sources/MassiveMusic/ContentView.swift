@@ -26,15 +26,21 @@ private struct SidebarNavigationLabel: View {
     let systemImage: String
     var trailingText: String? = nil
     var trailingColor: Color = .secondary
+    var iconColor: Color = Color(nsColor: .labelColor)
 
     var body: some View {
         HStack(spacing: 8) {
-            Label(title, systemImage: systemImage)
+            Image(systemName: systemImage)
+                .foregroundStyle(iconColor)
+                .frame(width: 16)
+            Text(title)
+                .lineLimit(1)
             Spacer(minLength: 8)
             if let trailingText {
                 Text(trailingText)
                     .foregroundStyle(trailingColor)
                     .monospacedDigit()
+                    .fixedSize()
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -478,10 +484,13 @@ struct ContentView: View {
                         ))
                     } label: {
                         SidebarNavigationLabel(
-                            title: model.text("キャッシュ", "Cache"), systemImage: "internaldrive.fill"
+                            title: model.text("キャッシュ", "Cache"),
+                            systemImage: "internaldrive.fill",
+                            iconColor: Color(nsColor: .labelColor)
                         )
                     }
                     .menuStyle(.borderlessButton)
+                    .tint(Color(nsColor: .labelColor))
                     .help(model.text(
                         "キャッシュ保存場所: \(model.localCacheDirectoryPath)",
                         "Cache Location: \(model.localCacheDirectoryPath)"
@@ -516,16 +525,18 @@ struct ContentView: View {
                     }
                 } label: {
                     SidebarNavigationLabel(
-                        title: model.storageDestinations.first(where: \.isPrimary)?.name
-                            ?? model.text("メイン保管先", "Main Storage"),
+                        title: model.primaryStorageIsConnected
+                            ? model.text("メイン：接続中", "Main: Connected")
+                            : model.text("メイン：未接続", "Main: Disconnected"),
                         systemImage: "externaldrive.fill",
-                        trailingText: model.primaryStorageIsConnected
-                            ? model.text("接続中", "Connected")
-                            : model.text("未接続", "Disconnected"),
-                        trailingColor: model.primaryStorageIsConnected ? .green : .orange
+                        iconColor: model.primaryStorageIsConnected ? .green : .orange
                     )
                 }
                 .menuStyle(.borderlessButton)
+                .tint(model.primaryStorageIsConnected ? .green : .orange)
+                .help(model.primaryStorageIsConnected
+                    ? model.text("メイン保管先は接続中です", "Main storage is connected")
+                    : model.text("メイン保管先は未接続です", "Main storage is disconnected"))
                 Button { isMiniPlayer = true } label: {
                     SidebarNavigationLabel(
                         title: model.text("ミニプレイヤーに切り替え", "Switch to Mini Player"),
@@ -568,6 +579,7 @@ struct ContentView: View {
                     )
                 }
                 .menuStyle(.borderlessButton)
+                .tint(Color(nsColor: .labelColor))
                 Button { model.changeSection(.activityLog) } label: {
                     SidebarNavigationLabel(
                         title: model.sectionTitle(.activityLog), systemImage: icon(for: .activityLog)

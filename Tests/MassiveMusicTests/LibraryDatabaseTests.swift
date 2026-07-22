@@ -53,6 +53,11 @@ struct LibraryDatabaseTests {
         #expect(view.contains("未接続"))
         #expect(view.contains("Color.green"))
         #expect(view.contains("Color.orange"))
+        #expect(view.contains("var iconColor: Color = Color(nsColor: .labelColor)"))
+        #expect(view.contains("model.text(\"メイン：接続中\", \"Main: Connected\")"))
+        #expect(view.contains("model.text(\"メイン：未接続\", \"Main: Disconnected\")"))
+        #expect(view.contains("iconColor: model.primaryStorageIsConnected ? .green : .orange"))
+        #expect(view.contains(".tint(model.primaryStorageIsConnected ? .green : .orange)"))
     }
 
     @Test func disconnectedImportsUseTheCacheAndReconnectCopiesWithoutRemovingIt() throws {
@@ -489,7 +494,9 @@ struct LibraryDatabaseTests {
         #expect(model.contains("selectedIndexToken: selectedIndexToken"))
         #expect(closeDetail.contains("restoreBrowseReturnState"))
         #expect(closeDetail.contains("loadCurrentPage(reset: false)"))
-        #expect(model.contains("if let selectedAlbum, selectedAlbum.id != editedAlbumIdentity"))
+        #expect(model.contains("let originalAlbumIdentity = AlbumSummary("))
+        #expect(model.contains("selectedAlbum.id == originalAlbumIdentity"))
+        #expect(model.contains("selectedAlbum.id != editedAlbumIdentity"))
         #expect(model.contains("closeDetail()"))
         #expect(content.contains("model.selectedIndexToken = token"))
         #expect(!content.contains("@State private var selectedIndexToken"))
@@ -618,7 +625,20 @@ struct LibraryDatabaseTests {
         #expect(content.contains("ColumnResizeHandle(width: $albumViewAlbumWidth"))
         #expect(content.contains("ColumnResizeHandle(width: $albumViewArtistWidth"))
         #expect(content.contains("ColumnResizeHandle(width: $albumViewSongsWidth"))
-        #expect(model.contains("guard section == requestedSection, selectedArtist?.name == artist.name"))
+        #expect(model.contains("guard section == requestedSection, selectedAlbum == nil, selectedArtist?.name == artist.name"))
+    }
+
+    @Test func nestedAlbumNavigationRejectsLateArtistAndSearchUpdates() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+        let openAlbumStart = try #require(model.range(of: "    func openAlbum(_ album: AlbumSummary)"))
+        let openAlbumEnd = try #require(model.range(of: "    func openGenre(_ genre: String)", range: openAlbumStart.upperBound..<model.endIndex))
+        let openAlbum = String(model[openAlbumStart.lowerBound..<openAlbumEnd.lowerBound])
+
+        #expect(openAlbum.contains("cancelPendingSearchNavigation()"))
+        #expect(model.contains("guard selectedAlbum == nil, selectedArtist?.name == artist.name else { return }"))
+        #expect(model.contains("private func cancelPendingSearchNavigation()"))
     }
 
     @Test func activityLogRecordsFileAndMetadataChangesWithPagingAndFiltering() throws {
