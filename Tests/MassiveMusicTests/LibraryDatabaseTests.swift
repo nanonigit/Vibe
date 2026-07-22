@@ -161,7 +161,7 @@ struct LibraryDatabaseTests {
         #expect(sidebar.contains("action: model.importPlaylist"))
         #expect(!source.contains(".toolbar { toolbar }"))
         #expect(!source.contains("private var toolbar: some ToolbarContent"))
-        #expect(app.contains(".windowToolbarStyle(.unified(showsTitle: false))"))
+        #expect(app.contains(".windowToolbarStyle(.unifiedCompact(showsTitle: false))"))
     }
 
     @Test func idleInspectorShowsDiscoveryLinksWithoutLyricsFailure() throws {
