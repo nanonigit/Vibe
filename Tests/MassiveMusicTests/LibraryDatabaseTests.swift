@@ -495,11 +495,25 @@ struct LibraryDatabaseTests {
         #expect(closeDetail.contains("restoreBrowseReturnState"))
         #expect(closeDetail.contains("loadCurrentPage(reset: false)"))
         #expect(model.contains("let originalAlbumIdentity = AlbumSummary("))
+        #expect(model.contains("try await updateMetadataAsync(for: track, edit: edit, closeRenamedAlbumDetail: true)"))
+        #expect(model.contains("if closeRenamedAlbumDetail,"))
         #expect(model.contains("selectedAlbum.id == originalAlbumIdentity"))
         #expect(model.contains("selectedAlbum.id != editedAlbumIdentity"))
         #expect(model.contains("closeDetail()"))
         #expect(content.contains("model.selectedIndexToken = token"))
         #expect(!content.contains("@State private var selectedIndexToken"))
+    }
+
+    @Test func backgroundMetadataUpdatesNeverCloseTheOpenAlbumDetail() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+        let bulkStart = try #require(model.range(of: "    private func runBulkAutoFill() async"))
+        let bulkEnd = try #require(model.range(of: "\n    func saveMetadataNormalizationSettings()", range: bulkStart.upperBound..<model.endIndex))
+        let bulkAutoFill = String(model[bulkStart.lowerBound..<bulkEnd.lowerBound])
+
+        #expect(bulkAutoFill.contains("updateMetadataAsync(for: localTrack, edit: edit)"))
+        #expect(!bulkAutoFill.contains("closeRenamedAlbumDetail: true"))
     }
 
     @Test func musicBrainzCandidatesPreferMatchingOfficialAlbumAndParseNumbers() throws {

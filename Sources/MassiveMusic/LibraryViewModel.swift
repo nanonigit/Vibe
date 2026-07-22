@@ -1668,7 +1668,7 @@ final class LibraryViewModel: ObservableObject {
     /// Repairable MP3 errors open the existing confirmation flow and keep the editor on the current track.
     func updateMetadataFromEditor(for track: Track, edit: TrackMetadataEdit) async -> Bool {
         do {
-            try await updateMetadataAsync(for: track, edit: edit)
+            try await updateMetadataAsync(for: track, edit: edit, closeRenamedAlbumDetail: true)
             return true
         } catch {
             let repairableID3Damage = (error as? MassiveMusicError)?.isRepairableID3Damage == true
@@ -1683,19 +1683,35 @@ final class LibraryViewModel: ObservableObject {
         }
     }
 
-    func updateMetadataAsync(for track: Track, edit: TrackMetadataEdit) async throws {
+    func updateMetadataAsync(
+        for track: Track,
+        edit: TrackMetadataEdit,
+        closeRenamedAlbumDetail: Bool = false
+    ) async throws {
         let sourceFileIsAvailable = await trackFiles.sourceFileIsAvailable(for: track)
         if !sourceFileIsAvailable {
-            try await queueMetadataEditForLater(track: track, edit: edit)
+            try await queueMetadataEditForLater(
+                track: track,
+                edit: edit,
+                closeRenamedAlbumDetail: closeRenamedAlbumDetail
+            )
             return
         }
         try await runFileOperationWithAuthorizationRetry(for: track) {
             try await self.trackFiles.updateMetadata(track: track, edit: edit, authorizedRoot: $0)
         }
-        handleCompletedMetadataEdit(for: track, edit: edit)
+        handleCompletedMetadataEdit(
+            for: track,
+            edit: edit,
+            closeRenamedAlbumDetail: closeRenamedAlbumDetail
+        )
     }
 
-    private func queueMetadataEditForLater(track: Track, edit: TrackMetadataEdit) async throws {
+    private func queueMetadataEditForLater(
+        track: Track,
+        edit: TrackMetadataEdit,
+        closeRenamedAlbumDetail: Bool
+    ) async throws {
         let normalized = edit.normalizingLeadingTitleSpaces()
         try await Task.detached {
             try self.database.queuePendingMetadataEdit(
@@ -1705,10 +1721,18 @@ final class LibraryViewModel: ObservableObject {
                 modifiedAt: track.modifiedAt
             )
         }.value
-        handleCompletedMetadataEdit(for: track, edit: normalized)
+        handleCompletedMetadataEdit(
+            for: track,
+            edit: normalized,
+            closeRenamedAlbumDetail: closeRenamedAlbumDetail
+        )
     }
 
-    private func handleCompletedMetadataEdit(for track: Track, edit: TrackMetadataEdit) {
+    private func handleCompletedMetadataEdit(
+        for track: Track,
+        edit: TrackMetadataEdit,
+        closeRenamedAlbumDetail: Bool
+    ) {
         let originalAlbumIdentity = AlbumSummary(
             name: track.album,
             artist: track.albumArtist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -1721,7 +1745,8 @@ final class LibraryViewModel: ObservableObject {
                 ? edit.artist : edit.albumArtist,
             trackCount: 0
         ).id
-        if let selectedAlbum,
+        if closeRenamedAlbumDetail,
+           let selectedAlbum,
            selectedAlbum.id == originalAlbumIdentity,
            selectedAlbum.id != editedAlbumIdentity {
             // The open detail points at the old metadata value. Keeping it open
