@@ -21,6 +21,22 @@ private struct BatchMetadataEditRequest: Identifiable {
     let tracks: [Track]
 }
 
+private enum ManagementSidebarItem: String, CaseIterable, Identifiable {
+    case addFolder
+    case importSongs
+    case cache
+    case primaryStorage
+    case miniPlayer
+    case nowPlayingInfo
+    case playlistActions
+    case activityLog
+    case diagnostics
+    case storageAndImports
+    case storageDifferences
+
+    var id: String { rawValue }
+}
+
 private struct SidebarNavigationLabel: View {
     let title: String
     let systemImage: String
@@ -94,10 +110,16 @@ struct ContentView: View {
     @State private var isInspectorDividerHovered = false
     @State private var sidebarDropTarget: LibrarySection?
     @State private var isReorderingLibrary = false
+    @State private var isReorderingPlaylists = false
+    @State private var playlistDropTargetID: Int64?
+    @State private var isReorderingManagement = false
+    @State private var managementDropTarget: ManagementSidebarItem?
     @State private var artistScrollPosition: String?
     @State private var artistReturnScrollPosition: String?
     @FocusState private var isTrackTableFocused: Bool
     @AppStorage("inspector.width") private var inspectorWidth = 310.0
+    @AppStorage("sidebar.managementOrder") private var managementOrderStorage = ""
+    @AppStorage("sidebar.managementHidden") private var hiddenManagementItemsStorage = ""
     @AppStorage("columns.title.width") private var titleColumnWidth = 150.0
     @AppStorage("columns.artist.width") private var artistColumnWidth = 150.0
     @AppStorage("columns.album.width") private var albumColumnWidth = 180.0
@@ -327,18 +349,18 @@ struct ContentView: View {
         .frame(width: 18)
         .contentShape(Rectangle())
         .animation(.easeOut(duration: 0.12), value: isInspectorDividerHovered)
-        .animation(.easeOut(duration: 0.12), value: inspectorDragStartWidth != nil)
         .onHover { hovering in
             isInspectorDividerHovered = hovering
             if hovering { NSCursor.resizeLeftRight.push() }
             else { NSCursor.pop() }
         }
         .gesture(
-            DragGesture(minimumDistance: 0)
+            DragGesture(minimumDistance: 0, coordinateSpace: .global)
                 .onChanged { value in
                     let start = inspectorDragStartWidth ?? inspectorWidth
                     inspectorDragStartWidth = start
-                    inspectorWidth = min(600, max(260, start - value.translation.width))
+                    let dragDistance = value.startLocation.x - value.location.x
+                    inspectorWidth = min(600, max(260, start + dragDistance))
                 }
                 .onEnded { _ in inspectorDragStartWidth = nil }
         )
@@ -421,17 +443,48 @@ struct ContentView: View {
             }
             Section {
                 ForEach(model.playlists) { playlist in
-                    Button {
-                        model.selectPlaylist(playlist.id)
-                    } label: {
-                        SidebarNavigationLabel(
-                            title: playlist.name, systemImage: "music.note.list",
-                            trailingText: playlist.itemCount.formatted()
-                        )
+                    HStack(spacing: 4) {
+                        Button {
+                            model.selectPlaylist(playlist.id)
+                        } label: {
+                            SidebarNavigationLabel(
+                                title: playlist.name, systemImage: "music.note.list",
+                                trailingText: playlist.itemCount.formatted()
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .disabled(isReorderingPlaylists)
+
+                        if isReorderingPlaylists {
+                            Image(systemName: "line.3.horizontal")
+                                .foregroundStyle(.secondary)
+                            Button {
+                                model.movePlaylist(playlist.id, by: -1)
+                            } label: {
+                                Image(systemName: "chevron.up")
+                            }
+                            .buttonStyle(.borderless)
+                            .disabled(playlist.id == model.playlists.first?.id)
+                            .help(model.text("上へ移動", "Move Up"))
+                            Button {
+                                model.movePlaylist(playlist.id, by: 1)
+                            } label: {
+                                Image(systemName: "chevron.down")
+                            }
+                            .buttonStyle(.borderless)
+                            .disabled(playlist.id == model.playlists.last?.id)
+                            .help(model.text("下へ移動", "Move Down"))
+                        }
                     }
-                    .buttonStyle(.plain)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .foregroundStyle(model.selectedPlaylistID == playlist.id ? Color.accentColor : Color.primary)
+                    .background {
+                        if playlistDropTargetID == playlist.id {
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color.accentColor.opacity(0.18))
+                        }
+                    }
                     .contextMenu {
                         Button(model.text("名前を変更…", "Rename…")) {
                             model.selectPlaylist(playlist.id)
@@ -441,11 +494,21 @@ struct ContentView: View {
                             model.deletePlaylist(id: playlist.id)
                         }
                     }
+                    .draggable("playlist-order:\(playlist.id)")
                     .dropDestination(for: String.self) { values, _ in
+                        if isReorderingPlaylists,
+                           let value = values.first,
+                           value.hasPrefix("playlist-order:"),
+                           let sourceID = Int64(value.dropFirst("playlist-order:".count)) {
+                            model.movePlaylist(sourceID, before: playlist.id)
+                            return true
+                        }
                         let trackIDs = values.flatMap(parseTrackDragPayload)
                         guard !trackIDs.isEmpty else { return false }
                         model.addTrackIDsToPlaylist(trackIDs, playlistID: playlist.id)
                         return true
+                    } isTargeted: { targeted in
+                        playlistDropTargetID = targeted && isReorderingPlaylists ? playlist.id : nil
                     }
                     .dropDestination(for: URL.self) { urls, _ in
                         guard !urls.isEmpty else { return false }
@@ -459,165 +522,84 @@ struct ContentView: View {
                     Spacer()
                     Button(action: model.createPlaylist) { Image(systemName: "plus") }
                         .buttonStyle(.plain)
+                    Button(isReorderingPlaylists
+                           ? model.text("完了", "Done")
+                           : model.text("並び替え", "Reorder")) {
+                        isReorderingPlaylists.toggle()
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
                 }
             }
-            Section(model.text("管理", "Manage")) {
-                Button(action: model.chooseAndScanFolder) {
-                    SidebarNavigationLabel(
-                        title: model.text("フォルダを追加", "Add Folder"), systemImage: "folder.badge.plus"
-                    )
+            Section {
+                ForEach(visibleManagementItems) { item in
+                    HStack(spacing: 4) {
+                        managementSidebarRow(item)
+                            .disabled(isReorderingManagement)
+                        if isReorderingManagement {
+                            Image(systemName: "line.3.horizontal")
+                                .foregroundStyle(.secondary)
+                            Button { moveManagementItem(item, by: -1) } label: {
+                                Image(systemName: "chevron.up")
+                            }
+                            .buttonStyle(.borderless)
+                            .disabled(item == visibleManagementItems.first)
+                            .help(model.text("上へ移動", "Move Up"))
+                            Button { moveManagementItem(item, by: 1) } label: {
+                                Image(systemName: "chevron.down")
+                            }
+                            .buttonStyle(.borderless)
+                            .disabled(item == visibleManagementItems.last)
+                            .help(model.text("下へ移動", "Move Down"))
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background {
+                        if managementDropTarget == item {
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color.accentColor.opacity(0.18))
+                        }
+                    }
+                    .draggable("management:\(item.rawValue)")
+                    .dropDestination(for: String.self) { values, _ in
+                        guard isReorderingManagement,
+                              let value = values.first,
+                              value.hasPrefix("management:"),
+                              let source = ManagementSidebarItem(rawValue: String(value.dropFirst("management:".count))) else {
+                            return false
+                        }
+                        moveManagementItem(source, before: item)
+                        return true
+                    } isTargeted: { targeted in
+                        managementDropTarget = targeted && isReorderingManagement ? item : nil
+                    }
                 }
-                .buttonStyle(.plain)
-                Button(action: model.importNewTracks) {
-                    SidebarNavigationLabel(
-                        title: model.text("曲を取り込む", "Import Songs"), systemImage: "tray.and.arrow.down"
-                    )
-                }
-                .buttonStyle(.plain)
-                if model.isStorageExternal {
+            } header: {
+                HStack {
+                    Text(model.text("管理", "Manage"))
+                    Spacer()
                     Menu {
-                        Button(
-                            model.text("Finderでキャッシュフォルダーを表示", "Show Cache Folder in Finder"),
-                            action: model.revealLocalCache
-                        )
-                        Divider()
-                        Text(model.text(
-                            "場所: \(model.localCacheDirectoryPath)",
-                            "Path: \(model.localCacheDirectoryPath)"
-                        ))
+                        ForEach(orderedManagementItems) { item in
+                            Button { toggleManagementItemVisibility(item) } label: {
+                                Label(
+                                    managementItemTitle(item),
+                                    systemImage: hiddenManagementItems.contains(item) ? "circle" : "checkmark.circle.fill"
+                                )
+                            }
+                        }
                     } label: {
-                        SidebarNavigationLabel(
-                            title: model.text("キャッシュ", "Cache"),
-                            systemImage: "internaldrive.fill",
-                            iconColor: Color(nsColor: .labelColor)
-                        )
+                        Image(systemName: "eye")
                     }
                     .menuStyle(.borderlessButton)
-                    .tint(Color(nsColor: .labelColor))
-                    .help(model.text(
-                        "キャッシュ保存場所: \(model.localCacheDirectoryPath)",
-                        "Cache Location: \(model.localCacheDirectoryPath)"
-                    ))
-                }
-                Menu {
-                    Label(
-                        model.primaryStorageIsConnected
-                            ? model.text("接続中", "Connected")
-                            : model.text("未接続", "Disconnected"),
-                        systemImage: model.primaryStorageIsConnected
-                            ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
-                    )
-                    Button(
-                        model.text("保管先を変更…", "Change Storage Destination…"),
-                        action: model.chooseStorageDestination
-                    )
-                    if let primary = model.storageDestinations.first(where: \.isPrimary) {
-                        Button(model.text("Finderで保管先フォルダーを表示", "Show Storage in Finder")) {
-                            NSWorkspace.shared.open(URL(filePath: primary.path))
-                        }
-                        .disabled(!model.primaryStorageIsConnected)
-                        Button(model.text("保管先フォルダを再スキャン", "Rescan Storage Folder")) {
-                            model.startScan(url: URL(filePath: primary.path))
-                        }
-                        .disabled(!model.primaryStorageIsConnected)
-                        Divider()
-                        Text(model.text("場所: \(primary.path)", "Path: \(primary.path)"))
-                    } else {
-                        Divider()
-                        Text(model.text("保管先が設定されていません", "No storage destination set"))
+                    .help(model.text("管理項目の表示／非表示", "Show or hide management items"))
+                    Button(isReorderingManagement
+                           ? model.text("完了", "Done")
+                           : model.text("並び替え", "Reorder")) {
+                        isReorderingManagement.toggle()
                     }
-                } label: {
-                    SidebarNavigationLabel(
-                        title: model.primaryStorageIsConnected
-                            ? model.text("メイン：接続中", "Main: Connected")
-                            : model.text("メイン：未接続", "Main: Disconnected"),
-                        systemImage: "externaldrive.fill",
-                        iconColor: model.primaryStorageIsConnected ? .green : .orange
-                    )
+                    .buttonStyle(.borderless)
+                    .font(.caption)
                 }
-                .menuStyle(.borderlessButton)
-                .tint(model.primaryStorageIsConnected ? .green : .orange)
-                .help(model.primaryStorageIsConnected
-                    ? model.text("メイン保管先は接続中です", "Main storage is connected")
-                    : model.text("メイン保管先は未接続です", "Main storage is disconnected"))
-                Button { isMiniPlayer = true } label: {
-                    SidebarNavigationLabel(
-                        title: model.text("ミニプレイヤーに切り替え", "Switch to Mini Player"),
-                        systemImage: "pip"
-                    )
-                }
-                .buttonStyle(.plain)
-                Button { showInspector.toggle() } label: {
-                    SidebarNavigationLabel(
-                        title: model.text("再生情報", "Now Playing Info"), systemImage: "sidebar.right"
-                    )
-                }
-                .buttonStyle(.plain)
-                Menu {
-                    Button(
-                        model.text("M3U/M3U8を読み込む", "Import M3U/M3U8"),
-                        action: model.importPlaylist
-                    )
-                    Button(
-                        model.text("選択中をM3U8へ書き出す", "Export Selected as M3U8"),
-                        action: model.exportSelectedPlaylist
-                    )
-                    .disabled(model.selectedPlaylistID == nil)
-                    Button(
-                        model.text("選択中の名前を変更", "Rename Selected"),
-                        action: model.renameSelectedPlaylist
-                    )
-                    .disabled(model.selectedPlaylistID == nil)
-                    Divider()
-                    Button(
-                        model.text("選択中を削除", "Delete Selected"),
-                        role: .destructive,
-                        action: model.deleteSelectedPlaylist
-                    )
-                    .disabled(model.selectedPlaylistID == nil)
-                } label: {
-                    SidebarNavigationLabel(
-                        title: model.text("プレイリスト操作", "Playlist Actions"),
-                        systemImage: "ellipsis.circle"
-                    )
-                }
-                .menuStyle(.borderlessButton)
-                .tint(Color(nsColor: .labelColor))
-                Button { model.changeSection(.activityLog) } label: {
-                    SidebarNavigationLabel(
-                        title: model.sectionTitle(.activityLog), systemImage: icon(for: .activityLog)
-                    )
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(model.section == .activityLog ? Color.accentColor : Color.primary)
-                Button { model.changeSection(.diagnostics) } label: {
-                    SidebarNavigationLabel(
-                        title: model.sectionTitle(.diagnostics), systemImage: icon(for: .diagnostics)
-                    )
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(model.section == .diagnostics ? Color.accentColor : Color.primary)
-                Button {
-                    settingsTab = .storage
-                    showSettings = true
-                } label: {
-                    SidebarNavigationLabel(
-                        title: model.text("保管先と取り込み", "Storage & Imports"), systemImage: "internaldrive"
-                    )
-                }
-                .buttonStyle(.plain)
-                Button {
-                    settingsTab = .differences
-                    showSettings = true
-                } label: {
-                    SidebarNavigationLabel(
-                        title: model.text("SSDとの差分", "Storage Differences"),
-                        systemImage: "arrow.left.arrow.right",
-                        trailingText: model.unavailableTrackCount.formatted(),
-                        trailingColor: model.unavailableTrackCount > 0 ? .orange : .secondary
-                    )
-                }
-                .buttonStyle(.plain)
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -629,6 +611,209 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(.bar)
             }
+        }
+    }
+
+    private var orderedManagementItems: [ManagementSidebarItem] {
+        let stored = managementOrderStorage.split(separator: "\n")
+            .compactMap { ManagementSidebarItem(rawValue: String($0)) }
+        var seen = Set<ManagementSidebarItem>()
+        let unique = stored.filter { seen.insert($0).inserted }
+        return unique + ManagementSidebarItem.allCases.filter { !seen.contains($0) }
+    }
+
+    private var hiddenManagementItems: Set<ManagementSidebarItem> {
+        Set(hiddenManagementItemsStorage.split(separator: "\n").compactMap {
+            ManagementSidebarItem(rawValue: String($0))
+        })
+    }
+
+    private var visibleManagementItems: [ManagementSidebarItem] {
+        orderedManagementItems.filter { item in
+            !hiddenManagementItems.contains(item) && (item != .cache || model.isStorageExternal)
+        }
+    }
+
+    private func toggleManagementItemVisibility(_ item: ManagementSidebarItem) {
+        var hidden = hiddenManagementItems
+        if !hidden.insert(item).inserted { hidden.remove(item) }
+        hiddenManagementItemsStorage = ManagementSidebarItem.allCases
+            .filter(hidden.contains)
+            .map(\.rawValue)
+            .joined(separator: "\n")
+    }
+
+    private func moveManagementItem(_ source: ManagementSidebarItem, before destination: ManagementSidebarItem) {
+        guard source != destination else { return }
+        var order = orderedManagementItems
+        guard let sourceIndex = order.firstIndex(of: source) else { return }
+        order.remove(at: sourceIndex)
+        guard let destinationIndex = order.firstIndex(of: destination) else { return }
+        order.insert(source, at: destinationIndex)
+        managementOrderStorage = order.map(\.rawValue).joined(separator: "\n")
+    }
+
+    private func moveManagementItem(_ item: ManagementSidebarItem, by offset: Int) {
+        guard offset != 0,
+              let visibleIndex = visibleManagementItems.firstIndex(of: item) else { return }
+        let destinationIndex = visibleIndex + offset
+        guard visibleManagementItems.indices.contains(destinationIndex),
+              let sourceIndex = orderedManagementItems.firstIndex(of: item),
+              let targetIndex = orderedManagementItems.firstIndex(of: visibleManagementItems[destinationIndex]) else { return }
+        var order = orderedManagementItems
+        order.swapAt(sourceIndex, targetIndex)
+        managementOrderStorage = order.map(\.rawValue).joined(separator: "\n")
+    }
+
+    private func managementItemTitle(_ item: ManagementSidebarItem) -> String {
+        switch item {
+        case .addFolder: model.text("フォルダを追加", "Add Folder")
+        case .importSongs: model.text("曲を取り込む", "Import Songs")
+        case .cache: model.text("キャッシュ", "Cache")
+        case .primaryStorage:
+            model.primaryStorageIsConnected
+                ? model.text("メイン：接続中", "Main: Connected")
+                : model.text("メイン：未接続", "Main: Disconnected")
+        case .miniPlayer: model.text("ミニプレイヤーに切り替え", "Switch to Mini Player")
+        case .nowPlayingInfo: model.text("再生情報", "Now Playing Info")
+        case .playlistActions: model.text("プレイリスト操作", "Playlist Actions")
+        case .activityLog: model.sectionTitle(.activityLog)
+        case .diagnostics: model.sectionTitle(.diagnostics)
+        case .storageAndImports: model.text("保管先と取り込み", "Storage & Imports")
+        case .storageDifferences: model.text("SSDとの差分", "Storage Differences")
+        }
+    }
+
+    @ViewBuilder private func managementSidebarRow(_ item: ManagementSidebarItem) -> some View {
+        switch item {
+        case .addFolder:
+            Button(action: model.chooseAndScanFolder) {
+                SidebarNavigationLabel(title: managementItemTitle(item), systemImage: "folder.badge.plus")
+            }
+            .buttonStyle(.plain)
+        case .importSongs:
+            Button(action: model.importNewTracks) {
+                SidebarNavigationLabel(title: managementItemTitle(item), systemImage: "tray.and.arrow.down")
+            }
+            .buttonStyle(.plain)
+        case .cache:
+            Menu {
+                Button(
+                    model.text("Finderでキャッシュフォルダーを表示", "Show Cache Folder in Finder"),
+                    action: model.revealLocalCache
+                )
+                Divider()
+                Text(model.text("場所: \(model.localCacheDirectoryPath)", "Path: \(model.localCacheDirectoryPath)"))
+            } label: {
+                SidebarNavigationLabel(
+                    title: managementItemTitle(item),
+                    systemImage: "internaldrive.fill"
+                )
+            }
+            .menuStyle(.borderlessButton)
+            .tint(Color(nsColor: .labelColor))
+            .help(model.text(
+                "キャッシュ保存場所: \(model.localCacheDirectoryPath)",
+                "Cache Location: \(model.localCacheDirectoryPath)"
+            ))
+        case .primaryStorage:
+            Menu {
+                Label(
+                    model.primaryStorageIsConnected
+                        ? model.text("接続中", "Connected")
+                        : model.text("未接続", "Disconnected"),
+                    systemImage: model.primaryStorageIsConnected
+                        ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+                )
+                Button(
+                    model.text("保管先を変更…", "Change Storage Destination…"),
+                    action: model.chooseStorageDestination
+                )
+                if let primary = model.storageDestinations.first(where: \.isPrimary) {
+                    Button(model.text("Finderで保管先フォルダーを表示", "Show Storage in Finder")) {
+                        NSWorkspace.shared.open(URL(filePath: primary.path))
+                    }
+                    .disabled(!model.primaryStorageIsConnected)
+                    Button(model.text("保管先フォルダを再スキャン", "Rescan Storage Folder")) {
+                        model.startScan(url: URL(filePath: primary.path))
+                    }
+                    .disabled(!model.primaryStorageIsConnected)
+                    Divider()
+                    Text(model.text("場所: \(primary.path)", "Path: \(primary.path)"))
+                } else {
+                    Divider()
+                    Text(model.text("保管先が設定されていません", "No storage destination set"))
+                }
+            } label: {
+                SidebarNavigationLabel(
+                    title: managementItemTitle(item),
+                    systemImage: "externaldrive.fill",
+                    iconColor: model.primaryStorageIsConnected ? .green : .orange
+                )
+            }
+            .menuStyle(.borderlessButton)
+            .tint(model.primaryStorageIsConnected ? .green : .orange)
+            .help(model.primaryStorageIsConnected
+                ? model.text("メイン保管先は接続中です", "Main storage is connected")
+                : model.text("メイン保管先は未接続です", "Main storage is disconnected"))
+        case .miniPlayer:
+            Button { isMiniPlayer = true } label: {
+                SidebarNavigationLabel(title: managementItemTitle(item), systemImage: "pip")
+            }
+            .buttonStyle(.plain)
+        case .nowPlayingInfo:
+            Button { showInspector.toggle() } label: {
+                SidebarNavigationLabel(title: managementItemTitle(item), systemImage: "sidebar.right")
+            }
+            .buttonStyle(.plain)
+        case .playlistActions:
+            Menu {
+                Button(model.text("M3U/M3U8を読み込む", "Import M3U/M3U8"), action: model.importPlaylist)
+                Button(model.text("選択中をM3U8へ書き出す", "Export Selected as M3U8"), action: model.exportSelectedPlaylist)
+                    .disabled(model.selectedPlaylistID == nil)
+                Button(model.text("選択中の名前を変更", "Rename Selected"), action: model.renameSelectedPlaylist)
+                    .disabled(model.selectedPlaylistID == nil)
+                Divider()
+                Button(model.text("選択中を削除", "Delete Selected"), role: .destructive, action: model.deleteSelectedPlaylist)
+                    .disabled(model.selectedPlaylistID == nil)
+            } label: {
+                SidebarNavigationLabel(title: managementItemTitle(item), systemImage: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .tint(Color(nsColor: .labelColor))
+        case .activityLog:
+            Button { model.changeSection(.activityLog) } label: {
+                SidebarNavigationLabel(title: managementItemTitle(item), systemImage: icon(for: .activityLog))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(model.section == .activityLog ? Color.accentColor : Color.primary)
+        case .diagnostics:
+            Button { model.changeSection(.diagnostics) } label: {
+                SidebarNavigationLabel(title: managementItemTitle(item), systemImage: icon(for: .diagnostics))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(model.section == .diagnostics ? Color.accentColor : Color.primary)
+        case .storageAndImports:
+            Button {
+                settingsTab = .storage
+                showSettings = true
+            } label: {
+                SidebarNavigationLabel(title: managementItemTitle(item), systemImage: "internaldrive")
+            }
+            .buttonStyle(.plain)
+        case .storageDifferences:
+            Button {
+                settingsTab = .differences
+                showSettings = true
+            } label: {
+                SidebarNavigationLabel(
+                    title: managementItemTitle(item),
+                    systemImage: "arrow.left.arrow.right",
+                    trailingText: model.unavailableTrackCount.formatted(),
+                    trailingColor: model.unavailableTrackCount > 0 ? .orange : .secondary
+                )
+            }
+            .buttonStyle(.plain)
         }
     }
 

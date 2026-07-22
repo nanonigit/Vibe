@@ -229,6 +229,33 @@ struct LibraryDatabaseTests {
         #expect(source.contains("view.loadHTMLString(\"\", baseURL: nil)"))
     }
 
+    @Test func playlistAndManagementSidebarCustomizationPersists() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+
+        #expect(model.contains("sidebar.playlistOrder"))
+        #expect(model.contains("func movePlaylist(_ sourceID: Int64, before destinationID: Int64)"))
+        #expect(model.contains("func movePlaylist(_ id: Int64, by offset: Int)"))
+        #expect(content.contains("@AppStorage(\"sidebar.managementOrder\")"))
+        #expect(content.contains("@AppStorage(\"sidebar.managementHidden\")"))
+        #expect(content.contains("toggleManagementItemVisibility"))
+        #expect(content.contains("moveManagementItem(source, before: item)"))
+        #expect(content.contains("playlist-order:"))
+        #expect(content.contains("management:"))
+    }
+
+    @Test func inspectorDividerUsesStableGlobalDragCoordinates() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+
+        #expect(content.contains("DragGesture(minimumDistance: 0, coordinateSpace: .global)"))
+        #expect(content.contains("value.startLocation.x - value.location.x"))
+        #expect(!content.contains(".animation(.easeOut(duration: 0.12), value: inspectorDragStartWidth != nil)"))
+    }
+
     @Test func navigationRefreshesCannotApplyAfterCancellationAndViewsResetToTop() throws {
         let repository = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -374,7 +401,7 @@ struct LibraryDatabaseTests {
             .deletingLastPathComponent()
         let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
 
-        #expect(source.contains("playlists = (try? database.playlists()) ?? []"))
+        #expect(source.contains("playlists = orderedPlaylists((try? database.playlists()) ?? [])"))
     }
 
     @Test func cachedLibraryKeepsControlsAndTrackTableInsideItsVisibleBounds() throws {
@@ -391,26 +418,30 @@ struct LibraryDatabaseTests {
         #expect(source.contains("private var trackTableContextID: String"))
     }
 
-    @Test func appStartupUsesProtectedDatabaseKeysAndNeverPresentsAuthenticationUI() throws {
+    @Test func appUsesOnlyProtectedDatabaseKeysAndNeverAccessesKeychain() throws {
         let repository = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-        let keychainSource = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/OpenAIGenreClassifier.swift"))
+        let keyStoreSource = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/OpenAIGenreClassifier.swift"))
         let modelSource = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
         let initializerStart = try #require(modelSource.range(of: "    init(database:"))
         let initializerEnd = try #require(modelSource.range(of: "\n    var canGoPrevious:", range: initializerStart.upperBound..<modelSource.endIndex))
         let initializer = String(modelSource[initializerStart.lowerBound..<initializerEnd.lowerBound])
 
-        #expect(keychainSource.contains("database.setting(forKey: dbKey)"))
-        #expect(keychainSource.contains("try database.setSetting(value, forKey: dbKey)"))
-        #expect(keychainSource.contains("query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail"))
-        #expect(keychainSource.contains("func readResult(database: LibraryDatabase? = nil, allowAuthenticationUI: Bool = false)"))
+        #expect(keyStoreSource.contains("struct ProviderAPIKeyStore"))
+        #expect(keyStoreSource.contains("try database.setting(forKey: dbKey)"))
+        #expect(keyStoreSource.contains("try database.setSetting(value, forKey: dbKey)"))
+        #expect(!keyStoreSource.contains("import Security"))
+        #expect(!keyStoreSource.contains("SecItem"))
+        #expect(!keyStoreSource.contains("kSec"))
+        #expect(!keyStoreSource.contains("Keychain"))
+        #expect(!modelSource.contains("Keychain"))
         #expect(initializer.contains("restoreAIProviderConfigurationWithoutReadingKeys()"))
         #expect(!initializer.contains("refreshAIProviderStates"))
         #expect(modelSource.contains("try database.setSetting(\"true\", forKey: \"openai.keyConfigured\")"))
         #expect(modelSource.contains("try database.setSetting(\"true\", forKey: \"gemini.keyConfigured\")"))
-        #expect(modelSource.contains("refreshAIProviderStates(allowAuthenticationUI: false, validateRemotely: true)"))
+        #expect(modelSource.contains("refreshAIProviderStates(validateRemotely: true)"))
     }
 
     @Test func localAdHocBuildCanLoadItsEmbeddedCoreFramework() throws {

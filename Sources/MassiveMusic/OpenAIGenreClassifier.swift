@@ -1,6 +1,5 @@
 import Foundation
 import MassiveMusicCore
-import Security
 
 struct GenreSuggestion: Equatable, Sendable {
     let genre: String
@@ -25,108 +24,41 @@ enum AIProviderStatus: Equatable, Sendable {
 
 enum APIKeyReadResult: Sendable {
     case value(String?)
-    case authenticationRequired
     case failure(String)
 }
 
 enum OpenAIIntegrationError: LocalizedError {
-    case keychain(OSStatus)
     case invalidResponse
     case requestFailed(String)
 
     var errorDescription: String? {
         switch self {
-        case let .keychain(status): "Keychain error (\(status))"
         case .invalidResponse: "OpenAI returned an invalid genre response."
         case let .requestFailed(message): message
         }
     }
 }
 
-struct ProviderAPIKeychain: Sendable {
-    let service: String
-    private let account = "api-key"
+struct ProviderAPIKeyStore: Sendable {
     private let dbKey: String
 
-    static let openAI = ProviderAPIKeychain(
-        service: "com.local.MassiveMusic.openai",
-        dbKey: "openai.key"
-    )
-    static let gemini = ProviderAPIKeychain(
-        service: "com.local.MassiveMusic.gemini",
-        dbKey: "gemini.key"
-    )
+    static let openAI = ProviderAPIKeyStore(dbKey: "openai.key")
+    static let gemini = ProviderAPIKeyStore(dbKey: "gemini.key")
 
-    func readResult(database: LibraryDatabase? = nil, allowAuthenticationUI: Bool = false) -> APIKeyReadResult {
-        if let database, let stored = try? database.setting(forKey: dbKey), !stored.isEmpty {
-            return .value(stored)
+    func readResult(database: LibraryDatabase) -> APIKeyReadResult {
+        do {
+            return .value(try database.setting(forKey: dbKey))
+        } catch {
+            return .failure(error.localizedDescription)
         }
-        if let legacy = try? readLegacyKeychain(allowAuthenticationUI: allowAuthenticationUI), !legacy.isEmpty {
-            if let database {
-                try? database.setSetting(legacy, forKey: dbKey)
-                deleteLegacyKeychain()
-            }
-            return .value(legacy)
-        }
-        return .value(nil)
     }
 
-    func read(database: LibraryDatabase? = nil, allowAuthenticationUI: Bool = false) throws -> String? {
-        if let database, let stored = try? database.setting(forKey: dbKey), !stored.isEmpty {
-            return stored
-        }
-        if let legacy = try? readLegacyKeychain(allowAuthenticationUI: allowAuthenticationUI), !legacy.isEmpty {
-            if let database {
-                try? database.setSetting(legacy, forKey: dbKey)
-                deleteLegacyKeychain()
-            }
-            return legacy
-        }
-        return nil
+    func save(_ value: String, database: LibraryDatabase) throws {
+        try database.setSetting(value, forKey: dbKey)
     }
 
-    func save(_ value: String, database: LibraryDatabase? = nil) throws {
-        if let database {
-            try database.setSetting(value, forKey: dbKey)
-        }
-        deleteLegacyKeychain()
-    }
-
-    func delete(database: LibraryDatabase? = nil) throws {
-        if let database {
-            try database.removeSetting(forKey: dbKey)
-        }
-        deleteLegacyKeychain()
-    }
-
-    private func readLegacyKeychain(allowAuthenticationUI: Bool) throws -> String? {
-        var query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-        if !allowAuthenticationUI {
-            query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail
-        }
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess else { throw OpenAIIntegrationError.keychain(status) }
-        guard let data = result as? Data, let value = String(data: data, encoding: .utf8) else {
-            return nil
-        }
-        return value
-    }
-
-    private func deleteLegacyKeychain() {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        _ = SecItemDelete(query as CFDictionary)
+    func delete(database: LibraryDatabase) throws {
+        try database.removeSetting(forKey: dbKey)
     }
 }
 

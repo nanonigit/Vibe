@@ -99,6 +99,7 @@ private struct BrowseReturnState {
 final class LibraryViewModel: ObservableObject {
     @Published var section: LibrarySection = .tracks
     @Published private(set) var librarySectionOrder: [LibrarySection] = []
+    private var playlistOrder: [Int64] = []
     @Published var sort: TrackSort = .title
     @Published var sortDirection: SortDirection = .ascending
     @Published var albumSort: AlbumSort = .name
@@ -209,8 +210,8 @@ final class LibraryViewModel: ObservableObject {
     private let enrichment: WebEnrichmentService
     private let musicMetadata = MusicBrainzMetadataService()
     private let metadataAnalyzer: MetadataDiagnosticsAnalyzer
-    private let openAIKeychain = ProviderAPIKeychain.openAI
-    private let geminiKeychain = ProviderAPIKeychain.gemini
+    private let openAIKeyStore = ProviderAPIKeyStore.openAI
+    private let geminiKeyStore = ProviderAPIKeyStore.gemini
     private let genreClassifier = OpenAIGenreClassifier()
     private var automaticallyClassifiedTrackIDs: Set<Int64> = []
     private let geminiGenreClassifier = GeminiGenreClassifier()
@@ -263,10 +264,13 @@ final class LibraryViewModel: ObservableObject {
         librarySectionOrder = Self.decodeLibrarySectionOrder(
             (try? database.setting(forKey: "sidebar.libraryOrder"))
         )
+        playlistOrder = Self.decodePlaylistOrder(
+            (try? database.setting(forKey: "sidebar.playlistOrder"))
+        )
         // A playlist menu can be opened immediately after launch. This query is
         // tiny and bounded by the number of playlists, so populate it before the
         // first frame instead of briefly presenting an empty submenu.
-        playlists = (try? database.playlists()) ?? []
+        playlists = orderedPlaylists((try? database.playlists()) ?? [])
         loadCurrentPage(reset: true)
         refreshPlaylists()
         refreshSidebarCounts()
@@ -487,6 +491,49 @@ final class LibraryViewModel: ObservableObject {
         var seen = Set<LibrarySection>()
         let decoded = stored.split(separator: "\n").compactMap { LibrarySection(rawValue: String($0)) }
         return decoded.filter { isReorderableLibrarySection($0) && seen.insert($0).inserted }
+    }
+
+    func movePlaylist(_ sourceID: Int64, before destinationID: Int64) {
+        guard sourceID != destinationID,
+              let sourceIndex = playlists.firstIndex(where: { $0.id == sourceID }) else { return }
+        var reordered = playlists
+        let source = reordered.remove(at: sourceIndex)
+        guard let destinationIndex = reordered.firstIndex(where: { $0.id == destinationID }) else { return }
+        reordered.insert(source, at: destinationIndex)
+        savePlaylistOrder(reordered)
+    }
+
+    func movePlaylist(_ id: Int64, by offset: Int) {
+        guard offset != 0,
+              let sourceIndex = playlists.firstIndex(where: { $0.id == id }) else { return }
+        let destinationIndex = sourceIndex + offset
+        guard playlists.indices.contains(destinationIndex) else { return }
+        var reordered = playlists
+        reordered.swapAt(sourceIndex, destinationIndex)
+        savePlaylistOrder(reordered)
+    }
+
+    private func savePlaylistOrder(_ reordered: [Playlist]) {
+        playlists = reordered
+        playlistOrder = reordered.map(\.id)
+        do {
+            try database.setSetting(playlistOrder.map(String.init).joined(separator: "\n"), forKey: "sidebar.playlistOrder")
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func orderedPlaylists(_ fetched: [Playlist]) -> [Playlist] {
+        let byID = Dictionary(uniqueKeysWithValues: fetched.map { ($0.id, $0) })
+        let stored = playlistOrder.compactMap { byID[$0] }
+        let knownIDs = Set(stored.map(\.id))
+        return stored + fetched.filter { !knownIDs.contains($0.id) }
+    }
+
+    private static func decodePlaylistOrder(_ stored: String?) -> [Int64] {
+        guard let stored, !stored.isEmpty else { return [] }
+        var seen = Set<Int64>()
+        return stored.split(separator: "\n")
+            .compactMap { Int64($0) }
+            .filter { seen.insert($0).inserted }
     }
 
     func changeActivityKind(_ kind: LibraryActivityKind?) {
@@ -720,11 +767,11 @@ final class LibraryViewModel: ObservableObject {
         let trimmedGeminiModel = geminiModel.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
             if !trimmedOpenAIKey.isEmpty {
-                try openAIKeychain.save(trimmedOpenAIKey, database: database)
+                try openAIKeyStore.save(trimmedOpenAIKey, database: database)
                 try database.setSetting("true", forKey: "openai.keyConfigured")
             }
             if !trimmedGeminiKey.isEmpty {
-                try geminiKeychain.save(trimmedGeminiKey, database: database)
+                try geminiKeyStore.save(trimmedGeminiKey, database: database)
                 try database.setSetting("true", forKey: "gemini.keyConfigured")
             }
             self.openAIModel = trimmedOpenAIModel.isEmpty ? "gpt-5.6-luna" : trimmedOpenAIModel
@@ -733,13 +780,13 @@ final class LibraryViewModel: ObservableObject {
             try database.setSetting(self.geminiModel, forKey: "gemini.model")
             if !trimmedOpenAIKey.isEmpty { hasOpenAIAPIKey = true }
             if !trimmedGeminiKey.isEmpty { hasGeminiAPIKey = true }
-            refreshAIProviderStates(allowAuthenticationUI: false, validateRemotely: true)
+            refreshAIProviderStates(validateRemotely: true)
         } catch { errorMessage = error.localizedDescription }
     }
 
     func removeOpenAIAPIKey() {
         do {
-            try openAIKeychain.delete(database: database)
+            try openAIKeyStore.delete(database: database)
             try database.setSetting("false", forKey: "openai.keyConfigured")
             hasOpenAIAPIKey = false
             genreSuggestion = nil
@@ -749,7 +796,7 @@ final class LibraryViewModel: ObservableObject {
 
     func removeGeminiAPIKey() {
         do {
-            try geminiKeychain.delete(database: database)
+            try geminiKeyStore.delete(database: database)
             try database.setSetting("false", forKey: "gemini.keyConfigured")
             hasGeminiAPIKey = false
             geminiStatus = .notConfigured
@@ -758,7 +805,7 @@ final class LibraryViewModel: ObservableObject {
     }
 
     func validateAIProviders() {
-        refreshAIProviderStates(allowAuthenticationUI: false, validateRemotely: true)
+        refreshAIProviderStates(validateRemotely: true)
     }
 
     func classifyGenre(for track: Track) {
@@ -772,37 +819,29 @@ final class LibraryViewModel: ObservableObject {
         Task { [weak self] in
             guard let self else { return }
             let db = database
-            let openKeychain = openAIKeychain
-            let googleKeychain = geminiKeychain
-            async let openAIRead = Task.detached { openKeychain.readResult(database: db, allowAuthenticationUI: false) }.value
-            async let geminiRead = Task.detached { googleKeychain.readResult(database: db, allowAuthenticationUI: false) }.value
+            let openAIStore = openAIKeyStore
+            let geminiStore = geminiKeyStore
+            async let openAIRead = Task.detached { openAIStore.readResult(database: db) }.value
+            async let geminiRead = Task.detached { geminiStore.readResult(database: db) }.value
             let reads = await (openAIRead, geminiRead)
             var failures: [String] = []
 
             let openAIKey: String?
             switch reads.0 {
             case let .value(key): openAIKey = key
-            case .authenticationRequired:
-                openAIKey = nil
-                openAIStatus = .configured
-                failures.append("OpenAI Keychain: authentication required")
             case let .failure(message):
                 openAIKey = nil
                 openAIStatus = .invalid(message)
-                failures.append("OpenAI Keychain: \(message)")
+                failures.append("OpenAI key store: \(message)")
             }
 
             let geminiKey: String?
             switch reads.1 {
             case let .value(key): geminiKey = key
-            case .authenticationRequired:
-                geminiKey = nil
-                geminiStatus = .configured
-                failures.append("Gemini Keychain: authentication required")
             case let .failure(message):
                 geminiKey = nil
                 geminiStatus = .invalid(message)
-                failures.append("Gemini Keychain: \(message)")
+                failures.append("Gemini key store: \(message)")
             }
 
             if let key = openAIKey, !key.isEmpty {
@@ -852,19 +891,13 @@ final class LibraryViewModel: ObservableObject {
         }
     }
 
-    private func refreshAIProviderStates(allowAuthenticationUI: Bool, validateRemotely: Bool) {
-        refreshOpenAIProviderState(
-            allowAuthenticationUI: allowAuthenticationUI,
-            validateRemotely: validateRemotely
-        )
-        refreshGeminiProviderState(
-            allowAuthenticationUI: allowAuthenticationUI,
-            validateRemotely: validateRemotely
-        )
+    private func refreshAIProviderStates(validateRemotely: Bool) {
+        refreshOpenAIProviderState(validateRemotely: validateRemotely)
+        refreshGeminiProviderState(validateRemotely: validateRemotely)
     }
 
-    /// Restores only non-secret display state during launch. Reading Keychain items here
-    /// would allow macOS to present an authentication dialog before the user requested AI.
+    /// Restores only non-secret display state during launch. API keys remain in the
+    /// protected application database until an explicit AI operation needs them.
     private func restoreAIProviderConfigurationWithoutReadingKeys() {
         hasOpenAIAPIKey = (try? database.setting(forKey: "openai.keyConfigured")) == "true"
         hasGeminiAPIKey = (try? database.setting(forKey: "gemini.keyConfigured")) == "true"
@@ -872,22 +905,18 @@ final class LibraryViewModel: ObservableObject {
         geminiStatus = hasGeminiAPIKey ? .configured : .notConfigured
     }
 
-    private func refreshOpenAIProviderState(allowAuthenticationUI: Bool, validateRemotely: Bool) {
-        let keychain = openAIKeychain
+    private func refreshOpenAIProviderState(validateRemotely: Bool) {
+        let keyStore = openAIKeyStore
         let db = database
         Task { [weak self] in
             guard let self else { return }
             let result = await Task.detached {
-                keychain.readResult(database: db, allowAuthenticationUI: false)
+                keyStore.readResult(database: db)
             }.value
             guard !Task.isCancelled else { return }
             let key: String?
             switch result {
             case let .value(value): key = value
-            case .authenticationRequired:
-                hasOpenAIAPIKey = true
-                openAIStatus = .configured
-                return
             case let .failure(message):
                 openAIStatus = .invalid(message)
                 return
@@ -905,23 +934,19 @@ final class LibraryViewModel: ObservableObject {
         }
     }
 
-    private func refreshGeminiProviderState(allowAuthenticationUI: Bool, validateRemotely: Bool) {
-        let keychain = geminiKeychain
+    private func refreshGeminiProviderState(validateRemotely: Bool) {
+        let keyStore = geminiKeyStore
         let db = database
         let model = geminiModel
         Task { [weak self] in
             guard let self else { return }
             let result = await Task.detached {
-                keychain.readResult(database: db, allowAuthenticationUI: false)
+                keyStore.readResult(database: db)
             }.value
             guard !Task.isCancelled else { return }
             let key: String?
             switch result {
             case let .value(value): key = value
-            case .authenticationRequired:
-                hasGeminiAPIKey = true
-                geminiStatus = .configured
-                return
             case let .failure(message):
                 geminiStatus = .invalid(message)
                 return
@@ -3089,7 +3114,8 @@ final class LibraryViewModel: ObservableObject {
     private func refreshPlaylists() {
         Task {
             do {
-                playlists = try await Task.detached { try self.database.playlists() }.value
+                let fetched = try await Task.detached { try self.database.playlists() }.value
+                playlists = orderedPlaylists(fetched)
             } catch { errorMessage = error.localizedDescription }
         }
     }
