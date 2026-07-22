@@ -22,6 +22,7 @@ public enum AudioMetadataWriter {
         if edit.isCompilation, ext != "mp3" {
             throw MassiveMusicError.metadataWriteFailed("コンピレーションタグのファイル書き込みは現在MP3に対応しています。元のファイルは変更していません。")
         }
+        try ensureDestinationHasSafeWriteCapacity(sourceURL)
         let fileManager = FileManager.default
         let temporaryDirectory = fileManager.temporaryDirectory
             .appending(path: "MassiveMusicMetadataWrites", directoryHint: .isDirectory)
@@ -82,6 +83,30 @@ public enum AudioMetadataWriter {
               data.prefix(3) == Data("ID3".utf8) else { return false }
         let version = data[3]
         return version < 3
+    }
+
+    static func requiredDestinationCapacity(forFileSize fileSize: Int64) -> Int64 {
+        let rollbackReserve: Int64 = 16 * 1_024 * 1_024
+        let doubledSize = fileSize > (Int64.max - rollbackReserve) / 2
+            ? Int64.max
+            : fileSize * 2 + rollbackReserve
+        return max(32 * 1_024 * 1_024, doubledSize)
+    }
+
+    private static func ensureDestinationHasSafeWriteCapacity(_ sourceURL: URL) throws {
+        guard let values = try? sourceURL.resourceValues(forKeys: [
+            .fileSizeKey,
+            .volumeAvailableCapacityForImportantUsageKey
+        ]) else { return }
+        guard let available = values.volumeAvailableCapacityForImportantUsage else { return }
+        let fileSize = Int64(values.fileSize ?? 0)
+        let required = requiredDestinationCapacity(forFileSize: fileSize)
+        guard available >= required else {
+            throw MassiveMusicError.insufficientStorageSpace(
+                requiredBytes: required,
+                availableBytes: available
+            )
+        }
     }
 
     public static func infoDictionary(at url: URL) throws -> [String: Any] {

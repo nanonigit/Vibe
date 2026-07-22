@@ -461,6 +461,25 @@ public final class LibraryDatabase: @unchecked Sendable {
         }
     }
 
+    public func representativeArtworkTrack(album: String, artist: String) throws -> Track? {
+        try pool.read { db in
+            let row = try Row.fetchOne(
+                db,
+                sql: """
+                    SELECT * FROM tracks
+                    WHERE is_available = 1
+                      AND has_artwork = 1
+                      AND album = ? COLLATE NOCASE
+                      AND COALESCE(NULLIF(album_artist, ''), artist) = ? COLLATE NOCASE
+                    ORDER BY COALESCE(disc_number, 0), COALESCE(track_number, 0), id
+                    LIMIT 1
+                    """,
+                arguments: [album, artist]
+            )
+            return row.map(Self.decodeTrack)
+        }
+    }
+
     public func allTracksMissingNumbers() throws -> [Track] {
         try pool.read { db in
             let rows = try Row.fetchAll(
@@ -1476,10 +1495,19 @@ public final class LibraryDatabase: @unchecked Sendable {
         }
     }
 
-    public func offsetForArtist(startingAt value: String, genreFilter: String? = nil, search: String? = nil) throws -> Int {
+    public func offsetForArtist(
+        startingAt value: String,
+        direction: SortDirection = .ascending,
+        genreFilter: String? = nil,
+        search: String? = nil
+    ) throws -> Int {
         try pool.read { db in
             let sortExpression = "CASE WHEN lower(artist) LIKE 'the %' THEN substr(artist, 5) ELSE artist END"
-            var predicates = ["is_available = 1", "\(sortExpression) < ? COLLATE NOCASE"]
+            let comparison = direction == .ascending ? "<" : ">"
+            var predicates = [
+                "is_available = 1",
+                "substr(\(sortExpression), 1, 1) \(comparison) ? COLLATE NOCASE"
+            ]
             var arguments: StatementArguments = [value]
             if let genreFilter {
                 predicates.append("genre = ? COLLATE NOCASE")

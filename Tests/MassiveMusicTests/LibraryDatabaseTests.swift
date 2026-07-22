@@ -40,6 +40,32 @@ struct LibraryDatabaseTests {
         #expect(second.offset == 2)
     }
 
+    @Test func albumArtworkUsesTheFirstEmbeddedCoverBeforeRemoteLookup() throws {
+        let context = try TestContext()
+        _ = try context.database.upsertTracks([
+            context.importedTrack(
+                identity: "plain", title: "Plain", artist: "Track Artist",
+                album: "Shared Album", albumArtist: "Album Artist", trackNumber: 1
+            ),
+            context.importedTrack(
+                identity: "covered", title: "Covered", artist: "Track Artist",
+                album: "Shared Album", albumArtist: "Album Artist", trackNumber: 2,
+                hasArtwork: true
+            )
+        ], sessionID: 1)
+
+        let artworkTrack = try #require(try context.database.representativeArtworkTrack(
+            album: "Shared Album", artist: "Album Artist"
+        ))
+        #expect(artworkTrack.title == "Covered")
+
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let services = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryServices.swift"))
+        #expect(services.contains("representativeArtworkTrack(album: album, artist: artist)"))
+        #expect(services.contains("let embedded = await embeddedArtworkURL(for: track)"))
+    }
+
     @Test func recentLibraryAndStorageConnectionStateAreExplicitInTheUI() throws {
         let repository = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -1188,6 +1214,15 @@ struct LibraryDatabaseTests {
         #expect(try context.database.pageTracks(sort: .title, offset: kanaTitleOffset, limit: 1).tracks.first?.title == "かぜ")
         let artistOffset = try context.database.offsetForArtist(startingAt: "A")
         #expect(try context.database.pageArtists(offset: artistOffset, limit: 1).artists.first?.name == "Alpha Artist")
+        let descendingArtistOffset = try context.database.offsetForArtist(startingAt: "B", direction: .descending)
+        #expect(
+            try context.database.pageArtists(
+                sort: .name,
+                direction: .descending,
+                offset: descendingArtistOffset,
+                limit: 1
+            ).artists.first?.name == "Beta Artist"
+        )
         let albumOffset = try context.database.offsetForAlbum(startingAt: "あ")
         #expect(try context.database.pageAlbums(offset: albumOffset, limit: 1).albums.first?.name == "あさ")
     }
@@ -1528,6 +1563,7 @@ private struct TestContext {
         title: String,
         artist: String = "Artist",
         album: String = "Album",
+        albumArtist: String = "",
         genre: String = "",
         isCompilation: Bool = false,
         filename: String = "track.mp3",
@@ -1535,6 +1571,7 @@ private struct TestContext {
         rootID: Int64 = 1,
         discNumber: Int? = nil,
         trackNumber: Int? = nil,
+        hasArtwork: Bool = false,
         addedAt: Date = Date()
     ) -> TrackImport {
         TrackImport(
@@ -1547,6 +1584,7 @@ private struct TestContext {
                 title: title,
                 artist: artist,
                 album: album,
+                albumArtist: albumArtist,
                 genre: genre,
                 isCompilation: isCompilation,
                 discNumber: discNumber,
@@ -1554,6 +1592,7 @@ private struct TestContext {
                 fileSize: 1_024,
                 modifiedAt: Date(timeIntervalSince1970: 1_700_000_000),
                 format: format,
+                hasArtwork: hasArtwork,
                 addedAt: addedAt
             )
         )

@@ -552,6 +552,10 @@ actor WebEnrichmentService {
     }
 
     func albumArtworkURL(album: String, artist: String) async -> URL? {
+        if let track = try? database.representativeArtworkTrack(album: album, artist: artist),
+           let embedded = await embeddedArtworkURL(for: track) {
+            return embedded
+        }
         guard let remote = await coverArtURL(album: album, artist: artist) else { return nil }
         return await cacheImage(from: remote, key: "album-\(album)-\(artist)")
     }

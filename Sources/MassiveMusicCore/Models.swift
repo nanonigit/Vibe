@@ -1009,6 +1009,7 @@ public enum MassiveMusicError: LocalizedError, Sendable {
     case bookmarkResolutionFailed
     case trackUnavailable
     case unsupportedAudioFormat(String)
+    case insufficientStorageSpace(requiredBytes: Int64, availableBytes: Int64)
     case metadataWriteFailed(String)
     case invalidPlaylistName
 
@@ -1019,6 +1020,8 @@ public enum MassiveMusicError: LocalizedError, Sendable {
         case .bookmarkResolutionFailed: "音楽フォルダへのアクセス権を復元できません。"
         case .trackUnavailable: "曲ファイルを利用できません。"
         case let .unsupportedAudioFormat(ext): "未対応の音声形式です: \(ext)"
+        case let .insufficientStorageSpace(requiredBytes, availableBytes):
+            "保管先の空き容量が不足しています（必要: \(ByteCountFormatter.string(fromByteCount: requiredBytes, countStyle: .file))、空き: \(ByteCountFormatter.string(fromByteCount: availableBytes, countStyle: .file))）。曲ファイルは変更していません。"
         case let .metadataWriteFailed(reason): "曲情報を書き込めませんでした: \(reason)"
         case .invalidPlaylistName: "プレイリスト名を入力してください。"
         }
@@ -1027,5 +1030,10 @@ public enum MassiveMusicError: LocalizedError, Sendable {
     public var isRepairableID3Damage: Bool {
         guard case let .metadataWriteFailed(reason) = self else { return false }
         return reason.contains("ID3フレーム") || reason.contains("ID3タグ") || reason.contains("ID3v2")
+    }
+
+    public var isInsufficientStorageSpace: Bool {
+        guard case .insufficientStorageSpace = self else { return false }
+        return true
     }
 }

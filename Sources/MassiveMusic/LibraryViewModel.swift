@@ -632,11 +632,16 @@ final class LibraryViewModel: ObservableObject {
 
     func artistSortChanged(to newSort: ArtistSort? = nil) {
         usesDirectOffsetPaging = false
-        selectedIndexToken = nil
+        let indexToken = selectedIndexToken
         if let newSort {
             if artistSort == newSort { artistSortDirection = artistSortDirection == .ascending ? .descending : .ascending }
             else { artistSort = newSort; artistSortDirection = .ascending }
         }
+        if artistSort == .name, let indexToken {
+            jumpToIndex(indexToken, preserveSortDirection: true)
+            return
+        }
+        selectedIndexToken = nil
         loadCurrentPage(reset: true)
     }
 
@@ -1129,7 +1134,7 @@ final class LibraryViewModel: ObservableObject {
         loadCurrentPage(reset: false)
     }
 
-    func jumpToIndex(_ value: String) {
+    func jumpToIndex(_ value: String, preserveSortDirection: Bool = false) {
         guard let target = alphabetIndexTarget else { return }
         pagePresentationID = UUID()
         selectedIndexToken = value
@@ -1143,7 +1148,11 @@ final class LibraryViewModel: ObservableObject {
             searchText = ""
             usesDirectOffsetPaging = true
             trackPageCursors = [nil]
+        } else if target == .artists {
+            artistSort = .name
+            if !preserveSortDirection { artistSortDirection = .ascending }
         }
+        let requestedArtistDirection = artistSortDirection
         isLoading = true
         Task {
             do {
@@ -1164,7 +1173,12 @@ final class LibraryViewModel: ObservableObject {
                             genreFilter: genre
                         )
                     case .artists:
-                        return try self.database.offsetForArtist(startingAt: value, genreFilter: genre, search: requestedSearch)
+                        return try self.database.offsetForArtist(
+                            startingAt: value,
+                            direction: requestedArtistDirection,
+                            genreFilter: genre,
+                            search: requestedSearch
+                        )
                     }
                 }.value
                 offset = newOffset
@@ -1722,8 +1736,17 @@ final class LibraryViewModel: ObservableObject {
             )
             return
         }
-        try await runFileOperationWithAuthorizationRetry(for: track) {
-            try await self.trackFiles.updateMetadata(track: track, edit: edit, authorizedRoot: $0)
+        do {
+            try await runFileOperationWithAuthorizationRetry(for: track) {
+                try await self.trackFiles.updateMetadata(track: track, edit: edit, authorizedRoot: $0)
+            }
+        } catch let error as MassiveMusicError where error.isInsufficientStorageSpace {
+            try await queueMetadataEditForLater(
+                track: track,
+                edit: edit,
+                closeRenamedAlbumDetail: closeRenamedAlbumDetail
+            )
+            return
         }
         handleCompletedMetadataEdit(
             for: track,

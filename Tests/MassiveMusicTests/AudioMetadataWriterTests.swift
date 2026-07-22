@@ -5,6 +5,11 @@ import Testing
 
 @Suite(.serialized)
 struct AudioMetadataWriterTests {
+    @Test func reservesCapacityForSafeWriteAndRollback() {
+        #expect(AudioMetadataWriter.requiredDestinationCapacity(forFileSize: 1) == 32 * 1_024 * 1_024)
+        #expect(AudioMetadataWriter.requiredDestinationCapacity(forFileSize: 10 * 1_024 * 1_024) == 36 * 1_024 * 1_024)
+    }
+
     @Test func removesLeadingHalfWidthAndFullWidthSpacesFromTitleBeforeWriting() throws {
         let directory = FileManager.default.temporaryDirectory
             .appending(path: "MassiveMusicLeadingTitleSpaces-\(UUID().uuidString)", directoryHint: .isDirectory)
