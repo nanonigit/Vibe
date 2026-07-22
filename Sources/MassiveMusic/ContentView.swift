@@ -88,6 +88,8 @@ struct ContentView: View {
     @State private var isInspectorDividerHovered = false
     @State private var sidebarDropTarget: LibrarySection?
     @State private var isReorderingLibrary = false
+    @State private var artistScrollPosition: String?
+    @State private var artistReturnScrollPosition: String?
     @FocusState private var isTrackTableFocused: Bool
     @AppStorage("inspector.width") private var inspectorWidth = 310.0
     @AppStorage("columns.title.width") private var titleColumnWidth = 150.0
@@ -155,6 +157,19 @@ struct ContentView: View {
             model.enrich(player.currentTrack)
         }
         .onChange(of: model.appearance) { _, _ in model.savePresentationSettings() }
+        .onChange(of: model.section) { oldSection, newSection in
+            if oldSection != newSection {
+                artistScrollPosition = nil
+                artistReturnScrollPosition = nil
+            }
+        }
+        .onChange(of: model.pagePresentationID) { _, _ in
+            if model.section == .artists,
+               model.selectedArtist == nil,
+               artistReturnScrollPosition == nil {
+                artistScrollPosition = nil
+            }
+        }
         .onChange(of: browserURL) { _, url in
             if url != nil {
                 showInspector = true
@@ -717,7 +732,9 @@ struct ContentView: View {
     private var headerIdentity: some View {
         VStack(alignment: .leading, spacing: 2) {
             if model.isInDetail {
-                Button(action: model.closeDetail) { Label(model.text("戻る", "Back"), systemImage: "chevron.left") }
+                Button(action: closeDetailRestoringScrollPosition) {
+                    Label(model.text("戻る", "Back"), systemImage: "chevron.left")
+                }
                     .buttonStyle(.plain).foregroundStyle(.secondary)
                     .fixedSize(horizontal: true, vertical: false)
             }
@@ -1466,7 +1483,7 @@ struct ContentView: View {
             .background(.bar)
             Divider()
             List(model.artistSummaries) { artist in
-                Button { model.openArtist(artist) } label: {
+                Button { openArtistPreservingScrollPosition(artist) } label: {
                     HStack {
                         Label(model.displayArtist(artist.name), systemImage: artist.name.isEmpty ? "person.crop.circle.badge.questionmark" : "music.mic").frame(width: artistViewArtistWidth, alignment: .leading)
                         if isArtistViewAlbumsVisible {
@@ -1477,8 +1494,12 @@ struct ContentView: View {
                         }
                         Image(systemName: "chevron.right").foregroundStyle(.tertiary).frame(width: 20)
                     }.contentShape(Rectangle())
-                }.buttonStyle(.plain).padding(.vertical, 3)
+                }
+                .buttonStyle(.plain)
+                .padding(.vertical, 3)
+                .id(artist.id)
             }
+            .scrollPosition(id: $artistScrollPosition, anchor: .top)
         }
         .frame(width: max(geometry.size.width, artistSummaryContentWidth), height: geometry.size.height)
             }
@@ -1489,7 +1510,7 @@ struct ContentView: View {
         ScrollView {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 150, maximum: 210), spacing: 18)], spacing: 24) {
                 ForEach(model.artistSummaries) { artist in
-                    Button { model.openArtist(artist) } label: {
+                    Button { openArtistPreservingScrollPosition(artist) } label: {
                         VStack(spacing: 8) {
                             PlayerArtwork(artworkURL: model.artistImageURLs[artist.name], size: 150, cornerRadius: 75, placeholderPointSize: 36)
                             Text(model.displayArtist(artist.name)).font(.headline).lineLimit(2).multilineTextAlignment(.center)
@@ -1500,10 +1521,32 @@ struct ContentView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .id(artist.id)
                     .task { model.loadImage(for: artist) }
                 }
             }
+            .scrollTargetLayout()
             .padding(18)
+        }
+        .scrollPosition(id: $artistScrollPosition, anchor: .top)
+    }
+
+    private func openArtistPreservingScrollPosition(_ artist: ArtistSummary) {
+        artistReturnScrollPosition = artistScrollPosition ?? artist.id
+        model.openArtist(artist)
+    }
+
+    private func closeDetailRestoringScrollPosition() {
+        let shouldRestoreArtistList = model.section == .artists
+            && model.selectedArtist != nil
+            && model.selectedAlbum == nil
+        let returnPosition = artistReturnScrollPosition
+        model.closeDetail()
+        guard shouldRestoreArtistList, let returnPosition else { return }
+        Task { @MainActor in
+            await Task.yield()
+            artistScrollPosition = returnPosition
+            artistReturnScrollPosition = nil
         }
     }
 

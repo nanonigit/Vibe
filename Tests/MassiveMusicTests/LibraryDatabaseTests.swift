@@ -191,6 +191,19 @@ struct LibraryDatabaseTests {
         #expect(!source.contains("                                .onTapGesture {\n                                    isTrackTableFocused = true\n                                    handleTrackSelection(track, at: index)"))
     }
 
+    @Test func artistSummaryRestoresItsScrollPositionAfterClosingArtistDetail() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+
+        #expect(source.contains("@State private var artistScrollPosition: String?"))
+        #expect(source.contains("@State private var artistReturnScrollPosition: String?"))
+        #expect(source.components(separatedBy: ".scrollPosition(id: $artistScrollPosition, anchor: .top)").count - 1 >= 2)
+        #expect(source.components(separatedBy: "openArtistPreservingScrollPosition(artist)").count - 1 >= 2)
+        #expect(source.contains("artistReturnScrollPosition = artistScrollPosition ?? artist.id"))
+        #expect(source.contains("closeDetailRestoringScrollPosition"))
+    }
+
     @Test func navigationRefreshesCannotApplyAfterCancellationAndViewsResetToTop() throws {
         let repository = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
