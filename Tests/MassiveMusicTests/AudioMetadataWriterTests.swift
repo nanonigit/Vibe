@@ -311,6 +311,7 @@ struct AudioMetadataWriterTests {
         )
         var edit = TrackMetadataEdit(track: track)
         edit.title = "Baby Break It Down"
+        edit.genre = "Rock"
 
         do {
             try AudioMetadataWriter.write(edit, to: url)
@@ -326,6 +327,7 @@ struct AudioMetadataWriterTests {
         #expect(info["title"] as? String == "Baby Break It Down")
         #expect(info["artist"] as? String == "The Rolling Stones")
         #expect(info["album"] as? String == "Voodoo Lounge")
+        #expect(info["genre"] as? String == "Rock")
         #expect(output.containsSubsequence(Data("APIC".utf8)))
         #expect(output.containsSubsequence(artworkBytes))
         #expect(output.suffix(audioBytes.count) == audioBytes)

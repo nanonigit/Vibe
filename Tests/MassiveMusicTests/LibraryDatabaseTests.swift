@@ -1460,8 +1460,11 @@ struct LibraryDatabaseTests {
         let content = try String(contentsOf: sourceRoot.appending(path: "Sources/MassiveMusic/ContentView.swift"))
         #expect(model.contains("try self.database.updateTrackGenre(id: track.id, genre: genre)"))
         #expect(model.contains("await trackFiles.sourceFileIsAvailable(for: track)"))
+        #expect(model.contains("await trackFiles.isID3v22Tag(for: track)"))
+        #expect(model.contains("purpose: .aiGenre(genre)"))
         #expect(services.contains("func sourceFileIsAvailable(for track: Track) -> Bool"))
         #expect(content.contains("ライブラリへ登録"))
+        #expect(content.contains("model.metadataRepairDialogTitle"))
     }
 
     @Test func metadataVariationAnalyzerFindsNormalizationAndLikelyTypo() async throws {

@@ -73,9 +73,21 @@ struct ImportProgress: Sendable {
 }
 
 struct MetadataRepairRequest: Identifiable, Sendable {
+    enum Purpose: Sendable {
+        case metadataEdit
+        case aiGenre(String)
+    }
+
     let id = UUID()
     let track: Track
     let edit: TrackMetadataEdit
+    let purpose: Purpose
+
+    init(track: Track, edit: TrackMetadataEdit, purpose: Purpose = .metadataEdit) {
+        self.track = track
+        self.edit = edit
+        self.purpose = purpose
+    }
 }
 
 private struct BrowseReturnState {
@@ -403,6 +415,42 @@ final class LibraryViewModel: ObservableObject {
     func dismissError() { errorMessage = nil }
 
     func cancelMetadataRepair() { metadataRepairRequest = nil }
+
+    var metadataRepairDialogTitle: String {
+        guard let metadataRepairRequest else { return "" }
+        switch metadataRepairRequest.purpose {
+        case .metadataEdit:
+            return text("古い／壊れたID3タグを変換・修復", "Convert or Repair ID3 Tag")
+        case .aiGenre:
+            return text("ID3v2.3へ変換しますか？", "Convert to ID3v2.3?")
+        }
+    }
+
+    var metadataRepairConfirmationTitle: String {
+        guard let metadataRepairRequest else { return "" }
+        switch metadataRepairRequest.purpose {
+        case .metadataEdit:
+            return text("ID3v2.3へ変換して保存", "Convert to ID3v2.3 and Save")
+        case .aiGenre:
+            return text("変換してジャンルを書き込む", "Convert and Write Genre")
+        }
+    }
+
+    var metadataRepairDialogMessage: String {
+        guard let metadataRepairRequest else { return "" }
+        switch metadataRepairRequest.purpose {
+        case .metadataEdit:
+            return text(
+                "古いID3v2.2以前または壊れたタグを作業コピー上でID3v2.3へ変換し、MP3音声が一切変わっていないことを確認してから元ファイルへ反映します。主要な曲情報と読み取れるジャケットは引き継ぎます。読み取れない追加情報は失われる場合があります。失敗時は元ファイルを復元します。",
+                "Vibe will convert a legacy ID3v2.2-or-earlier or damaged tag to ID3v2.3 on a working copy, verify that the MP3 audio is unchanged, then update the source. Primary metadata and recoverable artwork are preserved. Unreadable extra fields may be lost. Failures restore the original file."
+            )
+        case let .aiGenre(genre):
+            return text(
+                "この曲はID3v2.2形式です。作業コピー上でID3v2.3へ安全に変換し、MP3音声が変わっていないことを確認してから、ジャンル「\(genre)」を書き込みます。失敗した場合は元ファイルを復元します。",
+                "This track uses ID3v2.2. Vibe will safely convert a working copy to ID3v2.3, verify that the MP3 audio is unchanged, then write the genre “\(genre)”. If anything fails, the original file is restored."
+            )
+        }
+    }
 
     func changeSection(_ newSection: LibrarySection, exactFilter: ExactMetadataFilter? = nil) {
         usesDirectOffsetPaging = false
@@ -994,23 +1042,44 @@ final class LibraryViewModel: ObservableObject {
         Task { [weak self] in
             guard let self else { return }
             do {
-                // Register the result first. A cached song remains editable even
-                // while its external source drive is disconnected.
-                try await Task.detached {
-                    try self.database.updateTrackGenre(id: track.id, genre: genre)
-                }.value
-
-                // Keep the source tag in sync when the original really exists.
-                // Missing media is an offline state, not a failed AI operation.
                 if await trackFiles.sourceFileIsAvailable(for: track) {
                     var edit = TrackMetadataEdit(track: track)
                     edit.genre = genre
+                    // A v2.2 tag needs an explicit decision before conversion.
+                    // Keep the proposed genre in the request so confirmation
+                    // performs conversion and the metadata write atomically.
+                    if track.format.lowercased() == "mp3",
+                       await trackFiles.isID3v22Tag(for: track) {
+                        metadataRepairRequest = MetadataRepairRequest(
+                            track: track,
+                            edit: edit,
+                            purpose: .aiGenre(genre)
+                        )
+                        return
+                    }
                     try await updateMetadataAsync(for: track, edit: edit)
                 } else {
+                    // A cached song remains editable while its external source
+                    // drive is disconnected. The source can be reconciled when
+                    // it becomes available again.
+                    try await Task.detached {
+                        try self.database.updateTrackGenre(id: track.id, genre: genre)
+                    }.value
                     loadCurrentPage(reset: false)
                 }
             } catch {
-                errorMessage = error.localizedDescription
+                let requiresConversion = (error as? MassiveMusicError)?.requiresID3v23Conversion == true
+                if track.format.lowercased() == "mp3", requiresConversion {
+                    var edit = TrackMetadataEdit(track: track)
+                    edit.genre = genre
+                    metadataRepairRequest = MetadataRepairRequest(
+                        track: track,
+                        edit: edit,
+                        purpose: .aiGenre(genre)
+                    )
+                } else {
+                    errorMessage = error.localizedDescription
+                }
             }
         }
     }

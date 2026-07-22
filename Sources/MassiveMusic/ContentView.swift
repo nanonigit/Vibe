@@ -285,24 +285,21 @@ struct ContentView: View {
             }
         }
         .confirmationDialog(
-            model.text("古い／壊れたID3タグを変換・修復", "Convert or Repair ID3 Tag"),
+            model.metadataRepairDialogTitle,
             isPresented: Binding(
                 get: { model.metadataRepairRequest != nil },
                 set: { if !$0 { model.cancelMetadataRepair() } }
             ),
             titleVisibility: .visible
         ) {
-            Button(model.text("ID3v2.3へ変換して保存", "Convert to ID3v2.3 and Save")) {
+            Button(model.metadataRepairConfirmationTitle) {
                 model.confirmMetadataRepair()
             }
             Button(model.text("キャンセル", "Cancel"), role: .cancel) {
                 model.cancelMetadataRepair()
             }
         } message: {
-            Text(model.text(
-                "古いID3v2.2以前または壊れたタグを作業コピー上でID3v2.3へ変換し、MP3音声が一切変わっていないことを確認してから元ファイルへ反映します。主要な曲情報と読み取れるジャケットは引き継ぎます。読み取れない追加情報は失われる場合があります。失敗時は元ファイルを復元します。",
-                "MassiveMusic will convert a legacy ID3v2.2-or-earlier or damaged tag to ID3v2.3 on a working copy, verify that the MP3 audio is unchanged, then update the source. Primary metadata and recoverable artwork are preserved. Unreadable extra fields may be lost. Failures restore the original file."
-            ))
+            Text(model.metadataRepairDialogMessage)
         }
         .alert(model.text("エラー", "Error"), isPresented: Binding(
             get: { model.errorMessage != nil || player.errorMessage != nil },

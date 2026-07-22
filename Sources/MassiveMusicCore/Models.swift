@@ -1032,6 +1032,11 @@ public enum MassiveMusicError: LocalizedError, Sendable {
         return reason.contains("ID3フレーム") || reason.contains("ID3タグ") || reason.contains("ID3v2")
     }
 
+    public var requiresID3v23Conversion: Bool {
+        guard case let .metadataWriteFailed(reason) = self else { return false }
+        return reason.contains("ID3v2.2以前")
+    }
+
     public var isInsufficientStorageSpace: Bool {
         guard case .insufficientStorageSpace = self else { return false }
         return true
