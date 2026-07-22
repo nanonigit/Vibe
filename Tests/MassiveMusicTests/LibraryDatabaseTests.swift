@@ -207,6 +207,26 @@ struct LibraryDatabaseTests {
         #expect(source.components(separatedBy: "openArtistPreservingScrollPosition(artist)").count - 1 >= 2)
         #expect(source.contains("artistReturnScrollPosition = artistScrollPosition ?? artist.id"))
         #expect(source.contains("closeDetailRestoringScrollPosition"))
+        #expect(source.contains("ScrollView(.vertical)"))
+        #expect(source.contains("LazyVStack(spacing: 0)"))
+        #expect(source.contains(".scrollTargetLayout()"))
+        #expect(source.contains(".onChange(of: model.isLoading)"))
+        #expect(source.contains("restorePendingArtistScrollPositionIfNeeded()"))
+        #expect(source.contains("guard !model.isLoading,"))
+        #expect(source.contains("artistScrollPosition = nil\n        Task { @MainActor in"))
+        #expect(source.contains("artistReturnScrollPosition = nil"))
+    }
+
+    @Test func embeddedBrowserStopsMediaWhenReturningToInformation() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/InternalBrowserView.swift"))
+
+        #expect(source.contains("static func dismantleNSView"))
+        #expect(source.contains("querySelectorAll('video, audio')"))
+        #expect(source.contains("media.pause()"))
+        #expect(source.contains("view.stopLoading()"))
+        #expect(source.contains("view.loadHTMLString(\"\", baseURL: nil)"))
     }
 
     @Test func navigationRefreshesCannotApplyAfterCancellationAndViewsResetToTop() throws {

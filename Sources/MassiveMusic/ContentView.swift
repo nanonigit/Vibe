@@ -176,6 +176,9 @@ struct ContentView: View {
                 artistScrollPosition = nil
             }
         }
+        .onChange(of: model.isLoading) { _, _ in
+            restorePendingArtistScrollPositionIfNeeded()
+        }
         .onChange(of: browserURL) { _, url in
             if url != nil {
                 showInspector = true
@@ -1494,22 +1497,30 @@ struct ContentView: View {
             .padding(.vertical, 8)
             .background(.bar)
             Divider()
-            List(model.artistSummaries) { artist in
-                Button { openArtistPreservingScrollPosition(artist) } label: {
-                    HStack {
-                        Label(model.displayArtist(artist.name), systemImage: artist.name.isEmpty ? "person.crop.circle.badge.questionmark" : "music.mic").frame(width: artistViewArtistWidth, alignment: .leading)
-                        if isArtistViewAlbumsVisible {
-                            Text(artist.albumCount.formatted()).frame(width: artistViewAlbumsWidth, alignment: .trailing).monospacedDigit()
+            ScrollView(.vertical) {
+                LazyVStack(spacing: 0) {
+                    ForEach(model.artistSummaries) { artist in
+                        Button { openArtistPreservingScrollPosition(artist) } label: {
+                            HStack {
+                                Label(model.displayArtist(artist.name), systemImage: artist.name.isEmpty ? "person.crop.circle.badge.questionmark" : "music.mic").frame(width: artistViewArtistWidth, alignment: .leading)
+                                if isArtistViewAlbumsVisible {
+                                    Text(artist.albumCount.formatted()).frame(width: artistViewAlbumsWidth, alignment: .trailing).monospacedDigit()
+                                }
+                                if isArtistViewSongsVisible {
+                                    Text(artist.trackCount.formatted()).frame(width: artistViewSongsWidth, alignment: .trailing).monospacedDigit()
+                                }
+                                Image(systemName: "chevron.right").foregroundStyle(.tertiary).frame(width: 20)
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .contentShape(Rectangle())
                         }
-                        if isArtistViewSongsVisible {
-                            Text(artist.trackCount.formatted()).frame(width: artistViewSongsWidth, alignment: .trailing).monospacedDigit()
-                        }
-                        Image(systemName: "chevron.right").foregroundStyle(.tertiary).frame(width: 20)
-                    }.contentShape(Rectangle())
+                        .buttonStyle(.plain)
+                        .id(artist.id)
+                        Divider()
+                    }
                 }
-                .buttonStyle(.plain)
-                .padding(.vertical, 3)
-                .id(artist.id)
+                .scrollTargetLayout()
             }
             .scrollPosition(id: $artistScrollPosition, anchor: .top)
         }
@@ -1552,9 +1563,18 @@ struct ContentView: View {
         let shouldRestoreArtistList = model.section == .artists
             && model.selectedArtist != nil
             && model.selectedAlbum == nil
-        let returnPosition = artistReturnScrollPosition
         model.closeDetail()
-        guard shouldRestoreArtistList, let returnPosition else { return }
+        guard shouldRestoreArtistList, artistReturnScrollPosition != nil else { return }
+        restorePendingArtistScrollPositionIfNeeded()
+    }
+
+    private func restorePendingArtistScrollPositionIfNeeded() {
+        guard !model.isLoading,
+              model.section == .artists,
+              model.selectedArtist == nil,
+              model.selectedAlbum == nil,
+              let returnPosition = artistReturnScrollPosition else { return }
+        artistScrollPosition = nil
         Task { @MainActor in
             await Task.yield()
             artistScrollPosition = returnPosition

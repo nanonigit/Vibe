@@ -45,6 +45,15 @@ struct WebContainer: NSViewRepresentable {
         if view.url != url { view.load(localizedRequest(url)) }
     }
 
+    static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
+        view.evaluateJavaScript(
+            "document.querySelectorAll('video, audio').forEach(media => { media.pause(); media.removeAttribute('src'); media.load(); });"
+        )
+        view.stopLoading()
+        view.navigationDelegate = nil
+        view.loadHTMLString("", baseURL: nil)
+    }
+
     private func localizedRequest(_ url: URL) -> URLRequest {
         var request = URLRequest(url: url)
         request.setValue(targetLanguage == "ja" ? "ja-JP,ja;q=0.9" : "en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
