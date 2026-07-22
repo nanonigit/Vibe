@@ -158,6 +158,7 @@ final class LibraryViewModel: ObservableObject {
     @Published var bulkAutoFillProgress = ""
     @Published var normalizeMetadataCharacterWidths = false
     @Published var autoMigrateID3v22ToV23 = true
+    @Published var autoRegisterHighConfidenceGenres = false
     @Published var isID3Migrating = false
     @Published var id3MigrationProgress = ""
     @Published private(set) var cachedTrackIDs: Set<Int64> = []
@@ -196,6 +197,7 @@ final class LibraryViewModel: ObservableObject {
     @Published private(set) var isClassifyingGenre = false
     @Published private(set) var batchMetadataProgress = BatchMetadataProgress.idle
     @Published var importProgress = ImportProgress.idle
+    @Published private(set) var pagePresentationID = UUID()
 
     let pageSize = 200
     let activityPageSize = 100
@@ -252,6 +254,7 @@ final class LibraryViewModel: ObservableObject {
         autoFillMusicBrainzTrackNumbers = (try? database.setting(forKey: "musicbrainz.autoFillTrackNumbers")) != "false"
         normalizeMetadataCharacterWidths = (try? database.setting(forKey: "metadata.normalizeCharacterWidths")) == "true"
         autoMigrateID3v22ToV23 = (try? database.setting(forKey: "metadata.autoMigrateID3v22ToV23")) != "false"
+        autoRegisterHighConfidenceGenres = (try? database.setting(forKey: "genre.autoRegisterHighConfidence")) == "true"
         if let stored = try? database.setting(forKey: "activityLog.maxRetentionLimit"),
            let val = Int(stored),
            let limit = LogRetentionLimit(rawValue: val) {
@@ -634,6 +637,7 @@ final class LibraryViewModel: ObservableObject {
     }
 
     func closeDetail() {
+        pagePresentationID = UUID()
         if restoreBrowseReturnState() {
             loadCurrentPage(reset: false)
         } else {
@@ -1025,6 +1029,26 @@ final class LibraryViewModel: ObservableObject {
         return components?.url
     }
 
+    var trendingMusicURL: URL? {
+        var components = URLComponents(string: "https://www.google.com/search")
+        components?.queryItems = [
+            URLQueryItem(name: "q", value: text("今 話題の曲", "trending songs now"))
+        ]
+        return components?.url
+    }
+
+    var youtubeMusicURL: URL? {
+        var components = URLComponents(string: "https://www.youtube.com/results")
+        components?.queryItems = [
+            URLQueryItem(name: "search_query", value: text("話題の曲", "trending music"))
+        ]
+        return components?.url
+    }
+
+    var musicNewsURL: URL? {
+        newsURL(for: text("音楽", "music"))
+    }
+
     func albumWikipediaURL(for track: Track) -> URL? {
         guard !track.album.isEmpty else { return nil }
         let host = language == .japanese ? "ja.wikipedia.org" : "en.wikipedia.org"
@@ -1047,11 +1071,13 @@ final class LibraryViewModel: ObservableObject {
     }
     func previousPage() {
         guard offset > 0 else { return }
+        pagePresentationID = UUID()
         if usesKeysetPaging, !usesDirectOffsetPaging, trackPageCursors.count > 1 { trackPageCursors.removeLast() }
         offset = max(0, offset - activePageSize)
         loadCurrentPage(reset: false)
     }
     func nextPage() {
+        pagePresentationID = UUID()
         if usesKeysetPaging, !usesDirectOffsetPaging { trackPageCursors.append(tracks.last) }
         offset += activePageSize
         loadCurrentPage(reset: false)
@@ -1059,6 +1085,7 @@ final class LibraryViewModel: ObservableObject {
 
     func goToPage(_ page: Int) {
         guard pageCount > 0 else { return }
+        pagePresentationID = UUID()
         let clamped = min(pageCount, max(1, page))
         offset = (clamped - 1) * activePageSize
         if usesKeysetPaging {
@@ -1070,6 +1097,7 @@ final class LibraryViewModel: ObservableObject {
 
     func jumpToIndex(_ value: String) {
         guard let target = alphabetIndexTarget else { return }
+        pagePresentationID = UUID()
         selectedIndexToken = value
         let album = selectedAlbum
         let artist = selectedArtist
@@ -1117,6 +1145,7 @@ final class LibraryViewModel: ObservableObject {
     func loadCurrentPage(reset: Bool) {
         pageLoadTask?.cancel()
         if reset {
+            pagePresentationID = UUID()
             offset = 0
             trackPageCursors = [nil]
         }
@@ -1196,6 +1225,7 @@ final class LibraryViewModel: ObservableObject {
                                 offset: requestedOffset, limit: self.pageSize
                             )
                         }.value
+                        try Task.checkCancellation()
                         apply(page: page)
                         updateDiagnosticSummary(kind: requestedDiagnosticKind, count: page.totalCount)
                     }
@@ -1243,6 +1273,7 @@ final class LibraryViewModel: ObservableObject {
                                 limit: self.pageSize
                             )
                         }.value
+                        try Task.checkCancellation()
                         apply(albumPage: page)
                     case .artists:
                         let page = try await Task.detached(priority: .userInitiated) {
@@ -1255,6 +1286,7 @@ final class LibraryViewModel: ObservableObject {
                                 limit: self.pageSize
                             )
                         }.value
+                        try Task.checkCancellation()
                         apply(artistPage: page)
                     case .tracks:
                         let page = try await Task.detached(priority: .userInitiated) {
@@ -1263,6 +1295,7 @@ final class LibraryViewModel: ObservableObject {
                                 offset: requestedOffset, limit: self.pageSize
                             )
                         }.value
+                        try Task.checkCancellation()
                         apply(page: page)
                     }
                 } else if let requestedExactMetadataFilter, requestedSection == .tracks {
@@ -1305,6 +1338,7 @@ final class LibraryViewModel: ObservableObject {
                             offset: requestedOffset, limit: self.pageSize
                         )
                     }.value
+                    try Task.checkCancellation()
                     apply(page: page)
                 } else if requestedSection == .recentlyAdded {
                     let page: TrackPage
@@ -1333,6 +1367,7 @@ final class LibraryViewModel: ObservableObject {
                             offset: requestedOffset, limit: self.pageSize
                         )
                     }.value
+                    try Task.checkCancellation()
                     apply(page: page)
                 } else if requestedSection == .playlists, let playlistID {
                     let page = try await Task.detached(priority: .userInitiated) {
@@ -1341,6 +1376,7 @@ final class LibraryViewModel: ObservableObject {
                             sort: requestedSort, direction: requestedDirection
                         )
                     }.value
+                    try Task.checkCancellation()
                     apply(page: page)
                 } else if [.genres, .folders].contains(requestedSection) {
                     let page = try await Task.detached(priority: .userInitiated) {
@@ -1371,6 +1407,7 @@ final class LibraryViewModel: ObservableObject {
                             )
                         }.value
                     }
+                    try Task.checkCancellation()
                     apply(page: page)
                 }
                 try Task.checkCancellation()
@@ -1543,6 +1580,25 @@ final class LibraryViewModel: ObservableObject {
                 } catch {
                     loadCurrentPage(reset: false)
                     throw error
+                }
+                loadCurrentPage(reset: false)
+                refreshSidebarCounts()
+            } catch { errorMessage = error.localizedDescription }
+        }
+    }
+
+    func setFavorites(_ tracks: [Track], isFavorite: Bool) {
+        let trackIDs = tracks.map(\.id)
+        guard !trackIDs.isEmpty else { return }
+        Task {
+            do {
+                try await Task.detached {
+                    try self.database.setFavorites(trackIDs: trackIDs, isFavorite: isFavorite)
+                }.value
+                if !isFavorite {
+                    for trackID in trackIDs {
+                        try await offlineCache.unpin(trackID: trackID)
+                    }
                 }
                 loadCurrentPage(reset: false)
                 refreshSidebarCounts()
@@ -2591,6 +2647,15 @@ final class LibraryViewModel: ObservableObject {
         } catch { errorMessage = error.localizedDescription }
     }
 
+    func saveAutomaticGenreSettings() {
+        do {
+            try database.setSetting(
+                autoRegisterHighConfidenceGenres ? "true" : "false",
+                forKey: "genre.autoRegisterHighConfidence"
+            )
+        } catch { errorMessage = error.localizedDescription }
+    }
+
     private func startID3Migration() {
         guard autoMigrateID3v22ToV23, id3MigrationTask == nil else { return }
         guard allScanRootsAreConnected() else { return }
@@ -2702,14 +2767,16 @@ final class LibraryViewModel: ObservableObject {
     }
 
     /// Automatically fills a missing genre when playback starts. The built-in
-    /// classifier is deterministic and local, so normal playback never opens
-    /// Keychain dialogs or incurs API charges. Users can still request a richer
+    /// classifier is deterministic and local, so normal playback never reads
+    /// provider keys or incurs API charges. Users can still request a richer
     /// OpenAI/Gemini suggestion from the information panel.
     func autoClassifyGenreIfNeeded(for track: Track) {
+        guard autoRegisterHighConfidenceGenres else { return }
         let currentGenre = track.genre.trimmingCharacters(in: .whitespacesAndNewlines)
         guard currentGenre.isEmpty || currentGenre == "未判定" || currentGenre == "Unknown" else { return }
-        guard automaticallyClassifiedTrackIDs.insert(track.id).inserted else { return }
         let suggestion = localSuggestion(for: track)
+        guard suggestion.confidence >= 0.80 else { return }
+        guard automaticallyClassifiedTrackIDs.insert(track.id).inserted else { return }
         Task { [weak self] in
             guard let self else { return }
             do {

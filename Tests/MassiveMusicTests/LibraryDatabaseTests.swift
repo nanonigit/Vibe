@@ -350,7 +350,7 @@ struct LibraryDatabaseTests {
         #expect(source.contains("private var trackTableContextID: String"))
     }
 
-    @Test func appStartupNeverReadsKeychainOrPresentsAuthenticationUI() throws {
+    @Test func appStartupUsesProtectedDatabaseKeysAndNeverPresentsAuthenticationUI() throws {
         let repository = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -361,13 +361,15 @@ struct LibraryDatabaseTests {
         let initializerEnd = try #require(modelSource.range(of: "\n    var canGoPrevious:", range: initializerStart.upperBound..<modelSource.endIndex))
         let initializer = String(modelSource[initializerStart.lowerBound..<initializerEnd.lowerBound])
 
-        #expect(keychainSource.contains("kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail"))
-        #expect(keychainSource.contains("func readResult(allowAuthenticationUI: Bool)"))
+        #expect(keychainSource.contains("database.setting(forKey: dbKey)"))
+        #expect(keychainSource.contains("try database.setSetting(value, forKey: dbKey)"))
+        #expect(keychainSource.contains("query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail"))
+        #expect(keychainSource.contains("func readResult(database: LibraryDatabase? = nil, allowAuthenticationUI: Bool = false)"))
         #expect(initializer.contains("restoreAIProviderConfigurationWithoutReadingKeys()"))
         #expect(!initializer.contains("refreshAIProviderStates"))
         #expect(modelSource.contains("try database.setSetting(\"true\", forKey: \"openai.keyConfigured\")"))
         #expect(modelSource.contains("try database.setSetting(\"true\", forKey: \"gemini.keyConfigured\")"))
-        #expect(modelSource.contains("refreshAIProviderStates(allowAuthenticationUI: true, validateRemotely: true)"))
+        #expect(modelSource.contains("refreshAIProviderStates(allowAuthenticationUI: false, validateRemotely: true)"))
     }
 
     @Test func localAdHocBuildCanLoadItsEmbeddedCoreFramework() throws {
@@ -637,7 +639,7 @@ struct LibraryDatabaseTests {
         #expect(first.events.first?.relativePath == "Folder/logged.mp3")
     }
 
-    @Test func activityLogRecordsCacheAndMainStorageAdditionsAndKeepsOnlyOneThousandRows() throws {
+    @Test func activityLogRecordsCacheAndMainStorageAdditionsWithoutCollapsingDistinctEvents() throws {
         let context = try TestContext()
         _ = try context.database.upsertTracks([
             context.importedTrack(identity: "storage-log", title: "Storage Log", filename: "storage-log.mp3")
@@ -657,7 +659,7 @@ struct LibraryDatabaseTests {
 
         let firstPage = try context.database.activityLogPage(offset: 0, limit: 100)
         let lastPage = try context.database.activityLogPage(offset: 900, limit: 100)
-        #expect(firstPage.totalCount == 1_000)
+        #expect(firstPage.totalCount == 1_003)
         #expect(firstPage.events.count == 100)
         #expect(lastPage.events.count == 100)
         #expect(firstPage.events.first?.kind == .addedToCache)

@@ -97,6 +97,7 @@ struct ContentView: View {
     @AppStorage("columns.trackNumber.width") private var trackNumberColumnWidth = 90.0
     @AppStorage("columns.duration.width") private var durationColumnWidth = 65.0
     @AppStorage("columns.addedDate.width") private var addedDateColumnWidth = 125.0
+    @AppStorage("columns.order") private var trackColumnOrderStorage = ""
     @AppStorage("columns.title.visible") private var isTitleColumnVisible = true
     @AppStorage("columns.artist.visible") private var isArtistColumnVisible = true
     @AppStorage("columns.album.visible") private var isAlbumColumnVisible = true
@@ -395,48 +396,6 @@ struct ContentView: View {
                     .font(.caption)
                 }
             }
-            Section(model.text("管理", "Manage")) {
-                Button { model.changeSection(.activityLog) } label: {
-                    SidebarNavigationLabel(
-                        title: model.sectionTitle(.activityLog), systemImage: icon(for: .activityLog)
-                    )
-                }
-                .buttonStyle(.plain)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .foregroundStyle(model.section == .activityLog ? Color.accentColor : Color.primary)
-                Button { model.changeSection(.diagnostics) } label: {
-                    SidebarNavigationLabel(
-                        title: model.sectionTitle(.diagnostics), systemImage: icon(for: .diagnostics)
-                    )
-                }
-                .buttonStyle(.plain)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .foregroundStyle(model.section == .diagnostics ? Color.accentColor : Color.primary)
-                Button {
-                    settingsTab = .storage
-                    showSettings = true
-                } label: {
-                    SidebarNavigationLabel(
-                        title: model.text("保管先と取り込み", "Storage & Imports"), systemImage: "internaldrive"
-                    )
-                }
-                .buttonStyle(.plain)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                Button {
-                    settingsTab = .differences
-                    showSettings = true
-                } label: {
-                    SidebarNavigationLabel(
-                        title: model.text("SSDとの差分", "Storage Differences"),
-                        systemImage: "arrow.left.arrow.right",
-                        trailingText: model.unavailableTrackCount.formatted(),
-                        trailingColor: model.unavailableTrackCount > 0 ? .orange : .secondary
-                    )
-                }
-                .buttonStyle(.plain)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            }
             Section {
                 ForEach(model.playlists) { playlist in
                     Button {
@@ -479,6 +438,55 @@ struct ContentView: View {
                         .buttonStyle(.plain)
                 }
             }
+            Section(model.text("管理", "Manage")) {
+                Button(action: model.chooseAndScanFolder) {
+                    SidebarNavigationLabel(
+                        title: model.text("フォルダを追加", "Add Folder"), systemImage: "folder.badge.plus"
+                    )
+                }
+                .buttonStyle(.plain)
+                Button(action: model.importNewTracks) {
+                    SidebarNavigationLabel(
+                        title: model.text("曲を取り込む", "Import Songs"), systemImage: "tray.and.arrow.down"
+                    )
+                }
+                .buttonStyle(.plain)
+                Button { model.changeSection(.activityLog) } label: {
+                    SidebarNavigationLabel(
+                        title: model.sectionTitle(.activityLog), systemImage: icon(for: .activityLog)
+                    )
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(model.section == .activityLog ? Color.accentColor : Color.primary)
+                Button { model.changeSection(.diagnostics) } label: {
+                    SidebarNavigationLabel(
+                        title: model.sectionTitle(.diagnostics), systemImage: icon(for: .diagnostics)
+                    )
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(model.section == .diagnostics ? Color.accentColor : Color.primary)
+                Button {
+                    settingsTab = .storage
+                    showSettings = true
+                } label: {
+                    SidebarNavigationLabel(
+                        title: model.text("保管先と取り込み", "Storage & Imports"), systemImage: "internaldrive"
+                    )
+                }
+                .buttonStyle(.plain)
+                Button {
+                    settingsTab = .differences
+                    showSettings = true
+                } label: {
+                    SidebarNavigationLabel(
+                        title: model.text("SSDとの差分", "Storage Differences"),
+                        systemImage: "arrow.left.arrow.right",
+                        trailingText: model.unavailableTrackCount.formatted(),
+                        trailingColor: model.unavailableTrackCount > 0 ? .orange : .secondary
+                    )
+                }
+                .buttonStyle(.plain)
+            }
         }
         .safeAreaInset(edge: .bottom) {
             if let message = model.driveMessage {
@@ -518,6 +526,7 @@ struct ContentView: View {
                         trackTable
                     }
                 }
+                .id(model.pagePresentationID)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 if model.supportsAlphabetIndex {
                     Divider()
@@ -770,6 +779,30 @@ struct ContentView: View {
                         )
                     }
                     .help(model.text("選択した曲の共通情報を一括変更", "Bulk edit shared metadata for selected songs"))
+                    Menu {
+                        Button(model.text("すべてお気に入りに追加", "Add All to Favorites")) {
+                            model.setFavorites(selectedTracksOnPage, isFavorite: true)
+                        }
+                        Button(model.text("すべてお気に入りから外す", "Remove All from Favorites")) {
+                            model.setFavorites(selectedTracksOnPage, isFavorite: false)
+                        }
+                        Divider()
+                        if model.playlists.isEmpty {
+                            Button(model.text("新規プレイリストを作成", "Create New Playlist")) {
+                                model.createPlaylist()
+                            }
+                        } else {
+                            Menu(model.text("プレイリストに追加", "Add to Playlist")) {
+                                ForEach(model.playlists) { playlist in
+                                    Button(playlist.name) {
+                                        model.addSelectionToPlaylist(playlist.id)
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
+                        Label(model.text("一括操作", "Bulk Actions"), systemImage: "checklist")
+                    }
                 }
                 Menu {
                     if (model.section == .albums || model.selectedArtist != nil) && model.selectedAlbum == nil {
@@ -850,6 +883,47 @@ struct ContentView: View {
         batchMetadataEditRequest = BatchMetadataEditRequest(tracks: selected)
     }
 
+    private var defaultTrackColumnOrder: [TrackSort] {
+        [.title, .artist, .album, .discNumber, .trackNumber, .duration, .format, .dateAdded]
+    }
+
+    private var orderedTrackColumns: [TrackSort] {
+        var seen = Set<String>()
+        let stored = trackColumnOrderStorage
+            .split(separator: ",")
+            .compactMap { TrackSort(rawValue: String($0)) }
+            .filter { defaultTrackColumnOrder.contains($0) && seen.insert($0.rawValue).inserted }
+        return stored + defaultTrackColumnOrder.filter { !seen.contains($0.rawValue) }
+    }
+
+    private var orderedVisibleTrackColumns: [TrackSort] {
+        orderedTrackColumns.filter(isTrackColumnVisible)
+    }
+
+    private func isTrackColumnVisible(_ column: TrackSort) -> Bool {
+        switch column {
+        case .title: isTitleColumnVisible
+        case .artist: isArtistColumnVisible
+        case .album: isAlbumColumnVisible
+        case .discNumber: isDiscNumberColumnVisible
+        case .trackNumber: isTrackNumberColumnVisible
+        case .duration: isDurationColumnVisible
+        case .format: isFormatColumnVisible
+        case .dateAdded: isAddedDateColumnVisible
+        case .path: false
+        }
+    }
+
+    private func moveTrackColumn(_ source: TrackSort, before destination: TrackSort) {
+        guard source != destination else { return }
+        var order = orderedTrackColumns
+        guard let sourceIndex = order.firstIndex(of: source) else { return }
+        order.remove(at: sourceIndex)
+        guard let destinationIndex = order.firstIndex(of: destination) else { return }
+        order.insert(source, at: destinationIndex)
+        trackColumnOrderStorage = order.map(\.rawValue).joined(separator: ",")
+    }
+
     private var trackTable: some View {
         GeometryReader { geometry in
             let contentWidth = max(geometry.size.width, trackContentWidth)
@@ -865,14 +939,10 @@ struct ContentView: View {
                         durationWidth: $durationColumnWidth,
                         addedDateWidth: $addedDateColumnWidth,
                         showSelectionCheckbox: isDuplicateSelectionMode,
-                        showTitle: isTitleColumnVisible,
-                        showArtist: isArtistColumnVisible,
-                        showAlbum: isAlbumColumnVisible,
-                        showDiscNumber: isDiscNumberColumnVisible,
-                        showTrackNumber: isTrackNumberColumnVisible,
-                        showDuration: isDurationColumnVisible,
-                        showFormat: isFormatColumnVisible,
-                        showAddedDate: isAddedDateColumnVisible
+                        columns: orderedVisibleTrackColumns,
+                        moveColumn: { source, column in
+                            moveTrackColumn(source, before: column)
+                        }
                     )
                     .frame(width: contentWidth, alignment: .leading)
                     Divider()
@@ -898,71 +968,8 @@ struct ContentView: View {
                                 }
                                 .buttonStyle(.plain)
                                 .help(track.isFavorite ? model.text("お気に入りから外す", "Remove from Favorites") : model.text("お気に入りに追加", "Add to Favorites"))
-                                if isTitleColumnVisible {
-                                    let isPlayable = model.isTrackPlayable(track)
-                                        && (!player.unavailableTrackIDs.contains(track.id) || model.isCached(track))
-                                    TrackTitleCell(
-                                        track: track,
-                                        isPlayable: isPlayable,
-                                        isCurrent: player.currentTrack?.id == track.id,
-                                        helpText: isPlayable ? "" : model.text(
-                                            "元ファイルが見つからず、ローカルキャッシュもありません",
-                                            "Original file is missing and no local cache is available"
-                                        )
-                                    )
-                                    .frame(width: titleColumnWidth, alignment: .leading)
-                                }
-                                if isArtistColumnVisible {
-                                    TrackNavigationCell(
-                                        title: model.displayArtist(track.artist),
-                                        width: artistColumnWidth
-                                    ) {
-                                        isTrackTableFocused = true
-                                        if hasSelectionModifier {
-                                            handleTrackSelection(track, at: index)
-                                        } else {
-                                            model.openArtist(named: track.artist)
-                                        }
-                                    }
-                                }
-                                if isAlbumColumnVisible {
-                                    TrackNavigationCell(title: track.album, width: albumColumnWidth) {
-                                        isTrackTableFocused = true
-                                        if hasSelectionModifier {
-                                            handleTrackSelection(track, at: index)
-                                        } else {
-                                            model.openAlbum(AlbumSummary(
-                                                name: track.album,
-                                                artist: track.artist,
-                                                trackCount: 0
-                                            ))
-                                        }
-                                    }
-                                    .disabled(track.album.isEmpty)
-                                }
-                                if isDiscNumberColumnVisible {
-                                    Text(track.discNumber.map(String.init) ?? "—")
-                                        .monospacedDigit()
-                                        .foregroundStyle(track.discNumber == nil ? .secondary : .primary)
-                                        .frame(width: discNumberColumnWidth, alignment: .leading)
-                                }
-                                if isTrackNumberColumnVisible {
-                                    Text(track.trackNumber.map(String.init) ?? "—")
-                                        .monospacedDigit()
-                                        .foregroundStyle(track.trackNumber == nil ? .secondary : .primary)
-                                        .frame(width: trackNumberColumnWidth, alignment: .leading)
-                                }
-                                if isDurationColumnVisible {
-                                    Text(formatDuration(track.duration)).monospacedDigit().frame(width: durationColumnWidth, alignment: .leading)
-                                }
-                                if isFormatColumnVisible {
-                                    Text(track.format.uppercased()).frame(width: 55, alignment: .leading)
-                                }
-                                if isAddedDateColumnVisible {
-                                    Text(formatAddedDate(track.addedAt))
-                                        .lineLimit(1)
-                                        .monospacedDigit()
-                                        .frame(width: addedDateColumnWidth, alignment: .leading)
+                                ForEach(orderedVisibleTrackColumns) { column in
+                                    trackColumnCell(column, track: track, index: index)
                                 }
                                 }
                                 .padding(.horizontal, 8)
@@ -990,10 +997,13 @@ struct ContentView: View {
                                         }
                                     }
                                 }
-                                .onTapGesture {
-                                    isTrackTableFocused = true
-                                    handleTrackSelection(track, at: index)
-                                }
+                                .simultaneousGesture(
+                                    TapGesture(count: 1)
+                                        .onEnded {
+                                            isTrackTableFocused = true
+                                            handleTrackSelection(track, at: index)
+                                        }
+                                )
                                 .draggable(trackDragPayload(for: track))
                                 .contextMenu { trackContextMenu(track) }
                             }
@@ -1031,6 +1041,66 @@ struct ContentView: View {
                     ContentUnavailableView(model.text("曲がありません", "No Songs"), systemImage: "music.note", description: Text(model.text("音楽フォルダを追加してください。", "Add a music folder.")))
                 }
             }
+        }
+    }
+
+    @ViewBuilder private func trackColumnCell(_ column: TrackSort, track: Track, index: Int) -> some View {
+        switch column {
+        case .title:
+            let isPlayable = model.isTrackPlayable(track)
+                && (!player.unavailableTrackIDs.contains(track.id) || model.isCached(track))
+            TrackTitleCell(
+                track: track,
+                isPlayable: isPlayable,
+                isCurrent: player.currentTrack?.id == track.id,
+                helpText: isPlayable ? "" : model.text(
+                    "元ファイルが見つからず、ローカルキャッシュもありません",
+                    "Original file is missing and no local cache is available"
+                )
+            )
+            .frame(width: titleColumnWidth, alignment: .leading)
+        case .artist:
+            TrackNavigationCell(title: model.displayArtist(track.artist), width: artistColumnWidth) {
+                isTrackTableFocused = true
+                if hasSelectionModifier {
+                    handleTrackSelection(track, at: index)
+                } else {
+                    model.openArtist(named: track.artist)
+                }
+            }
+        case .album:
+            TrackNavigationCell(title: track.album, width: albumColumnWidth) {
+                isTrackTableFocused = true
+                if hasSelectionModifier {
+                    handleTrackSelection(track, at: index)
+                } else {
+                    model.openAlbum(AlbumSummary(name: track.album, artist: track.artist, trackCount: 0))
+                }
+            }
+            .disabled(track.album.isEmpty)
+        case .discNumber:
+            Text(track.discNumber.map(String.init) ?? "—")
+                .monospacedDigit()
+                .foregroundStyle(track.discNumber == nil ? .secondary : .primary)
+                .frame(width: discNumberColumnWidth, alignment: .leading)
+        case .trackNumber:
+            Text(track.trackNumber.map(String.init) ?? "—")
+                .monospacedDigit()
+                .foregroundStyle(track.trackNumber == nil ? .secondary : .primary)
+                .frame(width: trackNumberColumnWidth, alignment: .leading)
+        case .duration:
+            Text(formatDuration(track.duration))
+                .monospacedDigit()
+                .frame(width: durationColumnWidth, alignment: .leading)
+        case .format:
+            Text(track.format.uppercased()).frame(width: 55, alignment: .leading)
+        case .dateAdded:
+            Text(formatAddedDate(track.addedAt))
+                .lineLimit(1)
+                .monospacedDigit()
+                .frame(width: addedDateColumnWidth, alignment: .leading)
+        case .path:
+            EmptyView()
         }
     }
 
@@ -1848,8 +1918,6 @@ struct ContentView: View {
 
             Divider()
 
-            Button(action: model.chooseAndScanFolder) { Label(model.text("フォルダを追加", "Add Folder"), systemImage: "folder.badge.plus") }
-            Button(action: model.importNewTracks) { Label(model.text("曲を取り込む", "Import Songs"), systemImage: "tray.and.arrow.down") }
             Button { isMiniPlayer = true } label: { Label(model.text("ミニプレイヤーに切り替え", "Switch to Mini Player"), systemImage: "pip") }
             Button { showInspector.toggle() } label: { Label(model.text("再生情報", "Now Playing Info"), systemImage: "sidebar.right") }
             Menu {
@@ -2158,14 +2226,8 @@ private struct TrackSortHeader: View {
     @Binding var durationWidth: Double
     @Binding var addedDateWidth: Double
     let showSelectionCheckbox: Bool
-    let showTitle: Bool
-    let showArtist: Bool
-    let showAlbum: Bool
-    let showDiscNumber: Bool
-    let showTrackNumber: Bool
-    let showDuration: Bool
-    let showFormat: Bool
-    let showAddedDate: Bool
+    let columns: [TrackSort]
+    let moveColumn: (TrackSort, TrackSort) -> Void
 
     var body: some View {
         HStack(spacing: 8) {
@@ -2173,40 +2235,52 @@ private struct TrackSortHeader: View {
                 Color.clear.frame(width: 30)
             }
             Color.clear.frame(width: 30)
-            if showTitle {
-                header(.title).frame(width: titleWidth, alignment: .leading)
-                    .overlay(alignment: .trailing) { ColumnResizeHandle(width: $titleWidth, range: 80...500) }
-            }
-            if showArtist {
-                header(.artist).frame(width: artistWidth, alignment: .leading)
-                    .overlay(alignment: .trailing) { ColumnResizeHandle(width: $artistWidth, range: 80...420) }
-            }
-            if showAlbum {
-                header(.album).frame(width: albumWidth, alignment: .leading)
-                    .overlay(alignment: .trailing) { ColumnResizeHandle(width: $albumWidth, range: 80...500) }
-            }
-            if showDiscNumber {
-                header(.discNumber).frame(width: discNumberWidth, alignment: .leading)
-                    .overlay(alignment: .trailing) { ColumnResizeHandle(width: $discNumberWidth, range: 64...160) }
-            }
-            if showTrackNumber {
-                header(.trackNumber).frame(width: trackNumberWidth, alignment: .leading)
-                    .overlay(alignment: .trailing) { ColumnResizeHandle(width: $trackNumberWidth, range: 64...170) }
-            }
-            if showDuration {
-                header(.duration).frame(width: durationWidth, alignment: .leading)
-                    .overlay(alignment: .trailing) { ColumnResizeHandle(width: $durationWidth, range: 50...140) }
-            }
-            if showFormat { header(.format).frame(width: 55, alignment: .leading) }
-            if showAddedDate {
-                header(.dateAdded).frame(width: addedDateWidth, alignment: .leading)
-                    .overlay(alignment: .trailing) { ColumnResizeHandle(width: $addedDateWidth, range: 90...240) }
+            ForEach(columns) { column in
+                columnHeader(column)
+                    .draggable(column.rawValue)
+                    .dropDestination(for: String.self) { values, _ in
+                        guard let rawValue = values.first,
+                              let source = TrackSort(rawValue: rawValue),
+                              columns.contains(source) else { return false }
+                        moveColumn(source, column)
+                        return true
+                    }
             }
         }
         .font(.caption.bold())
         .padding(.horizontal, 8)
         .padding(.vertical, 7)
         .background(.bar)
+    }
+
+    @ViewBuilder private func columnHeader(_ column: TrackSort) -> some View {
+        switch column {
+        case .title:
+            header(.title).frame(width: titleWidth, alignment: .leading)
+                .overlay(alignment: .trailing) { ColumnResizeHandle(width: $titleWidth, range: 80...500) }
+        case .artist:
+            header(.artist).frame(width: artistWidth, alignment: .leading)
+                .overlay(alignment: .trailing) { ColumnResizeHandle(width: $artistWidth, range: 80...420) }
+        case .album:
+            header(.album).frame(width: albumWidth, alignment: .leading)
+                .overlay(alignment: .trailing) { ColumnResizeHandle(width: $albumWidth, range: 80...500) }
+        case .discNumber:
+            header(.discNumber).frame(width: discNumberWidth, alignment: .leading)
+                .overlay(alignment: .trailing) { ColumnResizeHandle(width: $discNumberWidth, range: 64...160) }
+        case .trackNumber:
+            header(.trackNumber).frame(width: trackNumberWidth, alignment: .leading)
+                .overlay(alignment: .trailing) { ColumnResizeHandle(width: $trackNumberWidth, range: 64...170) }
+        case .duration:
+            header(.duration).frame(width: durationWidth, alignment: .leading)
+                .overlay(alignment: .trailing) { ColumnResizeHandle(width: $durationWidth, range: 50...140) }
+        case .format:
+            header(.format).frame(width: 55, alignment: .leading)
+        case .dateAdded:
+            header(.dateAdded).frame(width: addedDateWidth, alignment: .leading)
+                .overlay(alignment: .trailing) { ColumnResizeHandle(width: $addedDateWidth, range: 90...240) }
+        case .path:
+            EmptyView()
+        }
     }
 
     private func header(_ sort: TrackSort) -> some View {
@@ -2381,9 +2455,49 @@ private struct NowPlayingInspector: View {
         .background(.background)
     }
 
-    private var playerInformation: some View {
-        VStack(spacing: 12) {
-            if player.currentTrack == nil {
+    @ViewBuilder private var playerInformation: some View {
+        if player.currentTrack == nil {
+            idleDiscovery
+        } else {
+            VStack(spacing: 12) {
+                PlayerArtwork(
+                    artworkURL: model.enrichedInfo?.artworkURL,
+                    size: 210,
+                    cornerRadius: 12,
+                    placeholderPointSize: 48
+                )
+                Text(player.currentTrack?.title ?? "").font(.title3.bold()).lineLimit(2).multilineTextAlignment(.center)
+                Text(player.currentTrack?.artist ?? "").foregroundStyle(.secondary).lineLimit(1)
+                Picker("情報", selection: $tab) {
+                    Text(model.text("情報", "Info")).tag(0)
+                    Text(model.text("歌詞", "Lyrics")).tag(1)
+                    Text(model.text("発見", "Discover")).tag(2)
+                }.pickerStyle(.segmented).labelsHidden()
+                Group {
+                    if model.isEnriching { ProgressView(model.text("情報を取得中…", "Loading information…")) }
+                    else if tab == 0 { information }
+                    else if tab == 1 { lyrics }
+                    else { discovery }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+            .padding(16)
+            .sheet(isPresented: $isEditingManualLyrics) {
+                if let track = player.currentTrack {
+                    ManualLyricsEditor(
+                        model: model,
+                        track: track,
+                        initialLyrics: model.enrichedInfo?.lyrics?.plainLyrics ?? ""
+                    )
+                }
+            }
+        }
+    }
+
+    private var idleDiscovery: some View {
+        VStack(spacing: 16) {
+            Spacer(minLength: 12)
+            Group {
                 if let appIcon = NSApp.applicationIconImage {
                     Image(nsImage: appIcon)
                         .resizable()
@@ -2398,39 +2512,43 @@ private struct NowPlayingInspector: View {
                         placeholderPointSize: 48
                     )
                 }
-            } else {
-                PlayerArtwork(
-                    artworkURL: model.enrichedInfo?.artworkURL,
-                    size: 210,
-                    cornerRadius: 12,
-                    placeholderPointSize: 48
+            }
+            Text(model.text("音楽を見つける", "Discover Music"))
+                .font(.title3.bold())
+            Text(model.text(
+                "曲を再生するまでは、ここから新しい音楽を探せます。",
+                "Until a song starts, discover new music from these links."
+            ))
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            VStack(spacing: 10) {
+                idleLink(
+                    model.text("話題の曲", "Trending Songs"),
+                    systemImage: "chart.line.uptrend.xyaxis",
+                    url: model.trendingMusicURL
+                )
+                idleLink("YouTube", systemImage: "play.rectangle.fill", url: model.youtubeMusicURL)
+                idleLink(
+                    model.text("音楽ニュース", "Music News"),
+                    systemImage: "newspaper.fill",
+                    url: model.musicNewsURL
                 )
             }
-            Text(player.currentTrack?.title ?? model.text("再生していません", "Not Playing")).font(.title3.bold()).lineLimit(2).multilineTextAlignment(.center)
-            Text(player.currentTrack?.artist ?? "").foregroundStyle(.secondary).lineLimit(1)
-            Picker("情報", selection: $tab) {
-                Text(model.text("情報", "Info")).tag(0)
-                Text(model.text("歌詞", "Lyrics")).tag(1)
-                Text(model.text("発見", "Discover")).tag(2)
-            }.pickerStyle(.segmented).labelsHidden()
-            Group {
-                if model.isEnriching { ProgressView(model.text("情報を取得中…", "Loading information…")) }
-                else if tab == 0 { information }
-                else if tab == 1 { lyrics }
-                else { discovery }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            Spacer()
         }
         .padding(16)
-        .sheet(isPresented: $isEditingManualLyrics) {
-            if let track = player.currentTrack {
-                ManualLyricsEditor(
-                    model: model,
-                    track: track,
-                    initialLyrics: model.enrichedInfo?.lyrics?.plainLyrics ?? ""
-                )
-            }
+    }
+
+    private func idleLink(_ title: String, systemImage: String, url: URL?) -> some View {
+        Button {
+            browserURL = url
+        } label: {
+            Label(title, systemImage: systemImage)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .buttonStyle(.bordered)
+        .disabled(url == nil)
     }
 
     private var lyrics: some View {
@@ -3799,6 +3917,23 @@ private struct LibrarySettingsView: View {
                 ) {
                     Toggle(
                         model.text(
+                            "AIジャンル候補を確信度80%以上のとき自動登録",
+                            "Auto-save AI genres at 80% confidence or higher"
+                        ),
+                        isOn: $model.autoRegisterHighConfidenceGenres
+                    )
+                    .onChange(of: model.autoRegisterHighConfidenceGenres) { _, _ in
+                        model.saveAutomaticGenreSettings()
+                    }
+                    Text(model.text(
+                        "オフのときは候補表示だけを行います。オンでも、既存ジャンルは上書きせず、内蔵判定の確信度が80%以上の未分類曲だけを登録します。",
+                        "When off, suggestions are shown without saving. When on, only unclassified songs at 80% confidence or higher are saved; existing genres are never replaced."
+                    ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    Divider()
+                    Toggle(
+                        model.text(
                             "MusicBrainzで一致した番号候補を自動入力",
                             "Auto-fill matching MusicBrainz number suggestions"
                         ),
@@ -4037,8 +4172,8 @@ private struct LibrarySettingsView: View {
 
                 SettingsCard(title: model.text("プライバシーとフォールバック", "Privacy and Fallback"), subtitle: nil, systemImage: "lock.shield") {
                     Text(model.text(
-                    "キーはmacOS Keychainに保存します。ジャンル判定はOpenAI、失敗時はGemini、さらに失敗した場合は内蔵AIへ自動で切り替えます。外部へ送るのは曲名・アーティスト・アルバム等だけで、音声ファイルは送信しません。",
-                    "Keys are stored in macOS Keychain. Genre classification tries OpenAI, then Gemini on failure, and finally the built-in AI. Only title, artist, album, and related metadata are sent; audio files are never uploaded."
+                    "キーはアプリ専用の保護データベースに保存します。ジャンル判定はOpenAI、失敗時はGemini、さらに失敗した場合は内蔵AIへ自動で切り替えます。外部へ送るのは曲名・アーティスト・アルバム等だけで、音声ファイルは送信しません。",
+                    "Keys are stored in the app's protected database. Genre classification tries OpenAI, then Gemini on failure, and finally the built-in AI. Only title, artist, album, and related metadata are sent; audio files are never uploaded."
                 )).font(.caption).foregroundStyle(.secondary)
 
                     HStack {

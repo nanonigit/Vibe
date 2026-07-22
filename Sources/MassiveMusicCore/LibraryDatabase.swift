@@ -846,6 +846,20 @@ public final class LibraryDatabase: @unchecked Sendable {
         }
     }
 
+    public func setFavorites(trackIDs: [Int64], isFavorite: Bool) throws {
+        let uniqueIDs = Array(Set(trackIDs))
+        guard !uniqueIDs.isEmpty else { return }
+        try pool.write { db in
+            let placeholders = Array(repeating: "?", count: uniqueIDs.count).joined(separator: ",")
+            var arguments = StatementArguments([isFavorite])
+            arguments += StatementArguments(uniqueIDs)
+            try db.execute(
+                sql: "UPDATE tracks SET is_favorite = ? WHERE id IN (\(placeholders))",
+                arguments: arguments
+            )
+        }
+    }
+
     public func markPlayed(trackID: Int64) throws {
         try pool.write { db in
             try db.execute(sql: "UPDATE tracks SET play_count = play_count + 1, last_played_at = ? WHERE id = ?", arguments: [Date().timeIntervalSince1970, trackID])

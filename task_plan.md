@@ -474,3 +474,16 @@ Phase 42 — metadata width normalization and library ordering (complete)
 - [x] Open metadata-variation links as exact field-and-value track lists
 - [x] Add regressions and run the complete arm64 build and test suite
 - **Status:** complete
+
+### Phase 48: Pending interaction and discovery work
+- [x] Replace the idle lyrics/error state with trending-song, YouTube, and music-news links
+- [x] Persist drag-reordered track columns while retaining each column's stored width and visibility
+- [x] Place Playlists above Manage and move folder/import actions out of the top toolbar
+- [x] Make range selection react immediately instead of waiting for double-click recognition
+- [x] Add bulk favorite/unfavorite and playlist actions for the current selection
+- [x] Cancel stale page results before they can replace a newer artist/album/track destination
+- [x] Reset list presentation to the top on detail, page, section, and index navigation
+- [x] Make automatic genre registration opt-in and require at least 80% confidence
+- [x] Preserve protected-database API-key storage and update stale Keychain wording
+- [x] Add regressions, run the complete test suite, and build/sign/launch the arm64 Release
+- **Status:** complete

@@ -480,3 +480,15 @@
 - Explicit repair can rebuild an unreadable ID3v2.2 frame table from library metadata after validating the MPEG boundary, without re-encoding or changing the audio payload.
 - All 98 tests in 3 suites pass, including exact album-link isolation, compilation-tag round trips, resizable summary wiring, and damaged-ID3 audio preservation.
 - Built the arm64 Release, ad-hoc signed the embedded framework and app with the production entitlements, passed deep strict signature verification, and launched `outputs/Vibe.app` as PID 16491. Production verification retained 370,238 tracks and matching FTS rows with `quick_check=ok`.
+
+# Phase 48 progress
+
+- Replaced the right inspector's never-played lyrics/error state with bounded internal-browser links for trending songs, YouTube music discovery, and localized music news.
+- Track headers and rows now share one persisted drag order; existing per-column width and visibility settings remain independent and durable.
+- Moved Playlists above Manage, moved Add Folder and Import Songs from the top toolbar into Manage, and added selected-song bulk favorite/unfavorite and playlist actions.
+- Removed the single-click/double-click recognition dependency that delayed Shift range selection.
+- Added cancellation gates before every asynchronous page result is applied, preventing an older songs/albums/artists request from replacing a newer destination after several seconds.
+- Section/detail/page/index presentation changes recreate the bounded list viewport at its top.
+- Automatic local genre registration is now opt-in and writes only missing genres whose classifier confidence is at least 80%; low-confidence `Other` results are no longer auto-saved.
+- Preserved the OpenAI/Gemini app-protected database storage path and updated stale user-facing Keychain wording. Legacy Keychain access remains migration-only and suppresses authentication UI.
+- All 107 tests across 3 suites pass. The arm64 Release was built, ad-hoc signed with the production file/bookmark/network entitlements, passed deep strict signature verification, and launched successfully as PID 93504.
