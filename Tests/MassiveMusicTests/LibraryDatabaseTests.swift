@@ -129,6 +129,90 @@ struct LibraryDatabaseTests {
         #expect(model.contains("librarySectionOrder = order"))
     }
 
+    @Test func trackColumnsCanBeDragReorderedAndPersistTheirOrder() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+
+        #expect(source.contains("@AppStorage(\"columns.order\")"))
+        #expect(source.contains("ForEach(orderedVisibleTrackColumns)"))
+        #expect(source.contains(".draggable(column.rawValue)"))
+        #expect(source.contains("moveTrackColumn(source, before: column)"))
+    }
+
+    @Test func playlistsAppearAboveManageAndLibraryActionsLeaveTheToolbar() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let sidebarStart = try #require(source.range(of: "    private var sidebar: some View"))
+        let sidebarEnd = try #require(source.range(of: "    private var libraryContent: some View", range: sidebarStart.upperBound..<source.endIndex))
+        let sidebar = String(source[sidebarStart.lowerBound..<sidebarEnd.lowerBound])
+        let playlists = try #require(sidebar.range(of: "model.text(\"プレイリスト\", \"Playlists\")"))
+        let manage = try #require(sidebar.range(of: "model.text(\"管理\", \"Manage\")"))
+
+        #expect(playlists.lowerBound < manage.lowerBound)
+        #expect(sidebar.contains("action: model.chooseAndScanFolder"))
+        #expect(sidebar.contains("action: model.importNewTracks"))
+
+        let toolbarStart = try #require(source.range(of: "    private var toolbar: some ToolbarContent"))
+        let toolbarEnd = try #require(source.range(of: "    private var headerTitle: String", range: toolbarStart.upperBound..<source.endIndex))
+        let toolbar = String(source[toolbarStart.lowerBound..<toolbarEnd.lowerBound])
+        #expect(!toolbar.contains("model.chooseAndScanFolder"))
+        #expect(!toolbar.contains("model.importNewTracks"))
+    }
+
+    @Test func idleInspectorShowsDiscoveryLinksWithoutLyricsFailure() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let inspectorStart = try #require(source.range(of: "private struct NowPlayingInspector: View"))
+        let inspectorEnd = try #require(source.range(of: "private struct CurrentTrackInfoEditorView: View", range: inspectorStart.upperBound..<source.endIndex))
+        let inspector = String(source[inspectorStart.lowerBound..<inspectorEnd.lowerBound])
+
+        #expect(inspector.contains("if player.currentTrack == nil"))
+        #expect(inspector.contains("idleDiscovery"))
+        #expect(inspector.contains("話題の曲"))
+        #expect(inspector.contains("YouTube"))
+        #expect(inspector.contains("音楽ニュース"))
+        #expect(inspector.contains("model.trendingMusicURL"))
+        #expect(inspector.contains("model.youtubeMusicURL"))
+        #expect(inspector.contains("model.musicNewsURL"))
+    }
+
+    @Test func trackSelectionDoesNotWaitForDoubleClickRecognition() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+
+        #expect(source.contains(".simultaneousGesture(\n                                    TapGesture(count: 1)"))
+        #expect(!source.contains("                                .onTapGesture {\n                                    isTrackTableFocused = true\n                                    handleTrackSelection(track, at: index)"))
+    }
+
+    @Test func navigationRefreshesCannotApplyAfterCancellationAndViewsResetToTop() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+
+        #expect(model.contains("@Published private(set) var pagePresentationID"))
+        #expect(model.contains("pagePresentationID = UUID()"))
+        #expect(model.components(separatedBy: "try Task.checkCancellation()\n                    apply(").count - 1 >= 8)
+        #expect(content.contains(".id(model.pagePresentationID)"))
+    }
+
+    @Test func automaticGenreRegistrationIsOptInAndRequiresEightyPercentConfidence() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+
+        #expect(content.contains("$model.autoRegisterHighConfidenceGenres"))
+        #expect(content.contains("80%以上"))
+        #expect(model.contains("guard autoRegisterHighConfidenceGenres"))
+        #expect(model.contains("guard suggestion.confidence >= 0.80"))
+        #expect(model.contains("genre.autoRegisterHighConfidence"))
+    }
+
     @Test func storageAndDifferenceSidebarItemsOpenDistinctSettingsTabs() throws {
         let repository = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -603,6 +687,29 @@ struct LibraryDatabaseTests {
         #expect(page.totalCount == 1)
         #expect(page.tracks.first?.id == 2)
         #expect(page.tracks.first?.isFavorite == true)
+    }
+
+    @Test func multipleTracksCanBeFavoritedInOneDatabaseWriteAndFromTheSelectionMenu() throws {
+        let context = try TestContext()
+        _ = try context.database.upsertTracks([
+            context.importedTrack(identity: "favorite-one", title: "One", filename: "one.mp3"),
+            context.importedTrack(identity: "favorite-two", title: "Two", filename: "two.mp3"),
+            context.importedTrack(identity: "favorite-three", title: "Three", filename: "three.mp3")
+        ], sessionID: 1)
+        let tracks = try context.database.pageTracks(limit: 10).tracks
+
+        try context.database.setFavorites(trackIDs: tracks.prefix(2).map(\.id), isFavorite: true)
+        #expect(try context.database.favoriteTrackCount() == 2)
+        try context.database.setFavorites(trackIDs: tracks.map(\.id), isFavorite: false)
+        #expect(try context.database.favoriteTrackCount() == 0)
+
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+        #expect(content.contains("model.setFavorites(selectedTracksOnPage, isFavorite: true)"))
+        #expect(content.contains("model.addSelectionToPlaylist(playlist.id)"))
+        #expect(model.contains("func setFavorites(_ tracks: [Track], isFavorite: Bool)"))
     }
 
     @Test func favoriteOfflineCacheCanBePinnedOutsideRecentLimit() throws {
