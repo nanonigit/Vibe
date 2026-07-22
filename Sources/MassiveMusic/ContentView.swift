@@ -3786,7 +3786,6 @@ private struct BatchTrackMetadataEditor: View {
     @ObservedObject var model: LibraryViewModel
     let tracks: [Track]
     @Environment(\.dismiss) private var dismiss
-    @State private var changeTitle = false
     @State private var changeArtist = false
     @State private var changeAlbum = false
     @State private var changeAlbumArtist = false
@@ -3794,16 +3793,12 @@ private struct BatchTrackMetadataEditor: View {
     @State private var changeCompilation = false
     @State private var changeArtwork = false
     @State private var changeDiscNumber = false
-    @State private var changeTrackNumber = false
-    @State private var incrementTrackNumber = true
-    @State private var title: String
     @State private var artist: String
     @State private var album: String
     @State private var albumArtist: String
     @State private var genre: String
     @State private var isCompilation: Bool
     @State private var discNumber: String
-    @State private var trackNumber: String
     @State private var artworkData: Data?
     @State private var artworkImage: NSImage?
     @State private var artworkPasteError: String?
@@ -3811,14 +3806,12 @@ private struct BatchTrackMetadataEditor: View {
     init(model: LibraryViewModel, tracks: [Track]) {
         self.model = model
         self.tracks = tracks
-        _title = State(initialValue: Self.commonValue(tracks.map(\.title)))
         _artist = State(initialValue: Self.commonValue(tracks.map(\.artist)))
         _album = State(initialValue: Self.commonValue(tracks.map(\.album)))
         _albumArtist = State(initialValue: Self.commonValue(tracks.map(\.albumArtist)))
         _genre = State(initialValue: Self.commonValue(tracks.map(\.genre)))
         _isCompilation = State(initialValue: tracks.allSatisfy(\.isCompilation))
         _discNumber = State(initialValue: Self.commonNumber(tracks.map(\.discNumber)))
-        _trackNumber = State(initialValue: Self.commonNumber(tracks.map(\.trackNumber)))
     }
 
     var body: some View {
@@ -3839,7 +3832,6 @@ private struct BatchTrackMetadataEditor: View {
                 VStack(alignment: .leading, spacing: 14) {
                     GroupBox(model.text("変更する曲情報", "Song Information to Change")) {
                         VStack(spacing: 10) {
-                            batchField(model.text("タイトル", "Title"), enabled: $changeTitle, value: $title)
                             batchField(model.text("アーティスト", "Artist"), enabled: $changeArtist, value: $artist)
                             batchField(model.text("アルバム", "Album"), enabled: $changeAlbum, value: $album)
                             batchField(model.text("アルバムアーティスト", "Album Artist"), enabled: $changeAlbumArtist, value: $albumArtist)
@@ -3848,12 +3840,6 @@ private struct BatchTrackMetadataEditor: View {
                                 model.text("ディスク番号", "Disc Number"),
                                 enabled: $changeDiscNumber,
                                 value: $discNumber
-                            )
-                            batchNumberField(
-                                model.text("トラック番号", "Track Number"),
-                                enabled: $changeTrackNumber,
-                                value: $trackNumber,
-                                showsIncrement: true
                             )
                             HStack(spacing: 12) {
                                 Toggle("", isOn: $changeCompilation).labelsHidden().toggleStyle(.checkbox)
@@ -3959,8 +3945,7 @@ private struct BatchTrackMetadataEditor: View {
     private func batchNumberField(
         _ title: String,
         enabled: Binding<Bool>,
-        value: Binding<String>,
-        showsIncrement: Bool = false
+        value: Binding<String>
     ) -> some View {
         HStack(spacing: 12) {
             Toggle("", isOn: enabled).labelsHidden().toggleStyle(.checkbox)
@@ -3968,10 +3953,6 @@ private struct BatchTrackMetadataEditor: View {
             TextField("", text: value)
                 .frame(width: 90)
                 .disabled(!enabled.wrappedValue)
-            if showsIncrement {
-                Toggle(model.text("一覧順に連番", "Increment in List Order"), isOn: $incrementTrackNumber)
-                    .disabled(!enabled.wrappedValue || parsedNumber(value.wrappedValue) == nil)
-            }
             Spacer()
         }
     }
@@ -4022,7 +4003,6 @@ private struct BatchTrackMetadataEditor: View {
 
     private var changes: BatchMetadataChanges {
         BatchMetadataChanges(
-            title: changeTitle ? title : nil,
             artist: changeArtist ? artist : nil,
             album: changeAlbum ? album : nil,
             albumArtist: changeAlbumArtist ? albumArtist : nil,
@@ -4030,9 +4010,6 @@ private struct BatchTrackMetadataEditor: View {
             isCompilation: changeCompilation ? isCompilation : nil,
             discNumber: parsedNumber(discNumber),
             changesDiscNumber: changeDiscNumber,
-            trackNumber: parsedNumber(trackNumber),
-            changesTrackNumber: changeTrackNumber,
-            incrementsTrackNumber: changeTrackNumber && incrementTrackNumber,
             artworkData: changeArtwork ? artworkData : nil
         )
     }
@@ -4054,8 +4031,7 @@ private struct BatchTrackMetadataEditor: View {
         tracks.lazy.filter { $0.format.lowercased() != "mp3" }.count
     }
     private var hasInvalidNumber: Bool {
-        (changeDiscNumber && !isValidNumberInput(discNumber)) ||
-            (changeTrackNumber && !isValidNumberInput(trackNumber))
+        changeDiscNumber && !isValidNumberInput(discNumber)
     }
 
     private func completionText(_ progress: BatchMetadataProgress) -> String {
