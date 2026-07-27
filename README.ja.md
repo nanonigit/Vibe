@@ -99,7 +99,7 @@ flowchart LR
 
 ## インストール
 
-GitHub Releasesから`Vibe-v0.14.0-macos-arm64.zip`をダウンロードし、展開した`Vibe.app`を任意の場所へ移動してください。
+GitHub Releasesから`Vibe-v0.15.0-macos-arm64.zip`をダウンロードし、展開した`Vibe.app`を任意の場所へ移動してください。
 
 現在の配布物は公証されていません。macOSが初回起動を止めた場合は、FinderでVibeをControlクリックして「開く」を選択し、表示内容を確認したうえで起動してください。
 
