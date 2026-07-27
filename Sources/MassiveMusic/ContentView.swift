@@ -21,22 +21,6 @@ private struct BatchMetadataEditRequest: Identifiable {
     let tracks: [Track]
 }
 
-private enum ManagementSidebarItem: String, CaseIterable, Identifiable {
-    case addFolder
-    case importSongs
-    case cache
-    case primaryStorage
-    case miniPlayer
-    case nowPlayingInfo
-    case playlistActions
-    case activityLog
-    case diagnostics
-    case storageAndImports
-    case storageDifferences
-
-    var id: String { rawValue }
-}
-
 private struct SidebarNavigationLabel: View {
     let title: String
     let systemImage: String
@@ -62,6 +46,17 @@ private struct SidebarNavigationLabel: View {
         .font(.body)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func sidebarReorderDraggable(_ payload: String, enabled: Bool) -> some View {
+        if enabled {
+            draggable(payload)
+        } else {
+            self
+        }
     }
 }
 
@@ -104,7 +99,6 @@ struct ContentView: View {
     @State private var trackBeingEdited: Track?
     @State private var trackPendingDeletion: Track?
     @State private var tracksPendingDeletion: [Track]? = nil
-    @State private var trackPendingFavoriteCache: Track?
     @State private var batchMetadataEditRequest: BatchMetadataEditRequest?
     @State private var selectionAnchorID: Int64?
     @State private var inspectorDragStartWidth: Double?
@@ -113,14 +107,13 @@ struct ContentView: View {
     @State private var isReorderingLibrary = false
     @State private var isReorderingPlaylists = false
     @State private var playlistDropTargetID: Int64?
-    @State private var isReorderingManagement = false
-    @State private var managementDropTarget: ManagementSidebarItem?
+    @State private var editingPlaylistID: Int64?
+    @State private var playlistNameDraft = ""
     @State private var artistScrollPosition: String?
     @State private var artistReturnScrollPosition: String?
     @FocusState private var isTrackTableFocused: Bool
+    @FocusState private var focusedPlaylistEditorID: Int64?
     @AppStorage("inspector.width") private var inspectorWidth = 310.0
-    @AppStorage("sidebar.managementOrder") private var managementOrderStorage = ""
-    @AppStorage("sidebar.managementHidden") private var hiddenManagementItemsStorage = ""
     @AppStorage("columns.title.width") private var titleColumnWidth = 150.0
     @AppStorage("columns.artist.width") private var artistColumnWidth = 150.0
     @AppStorage("columns.album.width") private var albumColumnWidth = 180.0
@@ -151,11 +144,11 @@ struct ContentView: View {
     @AppStorage("artists.presentation") private var artistPresentation = SummaryPresentation.list.rawValue
 
     var body: some View {
-        VStack(spacing: 0) {
-            NavigationSplitView {
-                sidebar
-                    .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 300)
-            } detail: {
+        NavigationSplitView {
+            sidebar
+                .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 300)
+        } detail: {
+            GeometryReader { geometry in
                 HStack(spacing: 0) {
                     libraryContent
                         .frame(minWidth: 420)
@@ -164,6 +157,7 @@ struct ContentView: View {
                         NowPlayingInspector(
                             model: model,
                             player: player,
+                            isMiniPlayer: $isMiniPlayer,
                             browserURL: $browserURL,
                             openAISettings: {
                                 settingsTab = .ai
@@ -173,13 +167,16 @@ struct ContentView: View {
                             .frame(width: inspectorWidth)
                     }
                 }
+                .padding(.top, -max(0, geometry.safeAreaInsets.top - 16))
+                .overlay(alignment: .topTrailing) {
+                    inspectorToggleButton
+                        .padding(.top, showInspector ? 66 : 12)
+                        .padding(.trailing, 14)
+                }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            Divider()
-            PlayerBar(player: player, model: model)
-                .fixedSize(horizontal: false, vertical: true)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .toolbar(removing: .sidebarToggle)
         .onChange(of: player.currentTrack) { _, track in model.enrich(track) }
         .onChange(of: model.language) { _, _ in
             model.savePresentationSettings()
@@ -215,33 +212,6 @@ struct ContentView: View {
         }
         .sheet(item: $batchMetadataEditRequest, onDismiss: model.resetBatchMetadataProgress) { request in
             BatchTrackMetadataEditor(model: model, tracks: request.tracks)
-        }
-        .confirmationDialog(
-            model.text("お気に入りに追加", "Add to Favorites"),
-            isPresented: Binding(
-                get: { trackPendingFavoriteCache != nil },
-                set: { if !$0 { trackPendingFavoriteCache = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            if let track = trackPendingFavoriteCache {
-                Button(model.text("追加してローカルに保存", "Add and Save Locally")) {
-                    model.setFavorite(track, isFavorite: true, cacheLocally: true)
-                    trackPendingFavoriteCache = nil
-                }
-                Button(model.text("お気に入りだけに追加", "Add to Favorites Only")) {
-                    model.setFavorite(track, isFavorite: true)
-                    trackPendingFavoriteCache = nil
-                }
-            }
-            Button(model.text("キャンセル", "Cancel"), role: .cancel) {
-                trackPendingFavoriteCache = nil
-            }
-        } message: {
-            Text(model.text(
-                "この曲をMac内のライブラリキャッシュにも保存しますか？ ローカル保存したお気に入りは、SSDが未接続でも再生できます。",
-                "Also save this song in the Mac library cache? Locally saved favorites remain playable while the SSD is disconnected."
-            ))
         }
         .confirmationDialog(
             model.text("曲を削除", "Delete Song"),
@@ -367,6 +337,23 @@ struct ContentView: View {
         .accessibilityLabel(model.text("再生情報パネルの幅を変更", "Resize Now Playing panel"))
     }
 
+    private var inspectorToggleButton: some View {
+        Button { showInspector.toggle() } label: {
+            Image(systemName: "sidebar.right")
+                .font(.system(size: 17, weight: .medium))
+                .frame(width: 32, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .help(showInspector
+            ? model.text("右ペインを閉じる", "Hide Right Pane")
+            : model.text("右ペインを表示", "Show Right Pane"))
+        .accessibilityLabel(showInspector
+            ? model.text("右ペインを閉じる", "Hide Right Pane")
+            : model.text("右ペインを表示", "Show Right Pane"))
+    }
+
     private var sidebar: some View {
         List {
             Section(isExpanded: .constant(true)) {
@@ -415,7 +402,7 @@ struct ContentView: View {
                                 .fill(Color.accentColor.opacity(0.18))
                         }
                     }
-                    .draggable(section.rawValue)
+                    .sidebarReorderDraggable(section.rawValue, enabled: isReorderingLibrary)
                     .dropDestination(for: String.self) { values, _ in
                         guard let rawValue = values.first,
                               let source = LibrarySection(rawValue: rawValue) else { return false }
@@ -430,29 +417,76 @@ struct ContentView: View {
                 HStack {
                     Text(model.text("ライブラリ", "Library"))
                     Spacer()
-                    Button(isReorderingLibrary
-                           ? model.text("完了", "Done")
-                           : model.text("並び替え", "Reorder")) {
-                        isReorderingLibrary.toggle()
+                    Menu {
+                        Section(model.text("表示項目", "Visible Items")) {
+                            ForEach(model.orderedLibrarySections) { section in
+                                Button { model.toggleLibrarySectionVisibility(section) } label: {
+                                    Label(
+                                        model.sectionTitle(section),
+                                        systemImage: model.hiddenLibrarySections.contains(section)
+                                            ? "circle" : "checkmark.circle.fill"
+                                    )
+                                }
+                            }
+                            Divider()
+                            Button(action: model.showAllLibrarySections) {
+                                Label(model.text("すべて表示", "Show All"), systemImage: "eye")
+                            }
+                        }
+                        Divider()
+                        Button { isReorderingLibrary.toggle() } label: {
+                            Label(
+                                isReorderingLibrary ? model.text("並び替えを完了", "Finish Reordering") : model.text("並び替える", "Reorder Items"),
+                                systemImage: isReorderingLibrary ? "checkmark" : "arrow.up.arrow.down"
+                            )
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
                     }
-                    .buttonStyle(.borderless)
-                    .font(.caption)
+                    .menuStyle(.borderlessButton)
+                    .help(model.text("ライブラリ項目を整理", "Organize Library items"))
                 }
             }
             Section {
                 ForEach(model.playlists) { playlist in
                     HStack(spacing: 4) {
-                        Button {
-                            model.selectPlaylist(playlist.id)
-                        } label: {
-                            SidebarNavigationLabel(
-                                title: playlist.name, systemImage: "music.note.list",
-                                trailingText: playlist.itemCount.formatted()
-                            )
+                        if editingPlaylistID == playlist.id {
+                            HStack(spacing: 8) {
+                                Image(systemName: "music.note.list")
+                                    .frame(width: 16)
+                                TextField(model.text("プレイリスト名", "Playlist Name"), text: $playlistNameDraft)
+                                    .textFieldStyle(.plain)
+                                    .focused($focusedPlaylistEditorID, equals: playlist.id)
+                                    .onSubmit { commitPlaylistRename(playlist.id) }
+                                    .onExitCommand(perform: cancelPlaylistRename)
+                                    .onChange(of: focusedPlaylistEditorID) { oldValue, newValue in
+                                        if oldValue == playlist.id, newValue != playlist.id {
+                                            commitPlaylistRename(playlist.id)
+                                        }
+                                    }
+                                Spacer(minLength: 8)
+                                Text(playlist.itemCount.formatted())
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                                    .fixedSize()
+                            }
+                            .font(.body)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            Button {
+                                guard (NSApp.currentEvent?.clickCount ?? 1) < 2 else { return }
+                                model.selectPlaylist(playlist.id)
+                            } label: {
+                                SidebarNavigationLabel(
+                                    title: playlist.name, systemImage: "music.note.list",
+                                    trailingText: playlist.itemCount.formatted()
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .disabled(isReorderingPlaylists)
+                            .onTapGesture(count: 2) { beginEditingPlaylist(playlist) }
                         }
-                        .buttonStyle(.plain)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .disabled(isReorderingPlaylists)
 
                         if isReorderingPlaylists {
                             Image(systemName: "line.3.horizontal")
@@ -485,14 +519,13 @@ struct ContentView: View {
                     }
                     .contextMenu {
                         Button(model.text("名前を変更…", "Rename…")) {
-                            model.selectPlaylist(playlist.id)
-                            model.renameSelectedPlaylist()
+                            beginEditingPlaylist(playlist)
                         }
                         Button(model.text("削除", "Delete"), role: .destructive) {
                             model.deletePlaylist(id: playlist.id)
                         }
                     }
-                    .draggable("playlist-order:\(playlist.id)")
+                    .sidebarReorderDraggable("playlist-order:\(playlist.id)", enabled: isReorderingPlaylists)
                     .dropDestination(for: String.self) { values, _ in
                         if isReorderingPlaylists,
                            let value = values.first,
@@ -520,299 +553,92 @@ struct ContentView: View {
                     Spacer()
                     Button(action: model.createPlaylist) { Image(systemName: "plus") }
                         .buttonStyle(.plain)
-                    Button(isReorderingPlaylists
-                           ? model.text("完了", "Done")
-                           : model.text("並び替え", "Reorder")) {
-                        isReorderingPlaylists.toggle()
+                        .help(model.text("プレイリストを作成", "Create Playlist"))
+                    Menu {
+                        Button(model.text("M3U/M3U8を読み込む", "Import M3U/M3U8"), action: model.importPlaylist)
+                        Button(model.text("選択中をM3U8へ書き出す", "Export Selected as M3U8"), action: model.exportSelectedPlaylist)
+                            .disabled(model.selectedPlaylistID == nil)
+                        Divider()
+                        Button { isReorderingPlaylists.toggle() } label: {
+                            Label(
+                                isReorderingPlaylists ? model.text("並び替えを完了", "Finish Reordering") : model.text("並び替える", "Reorder Items"),
+                                systemImage: isReorderingPlaylists ? "checkmark" : "arrow.up.arrow.down"
+                            )
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
                     }
-                    .buttonStyle(.borderless)
-                    .font(.caption)
+                    .menuStyle(.borderlessButton)
+                    .help(model.text("プレイリストを整理", "Organize Playlists"))
                 }
             }
             Section {
-                ForEach(visibleManagementItems) { item in
-                    HStack(spacing: 4) {
-                        managementSidebarRow(item)
-                            .disabled(isReorderingManagement)
-                        if isReorderingManagement {
-                            Image(systemName: "line.3.horizontal")
-                                .foregroundStyle(.secondary)
-                            Button { moveManagementItem(item, by: -1) } label: {
-                                Image(systemName: "chevron.up")
-                            }
-                            .buttonStyle(.borderless)
-                            .disabled(item == visibleManagementItems.first)
-                            .help(model.text("上へ移動", "Move Up"))
-                            Button { moveManagementItem(item, by: 1) } label: {
-                                Image(systemName: "chevron.down")
-                            }
-                            .buttonStyle(.borderless)
-                            .disabled(item == visibleManagementItems.last)
-                            .help(model.text("下へ移動", "Move Down"))
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background {
-                        if managementDropTarget == item {
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(Color.accentColor.opacity(0.18))
-                        }
-                    }
-                    .draggable("management:\(item.rawValue)")
-                    .dropDestination(for: String.self) { values, _ in
-                        guard isReorderingManagement,
-                              let value = values.first,
-                              value.hasPrefix("management:"),
-                              let source = ManagementSidebarItem(rawValue: String(value.dropFirst("management:".count))) else {
-                            return false
-                        }
-                        moveManagementItem(source, before: item)
-                        return true
-                    } isTargeted: { targeted in
-                        managementDropTarget = targeted && isReorderingManagement ? item : nil
-                    }
+                Button {
+                    settingsTab = .display
+                    showSettings = true
+                } label: {
+                    SidebarNavigationLabel(
+                        title: model.text("設定と管理", "Settings & Management"),
+                        systemImage: "gearshape"
+                    )
                 }
+                .buttonStyle(.plain)
+
+                Button { model.changeSection(.diagnostics) } label: {
+                    SidebarNavigationLabel(title: model.sectionTitle(.diagnostics), systemImage: icon(for: .diagnostics))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(model.section == .diagnostics ? Color.accentColor : Color.primary)
+
+                Button { model.changeSection(.activityLog) } label: {
+                    SidebarNavigationLabel(title: model.sectionTitle(.activityLog), systemImage: icon(for: .activityLog))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(model.section == .activityLog ? Color.accentColor : Color.primary)
             } header: {
-                HStack {
-                    Text(model.text("管理", "Manage"))
-                    Spacer()
-                    Menu {
-                        ForEach(orderedManagementItems) { item in
-                            Button { toggleManagementItemVisibility(item) } label: {
-                                Label(
-                                    managementItemTitle(item),
-                                    systemImage: hiddenManagementItems.contains(item) ? "circle" : "checkmark.circle.fill"
-                                )
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "eye")
-                    }
-                    .menuStyle(.borderlessButton)
-                    .help(model.text("管理項目の表示／非表示", "Show or hide management items"))
-                    Button(isReorderingManagement
-                           ? model.text("完了", "Done")
-                           : model.text("並び替え", "Reorder")) {
-                        isReorderingManagement.toggle()
-                    }
-                    .buttonStyle(.borderless)
-                    .font(.caption)
+                Text(model.text("ツール", "Tools"))
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            sidebarBackgroundStatus
+        }
+    }
+
+    @ViewBuilder
+    private var sidebarBackgroundStatus: some View {
+        if model.driveMessage != nil || model.isBulkAutoFilling || model.isID3Migrating {
+            VStack(spacing: 0) {
+                if let message = model.driveMessage {
+                    Label(message, systemImage: "externaldrive.badge.exclamationmark")
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if model.isBulkAutoFilling {
+                    sidebarProgressStatus(model.bulkAutoFillProgress)
+                }
+                if model.isID3Migrating {
+                    sidebarProgressStatus(model.id3MigrationProgress)
                 }
             }
-        }
-        .safeAreaInset(edge: .bottom) {
-            if let message = model.driveMessage {
-                Label(message, systemImage: "externaldrive.badge.exclamationmark")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.bar)
-            }
+            .font(.caption)
+            .background(.bar)
         }
     }
 
-    private var orderedManagementItems: [ManagementSidebarItem] {
-        let stored = managementOrderStorage.split(separator: "\n")
-            .compactMap { ManagementSidebarItem(rawValue: String($0)) }
-        var seen = Set<ManagementSidebarItem>()
-        let unique = stored.filter { seen.insert($0).inserted }
-        return unique + ManagementSidebarItem.allCases.filter { !seen.contains($0) }
-    }
-
-    private var hiddenManagementItems: Set<ManagementSidebarItem> {
-        Set(hiddenManagementItemsStorage.split(separator: "\n").compactMap {
-            ManagementSidebarItem(rawValue: String($0))
-        })
-    }
-
-    private var visibleManagementItems: [ManagementSidebarItem] {
-        orderedManagementItems.filter { item in
-            !hiddenManagementItems.contains(item) && (item != .cache || model.isStorageExternal)
+    private func sidebarProgressStatus(_ message: String) -> some View {
+        HStack(spacing: 6) {
+            ProgressView()
+                .controlSize(.mini)
+            Text(message)
+                .lineLimit(2)
+                .truncationMode(.tail)
+            Spacer(minLength: 0)
         }
-    }
-
-    private func toggleManagementItemVisibility(_ item: ManagementSidebarItem) {
-        var hidden = hiddenManagementItems
-        if !hidden.insert(item).inserted { hidden.remove(item) }
-        hiddenManagementItemsStorage = ManagementSidebarItem.allCases
-            .filter(hidden.contains)
-            .map(\.rawValue)
-            .joined(separator: "\n")
-    }
-
-    private func moveManagementItem(_ source: ManagementSidebarItem, before destination: ManagementSidebarItem) {
-        guard source != destination else { return }
-        var order = orderedManagementItems
-        guard let sourceIndex = order.firstIndex(of: source) else { return }
-        order.remove(at: sourceIndex)
-        guard let destinationIndex = order.firstIndex(of: destination) else { return }
-        order.insert(source, at: destinationIndex)
-        managementOrderStorage = order.map(\.rawValue).joined(separator: "\n")
-    }
-
-    private func moveManagementItem(_ item: ManagementSidebarItem, by offset: Int) {
-        guard offset != 0,
-              let visibleIndex = visibleManagementItems.firstIndex(of: item) else { return }
-        let destinationIndex = visibleIndex + offset
-        guard visibleManagementItems.indices.contains(destinationIndex),
-              let sourceIndex = orderedManagementItems.firstIndex(of: item),
-              let targetIndex = orderedManagementItems.firstIndex(of: visibleManagementItems[destinationIndex]) else { return }
-        var order = orderedManagementItems
-        order.swapAt(sourceIndex, targetIndex)
-        managementOrderStorage = order.map(\.rawValue).joined(separator: "\n")
-    }
-
-    private func managementItemTitle(_ item: ManagementSidebarItem) -> String {
-        switch item {
-        case .addFolder: model.text("フォルダを追加", "Add Folder")
-        case .importSongs: model.text("曲を取り込む", "Import Songs")
-        case .cache: model.text("キャッシュ", "Cache")
-        case .primaryStorage:
-            model.primaryStorageIsConnected
-                ? model.text("メイン：接続中", "Main: Connected")
-                : model.text("メイン：未接続", "Main: Disconnected")
-        case .miniPlayer: model.text("ミニプレイヤーに切り替え", "Switch to Mini Player")
-        case .nowPlayingInfo: model.text("再生情報", "Now Playing Info")
-        case .playlistActions: model.text("プレイリスト操作", "Playlist Actions")
-        case .activityLog: model.sectionTitle(.activityLog)
-        case .diagnostics: model.sectionTitle(.diagnostics)
-        case .storageAndImports: model.text("保管先と取り込み", "Storage & Imports")
-        case .storageDifferences: model.text("SSDとの差分", "Storage Differences")
-        }
-    }
-
-    @ViewBuilder private func managementSidebarRow(_ item: ManagementSidebarItem) -> some View {
-        switch item {
-        case .addFolder:
-            Button(action: model.chooseAndScanFolder) {
-                SidebarNavigationLabel(title: managementItemTitle(item), systemImage: "folder.badge.plus")
-            }
-            .buttonStyle(.plain)
-        case .importSongs:
-            Button(action: model.importNewTracks) {
-                SidebarNavigationLabel(title: managementItemTitle(item), systemImage: "tray.and.arrow.down")
-            }
-            .buttonStyle(.plain)
-        case .cache:
-            Menu {
-                Button(
-                    model.text("Finderでキャッシュフォルダーを表示", "Show Cache Folder in Finder"),
-                    action: model.revealLocalCache
-                )
-                Divider()
-                Text(model.text("場所: \(model.localCacheDirectoryPath)", "Path: \(model.localCacheDirectoryPath)"))
-            } label: {
-                SidebarNavigationLabel(
-                    title: managementItemTitle(item),
-                    systemImage: "internaldrive.fill"
-                )
-            }
-            .menuStyle(.borderlessButton)
-            .tint(Color(nsColor: .labelColor))
-            .help(model.text(
-                "キャッシュ保存場所: \(model.localCacheDirectoryPath)",
-                "Cache Location: \(model.localCacheDirectoryPath)"
-            ))
-        case .primaryStorage:
-            Menu {
-                Label(
-                    model.primaryStorageIsConnected
-                        ? model.text("接続中", "Connected")
-                        : model.text("未接続", "Disconnected"),
-                    systemImage: model.primaryStorageIsConnected
-                        ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
-                )
-                Button(
-                    model.text("保管先を変更…", "Change Storage Destination…"),
-                    action: model.chooseStorageDestination
-                )
-                if let primary = model.storageDestinations.first(where: \.isPrimary) {
-                    Button(model.text("Finderで保管先フォルダーを表示", "Show Storage in Finder")) {
-                        NSWorkspace.shared.open(URL(filePath: primary.path))
-                    }
-                    .disabled(!model.primaryStorageIsConnected)
-                    Button(model.text("保管先フォルダを再スキャン", "Rescan Storage Folder")) {
-                        model.startScan(url: URL(filePath: primary.path))
-                    }
-                    .disabled(!model.primaryStorageIsConnected)
-                    Divider()
-                    Text(model.text("場所: \(primary.path)", "Path: \(primary.path)"))
-                } else {
-                    Divider()
-                    Text(model.text("保管先が設定されていません", "No storage destination set"))
-                }
-            } label: {
-                SidebarNavigationLabel(
-                    title: managementItemTitle(item),
-                    systemImage: "externaldrive.fill",
-                    iconColor: model.primaryStorageIsConnected ? .green : .orange
-                )
-            }
-            .menuStyle(.borderlessButton)
-            .tint(model.primaryStorageIsConnected ? .green : .orange)
-            .help(model.primaryStorageIsConnected
-                ? model.text("メイン保管先は接続中です", "Main storage is connected")
-                : model.text("メイン保管先は未接続です", "Main storage is disconnected"))
-        case .miniPlayer:
-            Button { isMiniPlayer = true } label: {
-                SidebarNavigationLabel(title: managementItemTitle(item), systemImage: "pip")
-            }
-            .buttonStyle(.plain)
-        case .nowPlayingInfo:
-            Button { showInspector.toggle() } label: {
-                SidebarNavigationLabel(title: managementItemTitle(item), systemImage: "sidebar.right")
-            }
-            .buttonStyle(.plain)
-        case .playlistActions:
-            Menu {
-                Button(model.text("M3U/M3U8を読み込む", "Import M3U/M3U8"), action: model.importPlaylist)
-                Button(model.text("選択中をM3U8へ書き出す", "Export Selected as M3U8"), action: model.exportSelectedPlaylist)
-                    .disabled(model.selectedPlaylistID == nil)
-                Button(model.text("選択中の名前を変更", "Rename Selected"), action: model.renameSelectedPlaylist)
-                    .disabled(model.selectedPlaylistID == nil)
-                Divider()
-                Button(model.text("選択中を削除", "Delete Selected"), role: .destructive, action: model.deleteSelectedPlaylist)
-                    .disabled(model.selectedPlaylistID == nil)
-            } label: {
-                SidebarNavigationLabel(title: managementItemTitle(item), systemImage: "ellipsis.circle")
-            }
-            .menuStyle(.borderlessButton)
-            .tint(Color(nsColor: .labelColor))
-        case .activityLog:
-            Button { model.changeSection(.activityLog) } label: {
-                SidebarNavigationLabel(title: managementItemTitle(item), systemImage: icon(for: .activityLog))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(model.section == .activityLog ? Color.accentColor : Color.primary)
-        case .diagnostics:
-            Button { model.changeSection(.diagnostics) } label: {
-                SidebarNavigationLabel(title: managementItemTitle(item), systemImage: icon(for: .diagnostics))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(model.section == .diagnostics ? Color.accentColor : Color.primary)
-        case .storageAndImports:
-            Button {
-                settingsTab = .storage
-                showSettings = true
-            } label: {
-                SidebarNavigationLabel(title: managementItemTitle(item), systemImage: "internaldrive")
-            }
-            .buttonStyle(.plain)
-        case .storageDifferences:
-            Button {
-                settingsTab = .differences
-                showSettings = true
-            } label: {
-                SidebarNavigationLabel(
-                    title: managementItemTitle(item),
-                    systemImage: "arrow.left.arrow.right",
-                    trailingText: model.unavailableTrackCount.formatted(),
-                    trailingColor: model.unavailableTrackCount > 0 ? .orange : .secondary
-                )
-            }
-            .buttonStyle(.plain)
-        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var libraryContent: some View {
@@ -855,8 +681,6 @@ struct ContentView: View {
             }
             if [.running, .paused].contains(model.scanProgress.state) { scanStatus }
             if model.importProgress.state != .idle { importStatus }
-            if model.isBulkAutoFilling { bulkAutoFillStatus }
-            if model.isID3Migrating { id3MigrationStatus }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color.clear)
@@ -938,7 +762,9 @@ struct ContentView: View {
             }
             if model.selectedPlaylistID != nil {
                 Button {
-                    model.renameSelectedPlaylist()
+                    if let playlist = model.playlists.first(where: { $0.id == model.selectedPlaylistID }) {
+                        beginEditingPlaylist(playlist)
+                    }
                 } label: {
                     Text(headerTitle)
                         .font(.title2.bold())
@@ -1273,10 +1099,8 @@ struct ContentView: View {
                                 Button {
                                     if track.isFavorite {
                                         model.setFavorite(track, isFavorite: false)
-                                    } else if model.isCached(track) {
-                                        model.setFavorite(track, isFavorite: true)
                                     } else {
-                                        trackPendingFavoriteCache = track
+                                        model.setFavorite(track, isFavorite: true)
                                     }
                                 } label: {
                                     Image(systemName: track.isFavorite ? "star.fill" : "star")
@@ -1343,7 +1167,18 @@ struct ContentView: View {
             return .handled
         }
         .overlay {
-            if model.isLoading { ProgressView().controlSize(.large) }
+            if model.section == .playlists,
+               model.selectedPlaylistID != nil,
+               model.tracks.isEmpty {
+                ContentUnavailableView(
+                    model.text("プレイリストに曲がありません", "No Songs in This Playlist"),
+                    systemImage: "music.note.list",
+                    description: Text(model.text(
+                        "曲をこのプレイリストへドラッグするか、曲の右クリックメニューから追加できます。",
+                        "Drag songs to this playlist or add them from a song's context menu."
+                    ))
+                )
+            } else if model.isLoading { ProgressView().controlSize(.large) }
             else if model.tracks.isEmpty {
                 if model.section == .cache {
                     ContentUnavailableView(
@@ -1359,6 +1194,35 @@ struct ContentView: View {
                 }
             }
         }
+    }
+
+    private func beginEditingPlaylist(_ playlist: Playlist) {
+        guard !isReorderingPlaylists else { return }
+        if model.selectedPlaylistID != playlist.id || model.section != .playlists {
+            model.selectPlaylist(playlist.id)
+        }
+        playlistNameDraft = playlist.name
+        editingPlaylistID = playlist.id
+        Task { @MainActor in
+            await Task.yield()
+            focusedPlaylistEditorID = playlist.id
+        }
+    }
+
+    private func commitPlaylistRename(_ playlistID: Int64) {
+        guard editingPlaylistID == playlistID else { return }
+        if model.renamePlaylist(id: playlistID, name: playlistNameDraft) {
+            editingPlaylistID = nil
+            focusedPlaylistEditorID = nil
+        } else {
+            focusedPlaylistEditorID = playlistID
+        }
+    }
+
+    private func cancelPlaylistRename() {
+        editingPlaylistID = nil
+        focusedPlaylistEditorID = nil
+        playlistNameDraft = ""
     }
 
     @ViewBuilder private func trackColumnCell(_ column: TrackSort, track: Track, index: Int) -> some View {
@@ -2175,28 +2039,6 @@ struct ContentView: View {
         .background(.bar)
     }
 
-    private var bulkAutoFillStatus: some View {
-        HStack(spacing: 12) {
-            ProgressView().controlSize(.small)
-            Text(model.bulkAutoFillProgress)
-            Spacer()
-        }
-        .font(.caption)
-        .padding(8)
-        .background(.bar)
-    }
-
-    private var id3MigrationStatus: some View {
-        HStack(spacing: 12) {
-            ProgressView().controlSize(.small)
-            Text(model.id3MigrationProgress)
-            Spacer()
-        }
-        .font(.caption)
-        .padding(8)
-        .background(.bar)
-    }
-
     private var headerTitle: String {
         if let id = model.selectedPlaylistID, let playlist = model.playlists.first(where: { $0.id == id }) { return playlist.name }
         if let album = model.selectedAlbum { return album.name }
@@ -2697,6 +2539,7 @@ private struct UpNextLibraryView: View {
 private struct NowPlayingInspector: View {
     @ObservedObject var model: LibraryViewModel
     @ObservedObject var player: PlaybackController
+    @Binding var isMiniPlayer: Bool
     @Binding var browserURL: URL?
     let openAISettings: () -> Void
     @State private var tab = 0
@@ -2707,14 +2550,21 @@ private struct NowPlayingInspector: View {
     private let lyricsAnchorCount = 100
 
     var body: some View {
-        Group {
-            if let browserURL {
-                EmbeddedBrowserView(url: browserURL, targetLanguage: model.language.rawValue) {
-                    self.browserURL = nil
+        VStack(spacing: 0) {
+            InspectorPlayerControls(player: player, model: model, isMiniPlayer: $isMiniPlayer)
+            Divider()
+
+            Group {
+                if let browserURL {
+                    EmbeddedBrowserView(url: browserURL, targetLanguage: model.language.rawValue) {
+                        self.browserURL = nil
+                        if tab == 4 { tab = 0 }
+                    }
+                } else {
+                    playerInformation
                 }
-            } else {
-                playerInformation
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(.background)
     }
@@ -2736,16 +2586,25 @@ private struct NowPlayingInspector: View {
                     Text(model.text("情報", "Info")).tag(0)
                     Text(model.text("歌詞", "Lyrics")).tag(1)
                     Text(model.text("発見", "Discover")).tag(2)
+                    Text(model.text("練習", "Practice")).tag(3)
+                    Text(model.text("コード", "Chords")).tag(4)
                 }.pickerStyle(.segmented).labelsHidden()
                 Group {
                     if model.isEnriching { ProgressView(model.text("情報を取得中…", "Loading information…")) }
                     else if tab == 0 { information }
                     else if tab == 1 { lyrics }
-                    else { discovery }
+                    else if tab == 2 { discovery }
+                    else if tab == 3 { practice }
+                    else { ProgressView(model.text("コードを検索中…", "Searching for chords…")) }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
             .padding(16)
+            .onChange(of: tab) { _, newTab in
+                if newTab == 4 {
+                    browserURL = chordifySearchURL
+                }
+            }
             .sheet(isPresented: $isEditingManualLyrics) {
                 if let track = player.currentTrack {
                     ManualLyricsEditor(
@@ -2756,6 +2615,18 @@ private struct NowPlayingInspector: View {
                 }
             }
         }
+    }
+
+    private var chordifySearchURL: URL? {
+        guard let track = player.currentTrack else { return nil }
+        let query = [track.artist, track.title]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        guard !query.isEmpty else { return URL(string: "https://chordify.net/en") }
+        let allowed = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/?#"))
+        guard let encoded = query.addingPercentEncoding(withAllowedCharacters: allowed) else { return nil }
+        return URL(string: "https://chordify.net/search/\(encoded)")
     }
 
     private var idleDiscovery: some View {
@@ -2930,6 +2801,203 @@ private struct NowPlayingInspector: View {
                 }
             }
         }
+    }
+
+    private var practice: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label(model.text("区間リピート", "Section Loop"), systemImage: "repeat")
+                        .font(.headline)
+                    Text(model.text(
+                        "3つの区間を曲ごとに保存し、アプリを終了しても保持します。ソロの開始位置でA、終了位置でBを押してください。",
+                        "Save three loops for each song, even after quitting the app. Set A at the start of a solo and B at the end."
+                    ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                    Picker(
+                        model.text("練習区間", "Practice Loop"),
+                        selection: Binding(
+                            get: { player.activeSectionLoopSlot },
+                            set: { player.selectSectionLoopSlot($0) }
+                        )
+                    ) {
+                        ForEach(0..<PlaybackController.sectionLoopSlotCount, id: \.self) { slot in
+                            Text(sectionLoopSlotTitle(slot)).tag(slot)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .accessibilityLabel(model.text("保存する区間", "Saved Loop Slot"))
+
+                    HStack(spacing: 7) {
+                        practiceActionButton(
+                            title: model.text("A 開始", "Set A"),
+                            systemImage: "a.circle",
+                            action: player.setSectionLoopStart
+                        )
+                        practiceActionButton(
+                            title: model.text("B 終了", "Set B"),
+                            systemImage: "b.circle",
+                            action: player.setSectionLoopEnd
+                        )
+                        .disabled(!player.canSetSectionLoopEnd)
+                        practiceActionButton(
+                            title: model.text("解除", "Clear"),
+                            systemImage: "xmark.circle",
+                            action: player.clearSectionLoop
+                        )
+                        .disabled(player.sectionLoopStart == nil)
+                    }
+
+                    if let start = player.sectionLoopStart {
+                        HStack(spacing: 8) {
+                            Text("A  \(formatPracticeTime(start))")
+                            Image(systemName: "arrow.right")
+                            if let end = player.sectionLoopEnd {
+                                Text("B  \(formatPracticeTime(end))")
+                            } else {
+                                Text(model.text("B 未設定", "B not set"))
+                            }
+                            Spacer()
+                        }
+                        .font(.caption.monospacedDigit().bold())
+                        .foregroundStyle(player.sectionLoopEnd == nil ? Color.secondary : Color.accentColor)
+                    }
+
+                    Toggle(
+                        model.text("区間リピート", "Section Loop"),
+                        isOn: Binding(
+                            get: { player.isSectionLoopEnabled },
+                            set: { _ in player.toggleSectionLoop() }
+                        )
+                    )
+                    .toggleStyle(.switch)
+                    .disabled(player.sectionLoopEnd == nil)
+                }
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(model.text("再生速度", "Playback Speed"), systemImage: "gauge.with.dots.needle.67percent")
+                        .font(.headline)
+                    Text(model.text(
+                        "音程を保ったまま、ギター練習に合わせてゆっくり再生します。",
+                        "Slow playback for practice while preserving the original pitch."
+                    ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 7), count: 3), spacing: 7) {
+                        ForEach(PlaybackController.supportedSpeeds, id: \.self) { speed in
+                            practiceButton(
+                                title: "\(Int((speed * 100).rounded()))%",
+                                isSelected: player.playbackSpeed == speed
+                            ) {
+                                player.setPlaybackSpeed(speed)
+                            }
+                        }
+                    }
+                }
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(model.text("ピッチ", "Pitch"), systemImage: "music.note.list")
+                        .font(.headline)
+                    Text(model.text(
+                        "速度は変えず、原曲より半音下げ／半音上げで再生します。",
+                        "Keep the selected speed and play one semitone below or above the original."
+                    ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    HStack(spacing: 7) {
+                        practiceButton(
+                            title: model.text("半音下げ", "-1 semitone"),
+                            isSelected: player.pitchSemitones == -1
+                        ) { player.setPitchSemitones(-1) }
+                        practiceButton(
+                            title: model.text("原音", "Original"),
+                            isSelected: player.pitchSemitones == 0
+                        ) { player.setPitchSemitones(0) }
+                        practiceButton(
+                            title: model.text("半音上げ", "+1 semitone"),
+                            isSelected: player.pitchSemitones == 1
+                        ) { player.setPitchSemitones(1) }
+                    }
+                }
+
+                Label(
+                    practiceStatus,
+                    systemImage: player.pitchSemitones == 0 ? "speedometer" : "tuningfork"
+                )
+                .font(.caption.bold())
+                .foregroundStyle(Color.accentColor)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private func sectionLoopSlotTitle(_ slot: Int) -> String {
+        let savedMark = player.sectionLoopIsConfigured(at: slot) ? " •" : ""
+        return "\(slot + 1)\(savedMark)"
+    }
+
+    private func practiceButton(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.caption.bold())
+                .frame(maxWidth: .infinity, minHeight: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(
+            isSelected ? Color.accentColor.opacity(0.24) : Color.secondary.opacity(0.10),
+            in: RoundedRectangle(cornerRadius: 7)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 7)
+                .stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 1)
+        }
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private func practiceActionButton(
+        title: String,
+        systemImage: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.caption.bold())
+                .frame(maxWidth: .infinity, minHeight: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+    }
+
+    private func formatPracticeTime(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "--:--" }
+        return String(format: "%d:%02d.%01d", Int(seconds) / 60, Int(seconds) % 60, Int(seconds * 10) % 10)
+    }
+
+    private var practiceStatus: String {
+        let speed = Int((player.playbackSpeed * 100).rounded())
+        let pitchJA = switch player.pitchSemitones {
+        case -1: "半音下げ"
+        case 1: "半音上げ"
+        default: "原音"
+        }
+        let pitchEN = switch player.pitchSemitones {
+        case -1: "-1 semitone"
+        case 1: "+1 semitone"
+        default: "original pitch"
+        }
+        return model.text(
+            "現在: 速度\(speed)%・\(pitchJA)",
+            "Current: \(speed)% speed, \(pitchEN)"
+        )
     }
 
     private var information: some View {
@@ -4255,13 +4323,38 @@ private struct LibrarySettingsView: View {
 
             SettingsPage {
                 SettingsCard(
+                    title: model.text("ライブラリへ追加", "Add to Library"),
+                    subtitle: model.text("音楽フォルダの登録と、新しい曲の取り込みをここで行います。", "Register music folders and import new songs here."),
+                    systemImage: "folder.badge.plus"
+                ) {
+                    HStack {
+                        Button(model.text("フォルダを追加…", "Add Folder…"), action: model.chooseAndScanFolder)
+                        Button(model.text("曲を取り込む…", "Import Songs…"), action: model.importNewTracks)
+                    }
+                    Text(model.text(
+                        "フォルダを追加すると既存の音源を登録します。曲を取り込むと、設定したメイン保管先へ新しい音源をコピーします。",
+                        "Add Folder registers existing music. Import Songs copies new audio into the configured main storage."
+                    ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                SettingsCard(
                     title: model.text("メイン保管先", "Main Storage"),
                     subtitle: model.text("音源の原本を保管する場所です。", "The location that stores your original audio files."),
                     systemImage: "externaldrive"
                 ) {
+                    Label(
+                        model.primaryStorageIsConnected
+                            ? model.text("メイン保管先：接続中", "Main Storage: Connected")
+                            : model.text("メイン保管先：未接続", "Main Storage: Disconnected"),
+                        systemImage: model.primaryStorageIsConnected
+                            ? "externaldrive.fill.badge.checkmark"
+                            : "externaldrive.badge.exclamationmark"
+                    )
+                    .foregroundStyle(model.primaryStorageIsConnected ? Color.green : Color.orange)
                     LabeledContent(model.text("現在の保存先", "Current Destination")) {
-                    Text(model.storageDestinations.first(where: \.isPrimary)?.path ?? model.text("未設定", "Not set"))
-                        .lineLimit(1).truncationMode(.middle)
+                        Text(model.storageDestinations.first(where: \.isPrimary)?.path ?? model.text("未設定", "Not set"))
+                            .lineLimit(1).truncationMode(.middle)
                     }
                     Button(model.text("保存先を変更…", "Change Destination…"), action: model.chooseStorageDestination)
                     Text(model.isStorageExternal
@@ -4364,8 +4457,8 @@ private struct LibrarySettingsView: View {
                         Text(model.localCacheDirectoryPath).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
                     }
                     Text(model.text(
-                        "お気に入り登録時に「追加してローカルに保存」を選んだ曲は、直近曲の上限とは別に保持します。",
-                        "Favorites saved locally are retained separately from the recent-song limit."
+                        "お気に入りまたはプレイリストに含まれる曲は、キャッシュ上限を超えても自動削除しません。",
+                        "Cached songs in Favorites or playlists are never automatically evicted when the limit is exceeded."
                     )).font(.caption).foregroundStyle(.secondary)
                     Button(model.text("Finderでキャッシュを表示", "Show Cache in Finder"), action: model.revealLocalCache)
                     Button(model.text("設定を保存", "Save Settings"), action: model.saveCacheSettings)
@@ -4626,89 +4719,196 @@ private struct TrackNavigationCell: View {
     }
 }
 
-private struct PlayerBar: View {
+private struct InspectorPlayerControls: View {
     @ObservedObject var player: PlaybackController
     @ObservedObject var model: LibraryViewModel
+    @Binding var isMiniPlayer: Bool
+    @State private var isVolumePopoverPresented = false
 
     var body: some View {
-        HStack(spacing: 14) {
-            Group {
-                if player.currentTrack == nil {
-                    if let appIcon = NSApp.applicationIconImage {
-                        Image(nsImage: appIcon)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 48, height: 48)
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
-                    } else {
-                        PlayerArtwork(
-                            artworkURL: nil,
-                            size: 48,
-                            cornerRadius: 6,
-                            placeholderPointSize: 18
-                        )
-                    }
-                } else {
-                    PlayerArtwork(
-                        artworkURL: model.enrichedInfo?.artworkURL,
-                        size: 48,
-                        cornerRadius: 6,
-                        placeholderPointSize: 18
-                    )
+        VStack(spacing: 9) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(player.currentTrack?.title ?? model.text("再生していません", "Not Playing"))
+                        .font(.headline)
+                        .lineLimit(1)
+                    Text(player.currentTrack?.artist ?? model.text("曲を選択してください", "Select a song"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
+                Spacer(minLength: 0)
+                repeatButton
+                miniPlayerButton
+                volumeButton
             }
-            .accessibilityLabel(model.text("アルバムジャケット", "Album artwork"))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(player.currentTrack?.title ?? model.text("再生していません", "Not Playing")).lineLimit(1).fontWeight(.medium)
-                Text(player.currentTrack?.artist ?? "").lineLimit(1).font(.caption).foregroundStyle(.secondary)
-            }
-            .frame(width: 200, alignment: .leading)
-            Button(action: player.previous) { Image(systemName: "backward.fill") }
-            Button(action: player.togglePlayPause) {
-                Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                    .font(.system(size: 28))
-            }
-            .buttonStyle(.plain)
-            Button(action: player.next) { Image(systemName: "forward.fill") }
-            Text(format(player.elapsed)).font(.caption).monospacedDigit().foregroundStyle(.secondary)
-            Slider(
-                value: Binding(
-                    get: { player.elapsed },
-                    set: { newValue in player.seek(to: newValue) }
-                ),
-                in: 0...max(1, player.duration)
-            )
-            Text(format(player.duration)).font(.caption).monospacedDigit().foregroundStyle(.secondary)
-            Button(action: player.toggleShuffle) {
-                Image(systemName: "shuffle")
-                    .foregroundStyle(player.shuffleEnabled ? Color.accentColor : Color.secondary)
-                    .frame(width: 36, height: 32)
-                    .background(player.shuffleEnabled ? Color.accentColor.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: 7))
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(model.text("ランダム再生", "Shuffle"))
-            .accessibilityLabel(model.text("ランダム再生", "Shuffle"))
-            .accessibilityValue(player.shuffleEnabled ? model.text("オン", "On") : model.text("オフ", "Off"))
-            Menu {
-                ForEach(PlaybackController.RepeatMode.allCases, id: \.self) { mode in
-                    Button(mode.rawValue) { player.repeatMode = mode }
+
+            HStack(spacing: 8) {
+                shuffleButton
+                Spacer(minLength: 4)
+                Button(action: player.previous) {
+                    Image(systemName: "backward.fill")
                 }
-            } label: {
-                Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
-                    .foregroundStyle(player.repeatMode == .off ? Color.secondary : Color.accentColor)
-                    .frame(width: 40, height: 32)
-                    .contentShape(Rectangle())
+                .accessibilityLabel(model.text("前の曲", "Previous Track"))
+                Button(action: player.togglePlayPause) {
+                    Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                        .font(.system(size: 34))
+                        .foregroundStyle(Color.accentColor)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(player.isPlaying ? model.text("一時停止", "Pause") : model.text("再生", "Play"))
+                Button(action: player.next) {
+                    Image(systemName: "forward.fill")
+                }
+                .accessibilityLabel(model.text("次の曲", "Next Track"))
+                Spacer(minLength: 4)
             }
-            .menuStyle(.borderlessButton)
-            .help(model.text("リピート", "Repeat"))
-            Image(systemName: "speaker.fill").foregroundStyle(.secondary)
-            Slider(value: $player.volume, in: 0...1).frame(width: 90)
+            .disabled(player.currentTrack == nil)
+
+            HStack(spacing: 7) {
+                timeLabel(player.elapsed)
+                Slider(
+                    value: Binding(
+                        get: { player.elapsed },
+                        set: { player.seek(to: $0) }
+                    ),
+                    in: 0...max(1, player.duration)
+                )
+                .accessibilityLabel(model.text("再生位置", "Playback Position"))
+                timeLabel(player.duration)
+            }
+            .disabled(player.currentTrack == nil)
         }
         .buttonStyle(.borderless)
         .padding(.horizontal, 14)
-        .frame(height: 70)
-        .background(.bar)
+        .padding(.vertical, 12)
+        .background {
+            ZStack {
+                Rectangle().fill(.bar)
+                LinearGradient(
+                    colors: [Color.accentColor.opacity(0.18), Color.clear],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            }
+        }
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(Color.accentColor)
+                .frame(width: 3)
+        }
+    }
+
+    private var shuffleButton: some View {
+        Button(action: player.toggleShuffle) {
+            Image(systemName: "shuffle")
+                .foregroundStyle(player.shuffleEnabled ? Color.accentColor : Color.secondary)
+                .frame(width: 28, height: 28)
+                .background(player.shuffleEnabled ? Color.accentColor.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: 7))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(model.text("ランダム再生", "Shuffle"))
+        .accessibilityLabel(model.text("ランダム再生", "Shuffle"))
+        .accessibilityValue(player.shuffleEnabled ? model.text("オン", "On") : model.text("オフ", "Off"))
+    }
+
+    private var miniPlayerButton: some View {
+        Button { isMiniPlayer = true } label: {
+            Label(model.text("ミニ", "Mini"), systemImage: "pip")
+                .labelStyle(.iconOnly)
+                .font(.caption)
+                .frame(width: 30, height: 28)
+                .background(Color.secondary.opacity(0.10), in: Capsule())
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(model.text("ミニプレイヤーに切り替え", "Switch to Mini Player"))
+        .accessibilityLabel(model.text("ミニプレイヤーに切り替え", "Switch to Mini Player"))
+    }
+
+    private var repeatButton: some View {
+        Menu {
+            ForEach(PlaybackController.RepeatMode.allCases, id: \.self) { mode in
+                Button { player.repeatMode = mode } label: {
+                    if player.repeatMode == mode {
+                        Label(repeatModeTitle(mode), systemImage: "checkmark")
+                    } else {
+                        Text(repeatModeTitle(mode))
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: repeatModeSymbol)
+                .foregroundStyle(player.repeatMode == .off ? Color.secondary : Color.accentColor)
+                .frame(width: 30, height: 28)
+                .background(
+                    player.repeatMode == .off ? Color.secondary.opacity(0.10) : Color.accentColor.opacity(0.16),
+                    in: Capsule()
+                )
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .help(model.text("リピート", "Repeat"))
+        .accessibilityLabel(model.text("リピート", "Repeat"))
+        .accessibilityValue(repeatModeTitle(player.repeatMode))
+    }
+
+    private var repeatModeSymbol: String {
+        player.repeatMode == .one ? "repeat.1" : "repeat"
+    }
+
+    private func repeatModeTitle(_ mode: PlaybackController.RepeatMode) -> String {
+        switch mode {
+        case .off: model.text("リピートなし", "Repeat Off")
+        case .one: model.text("1曲リピート", "Repeat One")
+        case .all: model.text("アルバム／プレイリストをリピート", "Repeat Album/Playlist")
+        }
+    }
+
+    private var volumeButton: some View {
+        Button { isVolumePopoverPresented.toggle() } label: {
+            Image(systemName: volumeSymbol)
+                .foregroundStyle(.secondary)
+                .frame(width: 30, height: 28)
+                .background(Color.secondary.opacity(0.10), in: Capsule())
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(model.text("音量を調整", "Adjust Volume"))
+        .accessibilityLabel(model.text("音量", "Volume"))
+        .accessibilityValue("\(Int((player.volume * 100).rounded()))%")
+        .popover(isPresented: $isVolumePopoverPresented, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Label(model.text("音量", "Volume"), systemImage: volumeSymbol)
+                        .font(.headline)
+                    Spacer()
+                    Text("\(Int((player.volume * 100).rounded()))%")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                Slider(value: $player.volume, in: 0...1)
+                    .accessibilityLabel(model.text("音量", "Volume"))
+            }
+            .padding(14)
+            .frame(width: 230)
+        }
+    }
+
+    private var volumeSymbol: String {
+        if player.volume == 0 { return "speaker.slash.fill" }
+        if player.volume < 0.34 { return "speaker.wave.1.fill" }
+        if player.volume < 0.67 { return "speaker.wave.2.fill" }
+        return "speaker.wave.3.fill"
+    }
+
+    private func timeLabel(_ seconds: Double) -> some View {
+        Text(format(seconds))
+            .font(.caption2)
+            .monospacedDigit()
+            .foregroundStyle(.secondary)
+            .frame(width: 34)
     }
 
     private func format(_ seconds: Double) -> String {
@@ -4723,17 +4923,19 @@ struct MiniPlayerView: View {
     @Binding var isMiniPlayer: Bool
 
     var body: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 12) {
+        VStack(spacing: 8) {
+            HStack(spacing: 10) {
                 PlayerArtwork(
                     artworkURL: model.enrichedInfo?.artworkURL,
-                    size: 54,
-                    cornerRadius: 11,
-                    placeholderPointSize: 20
+                    size: 44,
+                    cornerRadius: 8,
+                    placeholderPointSize: 17
                 )
                 .accessibilityLabel(model.text("アルバムジャケット", "Album artwork"))
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(player.currentTrack?.title ?? model.text("再生していません", "Not Playing")).fontWeight(.semibold).lineLimit(1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(player.currentTrack?.title ?? model.text("再生していません", "Not Playing"))
+                        .font(.headline)
+                        .lineLimit(1)
                     Text(player.currentTrack?.artist ?? "").font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer()
@@ -4743,23 +4945,47 @@ struct MiniPlayerView: View {
                 .buttonStyle(.borderless)
                 .help(model.text("通常画面に戻す", "Return to Full Player"))
             }
-            Slider(value: Binding(
-                get: { player.elapsed },
-                set: { value in player.seek(to: value) }
-            ), in: 0...max(1, player.duration))
-            HStack {
+
+            HStack(spacing: 6) {
+                Text(format(player.elapsed))
+                Slider(value: Binding(
+                    get: { player.elapsed },
+                    set: { value in player.seek(to: value) }
+                ), in: 0...max(1, player.duration))
+                .accessibilityLabel(model.text("再生位置", "Playback Position"))
+                Text(format(player.duration))
+            }
+            .font(.caption2)
+            .monospacedDigit()
+            .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
                 Button(action: player.previous) { Image(systemName: "backward.fill") }
-                Button(action: player.togglePlayPause) { Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill").font(.title) }.buttonStyle(.plain)
+                Button(action: player.togglePlayPause) {
+                    Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                        .font(.system(size: 27))
+                }
+                .buttonStyle(.plain)
                 Button(action: player.next) { Image(systemName: "forward.fill") }
                 Spacer()
                 Image(systemName: "speaker.fill").foregroundStyle(.secondary)
-                Slider(value: $player.volume, in: 0...1).frame(width: 90)
-            }.buttonStyle(.borderless)
+                Slider(value: $player.volume, in: 0...1)
+                    .frame(width: 82)
+                    .accessibilityLabel(model.text("音量", "Volume"))
+            }
+            .buttonStyle(.borderless)
         }
-        .padding(14)
-        .frame(width: 390, height: 180)
+        .padding(.horizontal, 12)
+        .padding(.top, 4)
+        .padding(.bottom, 8)
+        .frame(width: 390, height: 132)
         .background(.ultraThinMaterial)
         .onAppear { model.enrich(player.currentTrack) }
         .onChange(of: player.currentTrack) { _, track in model.enrich(track) }
+    }
+
+    private func format(_ seconds: Double) -> String {
+        guard seconds.isFinite else { return "0:00" }
+        return String(format: "%d:%02d", Int(seconds) / 60, Int(seconds) % 60)
     }
 }

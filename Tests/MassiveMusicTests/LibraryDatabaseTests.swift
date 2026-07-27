@@ -80,10 +80,9 @@ struct LibraryDatabaseTests {
         #expect(view.contains("Color.green"))
         #expect(view.contains("Color.orange"))
         #expect(view.contains("var iconColor: Color = Color(nsColor: .labelColor)"))
-        #expect(view.contains("model.text(\"メイン：接続中\", \"Main: Connected\")"))
-        #expect(view.contains("model.text(\"メイン：未接続\", \"Main: Disconnected\")"))
-        #expect(view.contains("iconColor: model.primaryStorageIsConnected ? .green : .orange"))
-        #expect(view.contains(".tint(model.primaryStorageIsConnected ? .green : .orange)"))
+        #expect(view.contains("model.text(\"メイン保管先：接続中\", \"Main Storage: Connected\")"))
+        #expect(view.contains("model.text(\"メイン保管先：未接続\", \"Main Storage: Disconnected\")"))
+        #expect(view.contains(".foregroundStyle(model.primaryStorageIsConnected ? Color.green : Color.orange)"))
     }
 
     @Test func disconnectedImportsUseTheCacheAndReconnectCopiesWithoutRemovingIt() throws {
@@ -150,14 +149,31 @@ struct LibraryDatabaseTests {
         let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
         let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
 
-        #expect(content.contains(".draggable(section.rawValue)"))
+        #expect(content.contains(".sidebarReorderDraggable(section.rawValue, enabled: isReorderingLibrary)"))
         #expect(content.contains(".dropDestination(for: String.self)"))
         #expect(content.contains("model.moveLibrarySection(source, before: section)"))
         #expect(content.contains("model.moveLibrarySection(section, by: -1)"))
         #expect(content.contains("model.moveLibrarySection(section, by: 1)"))
-        #expect(content.contains("model.text(\"並び替え\", \"Reorder\")"))
+        #expect(content.contains("model.text(\"並び替える\", \"Reorder Items\")"))
         #expect(model.contains("sidebar.libraryOrder"))
         #expect(model.contains("librarySectionOrder = order"))
+    }
+
+    @Test func libraryHeaderKeepsPersistentVisibilityControlsWhileToolsStaySimple() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+
+        #expect(content.contains("ForEach(model.orderedLibrarySections)"))
+        #expect(content.contains("model.toggleLibrarySectionVisibility(section)"))
+        #expect(content.contains("model.showAllLibrarySections"))
+        #expect(content.contains("model.text(\"表示項目\", \"Visible Items\")"))
+        #expect(content.contains("Text(model.text(\"ツール\", \"Tools\"))"))
+        #expect(content.contains("title: model.text(\"設定と管理\", \"Settings & Management\")"))
+        #expect(!content.contains("model.text(\"管理項目を整理\", \"Organize management items\")"))
+        #expect(model.contains("sidebar.libraryHidden"))
+        #expect(model.contains("@Published private(set) var hiddenLibrarySections"))
     }
 
     @Test func trackColumnsCanBeDragReorderedAndPersistTheirOrder() throws {
@@ -171,7 +187,7 @@ struct LibraryDatabaseTests {
         #expect(source.contains("moveTrackColumn(source, before: column)"))
     }
 
-    @Test func playlistsAppearAboveManageAndToolbarActionsMoveIntoManage() throws {
+    @Test func sidebarSeparatesNavigationPlaylistCommandsAndSettingsManagement() throws {
         let repository = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
@@ -180,19 +196,41 @@ struct LibraryDatabaseTests {
         let sidebarEnd = try #require(source.range(of: "    private var libraryContent: some View", range: sidebarStart.upperBound..<source.endIndex))
         let sidebar = String(source[sidebarStart.lowerBound..<sidebarEnd.lowerBound])
         let playlists = try #require(sidebar.range(of: "model.text(\"プレイリスト\", \"Playlists\")"))
-        let manage = try #require(sidebar.range(of: "model.text(\"管理\", \"Manage\")"))
+        let tools = try #require(sidebar.range(of: "model.text(\"ツール\", \"Tools\")"))
 
-        #expect(playlists.lowerBound < manage.lowerBound)
-        #expect(sidebar.contains("action: model.chooseAndScanFolder"))
-        #expect(sidebar.contains("action: model.importNewTracks"))
-        #expect(sidebar.contains("model.revealLocalCache"))
-        #expect(sidebar.contains("model.chooseStorageDestination"))
-        #expect(sidebar.contains("isMiniPlayer = true"))
-        #expect(sidebar.contains("showInspector.toggle()"))
+        #expect(playlists.lowerBound < tools.lowerBound)
+        #expect(!sidebar.contains("action: model.chooseAndScanFolder"))
+        #expect(!sidebar.contains("action: model.importNewTracks"))
+        #expect(!sidebar.contains("model.revealLocalCache"))
+        #expect(!sidebar.contains("model.chooseStorageDestination"))
+        #expect(!sidebar.contains("isMiniPlayer = true"))
+        #expect(!sidebar.contains("showInspector.toggle()"))
         #expect(sidebar.contains("action: model.importPlaylist"))
+        #expect(sidebar.contains("title: model.text(\"設定と管理\", \"Settings & Management\")"))
+        #expect(source.contains("Button(model.text(\"フォルダを追加…\", \"Add Folder…\"), action: model.chooseAndScanFolder)"))
+        #expect(source.contains("Button(model.text(\"曲を取り込む…\", \"Import Songs…\"), action: model.importNewTracks)"))
         #expect(!source.contains(".toolbar { toolbar }"))
         #expect(!source.contains("private var toolbar: some ToolbarContent"))
-        #expect(app.contains(".windowToolbarStyle(.unifiedCompact(showsTitle: false))"))
+        #expect(app.contains(".windowStyle(.hiddenTitleBar)"))
+    }
+
+    @Test func playlistRowsRenameInlineAndEmptyPlaylistStateDoesNotFlickerWhileReloading() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+
+        #expect(content.contains("@FocusState private var focusedPlaylistEditorID: Int64?"))
+        #expect(content.contains("TextField(model.text(\"プレイリスト名\", \"Playlist Name\"), text: $playlistNameDraft)"))
+        #expect(content.contains(".onTapGesture(count: 2) { beginEditingPlaylist(playlist) }"))
+        #expect(content.contains(".onSubmit { commitPlaylistRename(playlist.id) }"))
+        #expect(content.contains(".onExitCommand(perform: cancelPlaylistRename)"))
+        #expect(model.contains("func renamePlaylist(id: Int64, name: String) -> Bool"))
+        #expect(!model.contains("if selectedPlaylistID == id && section == .playlists"))
+
+        let emptyOverlay = content[content.range(of: ".overlay {\n            if model.section == .playlists")!.lowerBound..<content.range(of: "@ViewBuilder private func trackColumnCell")!.lowerBound]
+        #expect(emptyOverlay.contains("model.text(\"プレイリストに曲がありません\", \"No Songs in This Playlist\")"))
+        #expect(emptyOverlay.range(of: "if model.isLoading")!.lowerBound > emptyOverlay.range(of: "model.section == .playlists")!.lowerBound)
     }
 
     @Test func idleInspectorShowsDiscoveryLinksWithoutLyricsFailure() throws {
@@ -211,6 +249,21 @@ struct LibraryDatabaseTests {
         #expect(inspector.contains("model.trendingMusicURL"))
         #expect(inspector.contains("model.youtubeMusicURL"))
         #expect(inspector.contains("model.musicNewsURL"))
+    }
+
+    @Test func inspectorChordTabSearchesChordifyForTheCurrentTrack() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let inspectorStart = try #require(source.range(of: "private struct NowPlayingInspector: View"))
+        let inspectorEnd = try #require(source.range(of: "private struct CurrentTrackInfoEditorView: View", range: inspectorStart.upperBound..<source.endIndex))
+        let inspector = String(source[inspectorStart.lowerBound..<inspectorEnd.lowerBound])
+
+        #expect(inspector.contains("Text(model.text(\"コード\", \"Chords\")).tag(4)"))
+        #expect(inspector.contains("private var chordifySearchURL: URL?"))
+        #expect(inspector.contains("https://chordify.net/search/"))
+        #expect(inspector.contains("browserURL = chordifySearchURL"))
+        #expect(inspector.contains("if tab == 4 { tab = 0 }"))
     }
 
     @Test func trackSelectionDoesNotWaitForDoubleClickRecognition() throws {
@@ -255,7 +308,22 @@ struct LibraryDatabaseTests {
         #expect(source.contains("view.loadHTMLString(\"\", baseURL: nil)"))
     }
 
-    @Test func playlistAndManagementSidebarCustomizationPersists() throws {
+    @Test func embeddedBrowserProvidesBackAndForwardHistoryControls() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/InternalBrowserView.swift"))
+
+        #expect(source.contains("Image(systemName: \"chevron.backward\")"))
+        #expect(source.contains("Image(systemName: \"chevron.forward\")"))
+        #expect(source.contains("webView?.goBack()"))
+        #expect(source.contains("webView?.goForward()"))
+        #expect(source.contains("canGoBack = webView.canGoBack"))
+        #expect(source.contains("canGoForward = webView.canGoForward"))
+        #expect(source.contains(".disabled(!navigation.canGoBack)"))
+        #expect(source.contains(".disabled(!navigation.canGoForward)"))
+    }
+
+    @Test func playlistCustomizationPersistsWithoutCustomizableManagementActions() throws {
         let repository = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
@@ -264,12 +332,13 @@ struct LibraryDatabaseTests {
         #expect(model.contains("sidebar.playlistOrder"))
         #expect(model.contains("func movePlaylist(_ sourceID: Int64, before destinationID: Int64)"))
         #expect(model.contains("func movePlaylist(_ id: Int64, by offset: Int)"))
-        #expect(content.contains("@AppStorage(\"sidebar.managementOrder\")"))
-        #expect(content.contains("@AppStorage(\"sidebar.managementHidden\")"))
-        #expect(content.contains("toggleManagementItemVisibility"))
-        #expect(content.contains("moveManagementItem(source, before: item)"))
-        #expect(content.contains("playlist-order:"))
-        #expect(content.contains("management:"))
+        #expect(!content.contains("@AppStorage(\"sidebar.managementOrder\")"))
+        #expect(!content.contains("@AppStorage(\"sidebar.managementHidden\")"))
+        #expect(!content.contains("toggleManagementItemVisibility"))
+        #expect(!content.contains("ManagementSidebarItem"))
+        #expect(content.contains(".sidebarReorderDraggable(\"playlist-order:\\(playlist.id)\", enabled: isReorderingPlaylists)"))
+        #expect(content.contains("if enabled"))
+        #expect(!content.contains("management:"))
     }
 
     @Test func sidebarNavigationLabelsUseOneExplicitFontSize() throws {
@@ -281,6 +350,25 @@ struct LibraryDatabaseTests {
         let label = content[labelStart.lowerBound..<labelEnd.lowerBound]
 
         #expect(label.contains(".font(.body)"))
+    }
+
+    @Test func backgroundProgressLivesInCompactSidebarFooter() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let sidebarStart = try #require(source.range(of: "private var sidebar: some View"))
+        let libraryStart = try #require(source.range(of: "private var libraryContent: some View"))
+        let sidebar = source[sidebarStart.lowerBound..<libraryStart.lowerBound]
+        let libraryEnd = try #require(source.range(of: "private var headerTitle: String"))
+        let library = source[libraryStart.lowerBound..<libraryEnd.lowerBound]
+
+        #expect(sidebar.contains("sidebarBackgroundStatus"))
+        #expect(sidebar.contains("if model.isBulkAutoFilling"))
+        #expect(sidebar.contains("if model.isID3Migrating"))
+        #expect(!library.contains("if model.isBulkAutoFilling"))
+        #expect(!library.contains("if model.isID3Migrating"))
+        #expect(source.contains("private var sidebarBackgroundStatus: some View"))
+        #expect(source.contains("private func sidebarProgressStatus"))
     }
 
     @Test func inspectorDividerUsesStableGlobalDragCoordinates() throws {
@@ -318,15 +406,16 @@ struct LibraryDatabaseTests {
         #expect(model.contains("genre.autoRegisterHighConfidence"))
     }
 
-    @Test func storageAndDifferenceSidebarItemsOpenDistinctSettingsTabs() throws {
+    @Test func oneSettingsDestinationContainsStorageAndDifferenceTabs() throws {
         let repository = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
 
-        #expect(source.contains("model.text(\"保管先と取り込み\", \"Storage & Imports\")"))
-        #expect(source.contains("settingsTab = .storage"))
-        #expect(source.contains("settingsTab = .differences"))
+        #expect(source.contains("title: model.text(\"設定と管理\", \"Settings & Management\")"))
+        #expect(source.contains("settingsTab = .display"))
+        #expect(source.contains(".tag(SettingsTab.storage)"))
         #expect(source.contains(".tag(SettingsTab.differences)"))
+        #expect(!source.contains("model.text(\"SSDとの差分\", \"Storage Differences\")"))
     }
 
     @Test func metadataWidthNormalizationChangesOnlyRequestedWidthVariants() {
@@ -364,7 +453,7 @@ struct LibraryDatabaseTests {
         #expect(source.components(separatedBy: "SidebarNavigationLabel(").count - 1 >= 5)
     }
 
-    @Test func bottomPlayerSharesArtworkAndReservesDedicatedLayoutSpace() throws {
+    @Test func playerControlsLiveInsideInspectorAndCenterUsesFullHeight() throws {
         let repository = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -376,11 +465,92 @@ struct LibraryDatabaseTests {
 
         #expect(source.contains("private struct PlayerArtwork: View"))
         #expect(source.components(separatedBy: "PlayerArtwork(").count - 1 >= 2)
-        #expect(rootLayout.contains("VStack(spacing: 0)"))
         #expect(rootLayout.contains("NavigationSplitView"))
-        #expect(rootLayout.contains("PlayerBar(player: player, model: model)"))
-        #expect(rootLayout.contains(".fixedSize(horizontal: false, vertical: true)"))
-        #expect(!rootLayout.contains(".safeAreaInset(edge: .bottom"))
+        #expect(rootLayout.contains(".toolbar(removing: .sidebarToggle)"))
+        #expect(rootLayout.contains(".padding(.top, -max(0, geometry.safeAreaInsets.top - 16))"))
+        #expect(!rootLayout.contains("PlayerBar(player: player, model: model)"))
+        #expect(source.contains("InspectorPlayerControls(player: player, model: model, isMiniPlayer: $isMiniPlayer)"))
+        #expect(source.contains("private struct InspectorPlayerControls: View"))
+        let inspectorStart = try #require(source.range(of: "private struct NowPlayingInspector: View"))
+        let playerControls = try #require(source.range(of: "InspectorPlayerControls(player: player, model: model, isMiniPlayer: $isMiniPlayer)", range: inspectorStart.upperBound..<source.endIndex))
+        let inspectorContent = try #require(source.range(of: "Group {", range: playerControls.upperBound..<source.endIndex))
+        #expect(playerControls.lowerBound < inspectorContent.lowerBound)
+        #expect(source.contains(".font(.system(size: 34))"))
+        #expect(source.contains("Color.accentColor.opacity(0.18)"))
+        let controlsStart = try #require(source.range(of: "private struct InspectorPlayerControls: View"))
+        let controlsSource = String(source[controlsStart.lowerBound...])
+        let controlsBody = try #require(controlsSource.range(of: "VStack(spacing: 9)"))
+        let volumePlacement = try #require(controlsSource.range(of: "volumeButton", range: controlsBody.upperBound..<controlsSource.endIndex))
+        let transportRow = try #require(controlsSource.range(of: "HStack(spacing: 8)", range: controlsBody.upperBound..<controlsSource.endIndex))
+        #expect(volumePlacement.lowerBound < transportRow.lowerBound)
+        #expect(controlsSource.contains("Text(\"\\(Int((player.volume * 100).rounded()))%\")"))
+        let volumePopover = try #require(controlsSource.range(of: ".popover(isPresented: $isVolumePopoverPresented"))
+        let volumeSlider = try #require(controlsSource.range(of: "Slider(value: $player.volume", range: volumePopover.upperBound..<controlsSource.endIndex))
+        #expect(volumePopover.lowerBound < volumeSlider.lowerBound)
+        #expect(controlsSource.contains("private var volumeSymbol: String"))
+        #expect(controlsSource.contains("private var miniPlayerButton: some View"))
+        #expect(controlsSource.contains("Button { isMiniPlayer = true }"))
+        #expect(controlsSource.contains("Label(model.text(\"ミニ\", \"Mini\"), systemImage: \"pip\")"))
+        #expect(controlsSource.contains(".labelStyle(.iconOnly)"))
+        #expect(controlsSource.contains(".frame(width: 30, height: 28)"))
+        #expect(!controlsSource.contains(".padding(.trailing, 46)"))
+        #expect(source.contains(".padding(.top, showInspector ? 66 : 12)"))
+        #expect(source.contains("private var inspectorToggleButton: some View"))
+        #expect(source.contains("Image(systemName: \"sidebar.right\")"))
+        #expect(source.contains("model.text(\"右ペインを閉じる\", \"Hide Right Pane\")"))
+    }
+
+    @Test func inspectorPlayerExposesOneTrackAndAlbumOrPlaylistRepeat() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let playback = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/PlaybackController.swift"))
+
+        #expect(content.contains("model.text(\"1曲リピート\", \"Repeat One\")"))
+        #expect(content.contains("model.text(\"アルバム／プレイリストをリピート\", \"Repeat Album/Playlist\")"))
+        #expect(content.contains("private var repeatButton: some View"))
+        #expect(content.contains("repeatModeSymbol"))
+        #expect(playback.contains("let shouldWrap = repeatMode == .all"))
+        #expect(playback.contains("wraps: shouldWrap"))
+    }
+
+    @Test func practiceTabProvidesPitchPreservingSpeedsAndIndependentSemitoneShift() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let playback = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/PlaybackController.swift"))
+
+        #expect(content.contains("Text(model.text(\"練習\", \"Practice\")).tag(3)"))
+        #expect(content.contains("PlaybackController.supportedSpeeds"))
+        #expect(content.contains("player.setPitchSemitones(-1)"))
+        #expect(content.contains("player.setPitchSemitones(1)"))
+        #expect(content.contains("player.setSectionLoopStart"))
+        #expect(content.contains("player.setSectionLoopEnd"))
+        #expect(content.contains("player.toggleSectionLoop()"))
+        #expect(playback.contains("[0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95, 1.00]"))
+        #expect(playback.contains("item.audioTimePitchAlgorithm = .spectral"))
+        #expect(playback.contains("private let timePitch = AVAudioUnitTimePitch()"))
+        #expect(playback.contains("timePitch.pitch = Float(pitchSemitones * 100)"))
+        #expect(playback.contains("timePitch.rate = Float(playbackSpeed)"))
+        #expect(!playback.contains("if pitchSemitones != 0 { playbackSpeed = 1 }"))
+        let pitchSetter = playback[playback.range(of: "func setPitchSemitones")!.lowerBound..<playback.range(of: "var canSetSectionLoopEnd")!.lowerBound]
+        #expect(!pitchSetter.contains("playbackSpeed = 1"))
+        #expect(!pitchSetter.contains("UserDefaults.standard.set(1.0, forKey: \"playback.practice.speed\")"))
+        let speedSetter = playback[playback.range(of: "func setPlaybackSpeed")!.lowerBound..<playback.range(of: "func setPitchSemitones")!.lowerBound]
+        #expect(!speedSetter.contains("playbackSpeed = speed\n        pitchSemitones = 0"))
+        #expect(speedSetter.contains("if pitchSemitones == 0"))
+        #expect(speedSetter.contains("try startPitchPlayback(at: position, shouldPlay: wasPlaying)"))
+        #expect(playback.contains("func restartSectionLoopIfNeeded(at seconds: Double) -> Bool"))
+        #expect(playback.contains("handlePlaybackReachedEnd()"))
+        #expect(playback.contains("clearSectionLoop()"))
+        #expect(content.contains("PlaybackController.sectionLoopSlotCount"))
+        #expect(content.contains("player.selectSectionLoopSlot($0)"))
+        #expect(playback.contains("static let sectionLoopSlotCount = 3"))
+        #expect(playback.contains("playback.practice.sectionLoops.v1"))
+        #expect(playback.contains("JSONEncoder().encode(allLoops)"))
+        #expect(playback.contains("restoreSectionLoopPreset(for: track"))
     }
 
     @Test func miniPlayerUsesCurrentTrackArtworkAndRefreshesItWhenTheTrackChanges() throws {
@@ -399,6 +569,25 @@ struct LibraryDatabaseTests {
         #expect(!miniPlayerSource.contains("NSApplication.shared.applicationIconImage"))
     }
 
+    @Test func miniPlayerUsesCompactHierarchyWithoutExcessVerticalPadding() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let app = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/MassiveMusicApp.swift"))
+        let miniPlayerStart = try #require(content.range(of: "struct MiniPlayerView: View"))
+        let miniPlayerSource = String(content[miniPlayerStart.lowerBound...])
+
+        #expect(miniPlayerSource.contains("size: 44"))
+        #expect(miniPlayerSource.contains("Text(format(player.elapsed))"))
+        #expect(miniPlayerSource.contains("Text(format(player.duration))"))
+        #expect(miniPlayerSource.contains(".padding(.top, 4)"))
+        #expect(miniPlayerSource.contains(".frame(width: 390, height: 132)"))
+        #expect(app.contains("NSSize(width: 390, height: 132)"))
+        #expect(!miniPlayerSource.contains(".padding(14)"))
+    }
+
     @Test func miniPlayerDisablesNativeWindowResizingUntilExpanded() throws {
         let repository = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -408,6 +597,10 @@ struct LibraryDatabaseTests {
 
         #expect(source.contains("window.styleMask.remove(.resizable)"))
         #expect(source.contains("window.styleMask.insert(.resizable)"))
+        #expect(source.contains("MiniPlayerWindowSizeLock(size: NSSize(width: 390, height: 132))"))
+        #expect(source.contains("NSWindow.didResizeNotification"))
+        #expect(source.contains("window.contentMinSize = size"))
+        #expect(source.contains("window.contentMaxSize = size"))
         #expect(source.contains("window.standardWindowButton(.zoomButton)?.isEnabled = false"))
         #expect(source.contains("window.standardWindowButton(.zoomButton)?.isEnabled = true"))
     }
@@ -563,7 +756,8 @@ struct LibraryDatabaseTests {
 
         #expect(content.contains("player.playFromList(track, context: context)"))
         #expect(playback.contains("func playFromList(_ track: Track, context: TrackPlaybackContext)"))
-        #expect(playback.contains("database.adjacentTrack(in: context, from: cursor, direction: direction)"))
+        #expect(playback.contains("database.adjacentTrack("))
+        #expect(playback.contains("wraps: shouldWrap"))
     }
 
     @Test func backFromArtistOrRenamedAlbumRestoresThePreviousIndexAndPage() throws {
@@ -871,6 +1065,50 @@ struct LibraryDatabaseTests {
         #expect(Set(try context.database.cachedTracksBeyondLimit(0).map(\.0)) == Set([1, 2]))
     }
 
+    @Test func favoriteAndPlaylistTracksAreNeverAutomaticallyEvictedFromCache() throws {
+        let context = try TestContext()
+        _ = try context.database.insertSyntheticTracks(count: 4)
+        for trackID in 1...4 {
+            try context.database.recordCachedTrack(
+                trackID: Int64(trackID), path: "/tmp/protected-\(trackID).mp3", fileSize: 1,
+                pinned: trackID == 4
+            )
+        }
+        try context.database.setFavorite(trackID: 2, isFavorite: true)
+        let playlistID = try context.database.createPlaylist(name: "Protected")
+        _ = try context.database.addTracks([3], toPlaylist: playlistID)
+
+        #expect(try context.database.cachedTracksBeyondLimit(0).map(\.0) == [1])
+
+        try context.database.setFavorite(trackID: 2, isFavorite: false)
+        try context.database.removeTrack(3, fromPlaylist: playlistID)
+        #expect(Set(try context.database.cachedTracksBeyondLimit(0).map(\.0)) == Set([1, 2, 3]))
+    }
+
+    @Test func favoriteAndPlaylistTracksArePagedForAutomaticCaching() throws {
+        let context = try TestContext()
+        _ = try context.database.insertSyntheticTracks(count: 5)
+        try context.database.setFavorite(trackID: 2, isFavorite: true)
+        let playlistID = try context.database.createPlaylist(name: "Practice")
+        _ = try context.database.addTracks([4, 5], toPlaylist: playlistID)
+
+        let firstPage = try context.database.protectedTracksForCaching(afterID: 0, limit: 2)
+        let secondPage = try context.database.protectedTracksForCaching(
+            afterID: try #require(firstPage.last?.id),
+            limit: 2
+        )
+
+        #expect(firstPage.map(\.id) == [2, 4])
+        #expect(secondPage.map(\.id) == [5])
+
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+        #expect(model.contains("syncProtectedTracksToCacheIfNeeded()"))
+        #expect(model.contains("offlineCache.cacheForFavorite(track)"))
+        #expect(model.contains("protectedCacheIsReconciled = false"))
+    }
+
     @Test func cachedSongsArePagedAndExposeCurrentPageCacheStatus() throws {
         let context = try TestContext()
         _ = try context.database.insertSyntheticTracks(count: 4)
@@ -1065,6 +1303,37 @@ struct LibraryDatabaseTests {
 
         #expect(next?.title == "Three")
         #expect(previous?.title == "One")
+    }
+
+    @Test func repeatAllWrapsAnAlbumSequenceToItsFirstTrack() throws {
+        let context = try TestContext()
+        _ = try context.database.upsertTracks([
+            context.importedTrack(identity: "first", title: "First", artist: "Band", album: "Record", filename: "first.mp3", trackNumber: 1),
+            context.importedTrack(identity: "last", title: "Last", artist: "Band", album: "Record", filename: "last.mp3", trackNumber: 2),
+            context.importedTrack(identity: "other", title: "Other", artist: "Band", album: "Other", filename: "other.mp3", trackNumber: 1)
+        ], sessionID: 1)
+        let album = AlbumSummary(name: "Record", artist: "Band", trackCount: 2)
+        let ordered = try context.database.pageTracksForAlbum(album: album, sort: .trackNumber).tracks
+        let sequence = TrackPlaybackContext(
+            scope: .album(name: album.name, artist: album.artist),
+            sort: .trackNumber,
+            direction: .ascending
+        )
+
+        let wrapped = try context.database.adjacentTrack(
+            in: sequence,
+            from: try #require(ordered.last),
+            direction: 1,
+            wraps: true
+        )
+        let stopped = try context.database.adjacentTrack(
+            in: sequence,
+            from: try #require(ordered.last),
+            direction: 1
+        )
+
+        #expect(wrapped?.title == "First")
+        #expect(stopped == nil)
     }
 
     @Test func playbackSequenceCrossesPageBoundaryWithoutBuildingAGiantQueue() throws {
@@ -1462,7 +1731,11 @@ struct LibraryDatabaseTests {
         #expect(model.contains("await trackFiles.sourceFileIsAvailable(for: track)"))
         #expect(model.contains("await trackFiles.isID3v22Tag(for: track)"))
         #expect(model.contains("purpose: .aiGenre(genre)"))
+        #expect(model.contains("updateMetadataAfterID3RepairConfirmation"))
+        #expect(model.contains("where track.format.lowercased() == \"mp3\" && error.isRepairableID3Damage"))
         #expect(services.contains("func sourceFileIsAvailable(for track: Track) -> Bool"))
+        #expect(services.contains("func updateMetadataAfterID3RepairConfirmation"))
+        #expect(services.contains("AudioMetadataWriter.isID3v22Tag(at: sourceURL)"))
         #expect(content.contains("ライブラリへ登録"))
         #expect(content.contains("model.metadataRepairDialogTitle"))
     }

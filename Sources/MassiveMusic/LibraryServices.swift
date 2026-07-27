@@ -21,11 +21,61 @@ actor TrackFileCoordinator {
         authorizedRoot: SecurityScopedRoot? = nil,
         repairingCorruptID3: Bool = false
     ) async throws {
+        try await updateMetadata(
+            track: track,
+            edit: edit,
+            authorizedRoot: authorizedRoot,
+            repairMode: repairingCorruptID3 ? .forced : .disabled
+        )
+    }
+
+    /// Performs the write only after re-reading the tag version inside this actor.
+    /// This keeps a background migration and a user-confirmed edit from racing:
+    /// an already migrated v2.3 file takes the normal preservation path, while a
+    /// still-legacy or damaged tag is rebuilt once and then written.
+    func updateMetadataAfterID3RepairConfirmation(
+        track: Track,
+        edit: TrackMetadataEdit,
+        authorizedRoot: SecurityScopedRoot? = nil
+    ) async throws {
+        try await updateMetadata(
+            track: track,
+            edit: edit,
+            authorizedRoot: authorizedRoot,
+            repairMode: .ifRequired
+        )
+    }
+
+    private enum ID3RepairMode: Equatable {
+        case disabled
+        case forced
+        case ifRequired
+    }
+
+    private func updateMetadata(
+        track: Track,
+        edit: TrackMetadataEdit,
+        authorizedRoot: SecurityScopedRoot?,
+        repairMode: ID3RepairMode
+    ) async throws {
         let edit = edit.normalizingLeadingTitleSpaces()
         let (scope, sourceURL) = try scopedSource(for: track, authorizedRoot: authorizedRoot)
         try scope.withAccess { _ in
             guard fileManager.fileExists(atPath: sourceURL.path) else { throw MassiveMusicError.trackUnavailable }
-            try AudioMetadataWriter.write(edit, to: sourceURL, repairingCorruptID3: repairingCorruptID3)
+            let shouldRepair = switch repairMode {
+            case .disabled: false
+            case .forced: true
+            case .ifRequired: AudioMetadataWriter.isID3v22Tag(at: sourceURL)
+            }
+            do {
+                try AudioMetadataWriter.write(edit, to: sourceURL, repairingCorruptID3: shouldRepair)
+            } catch let error as MassiveMusicError
+                where repairMode == .ifRequired && !shouldRepair && error.isRepairableID3Damage {
+                // The version probe may find a newer but damaged ID3 tag. The
+                // user already confirmed repair, so retry exactly once through
+                // the safe working-copy/verification path.
+                try AudioMetadataWriter.write(edit, to: sourceURL, repairingCorruptID3: true)
+            }
             let values = try sourceURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
             try database.updateTrackMetadata(
                 id: track.id,

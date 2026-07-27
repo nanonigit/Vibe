@@ -111,6 +111,7 @@ private struct BrowseReturnState {
 final class LibraryViewModel: ObservableObject {
     @Published var section: LibrarySection = .tracks
     @Published private(set) var librarySectionOrder: [LibrarySection] = []
+    @Published private(set) var hiddenLibrarySections: Set<LibrarySection> = []
     private var playlistOrder: [Int64] = []
     @Published var sort: TrackSort = .title
     @Published var sortDirection: SortDirection = .ascending
@@ -143,11 +144,15 @@ final class LibraryViewModel: ObservableObject {
         )
     }
 
-    var visibleLibrarySections: [LibrarySection] {
+    var orderedLibrarySections: [LibrarySection] {
         let reorderable = LibrarySection.allCases.filter(Self.isReorderableLibrarySection)
-        let ordered = librarySectionOrder + reorderable.filter { !librarySectionOrder.contains($0) }
-        return ordered.filter { section in
-            switch section {
+        return librarySectionOrder + reorderable.filter { !librarySectionOrder.contains($0) }
+    }
+
+    var visibleLibrarySections: [LibrarySection] {
+        orderedLibrarySections.filter { section in
+            guard !hiddenLibrarySections.contains(section) else { return false }
+            return switch section {
             case .playlists, .diagnostics, .activityLog:
                 false
             case .cache:
@@ -248,6 +253,8 @@ final class LibraryViewModel: ObservableObject {
     private var headerStorageScope: String?
     private var isSyncingOffline = false
     private var isSyncingPendingMetadata = false
+    private var isSyncingProtectedCache = false
+    private var protectedCacheIsReconciled = false
     private var browseReturnStack: [BrowseReturnState] = []
 
     init(database: LibraryDatabase, scanner: LibraryScanner) {
@@ -275,6 +282,9 @@ final class LibraryViewModel: ObservableObject {
         }
         librarySectionOrder = Self.decodeLibrarySectionOrder(
             (try? database.setting(forKey: "sidebar.libraryOrder"))
+        )
+        hiddenLibrarySections = Self.decodeLibrarySectionVisibility(
+            (try? database.setting(forKey: "sidebar.libraryHidden"))
         )
         playlistOrder = Self.decodePlaylistOrder(
             (try? database.setting(forKey: "sidebar.playlistOrder"))
@@ -518,6 +528,36 @@ final class LibraryViewModel: ObservableObject {
         saveLibrarySectionOrder(order)
     }
 
+    func toggleLibrarySectionVisibility(_ section: LibrarySection) {
+        guard Self.isReorderableLibrarySection(section) else { return }
+        var hidden = hiddenLibrarySections
+        if hidden.contains(section) {
+            hidden.remove(section)
+        } else {
+            let remaining = orderedLibrarySections.filter {
+                $0 != section && !hidden.contains($0) && ($0 != .cache || isStorageExternal)
+            }
+            guard !remaining.isEmpty else { return }
+            hidden.insert(section)
+        }
+        saveHiddenLibrarySections(hidden)
+        if hidden.contains(self.section), let replacement = visibleLibrarySections.first {
+            changeSection(replacement)
+        }
+    }
+
+    func showAllLibrarySections() {
+        saveHiddenLibrarySections([])
+    }
+
+    private func saveHiddenLibrarySections(_ hidden: Set<LibrarySection>) {
+        hiddenLibrarySections = hidden
+        do {
+            let stored = LibrarySection.allCases.filter(hidden.contains).map(\.rawValue).joined(separator: "\n")
+            try database.setSetting(stored, forKey: "sidebar.libraryHidden")
+        } catch { errorMessage = error.localizedDescription }
+    }
+
     private func saveLibrarySectionOrder(_ order: [LibrarySection]) {
         librarySectionOrder = order
         do {
@@ -539,6 +579,15 @@ final class LibraryViewModel: ObservableObject {
         var seen = Set<LibrarySection>()
         let decoded = stored.split(separator: "\n").compactMap { LibrarySection(rawValue: String($0)) }
         return decoded.filter { isReorderableLibrarySection($0) && seen.insert($0).inserted }
+    }
+
+    private static func decodeLibrarySectionVisibility(_ stored: String?) -> Set<LibrarySection> {
+        Set((stored ?? "").split(separator: "\n").compactMap {
+            guard let section = LibrarySection(rawValue: String($0)), isReorderableLibrarySection(section) else {
+                return nil
+            }
+            return section
+        })
     }
 
     func movePlaylist(_ sourceID: Int64, before destinationID: Int64) {
@@ -644,10 +693,7 @@ final class LibraryViewModel: ObservableObject {
     }
 
     func selectPlaylist(_ id: Int64) {
-        if selectedPlaylistID == id && section == .playlists {
-            renameSelectedPlaylist()
-            return
-        }
+        guard selectedPlaylistID != id || section != .playlists else { return }
         browseReturnStack.removeAll()
         selectedIndexToken = nil
         section = .playlists
@@ -1683,24 +1729,29 @@ final class LibraryViewModel: ObservableObject {
         }
     }
 
-    func setFavorite(_ track: Track, isFavorite: Bool, cacheLocally: Bool = false) {
+    func setFavorite(_ track: Track, isFavorite: Bool, cacheLocally _: Bool = true) {
         Task {
             do {
                 try await Task.detached {
                     try self.database.setFavorite(trackID: track.id, isFavorite: isFavorite)
                 }.value
-                do {
-                    if isFavorite, cacheLocally {
+                if isFavorite {
+                    do {
                         _ = try await offlineCache.cacheForFavorite(track)
-                    } else if !isFavorite {
-                        try await offlineCache.unpin(trackID: track.id)
+                        cachedTrackIDs.insert(track.id)
+                    } catch {
+                        // Keep the favorite and retry automatically when its
+                        // storage drive is available again.
                     }
-                } catch {
-                    loadCurrentPage(reset: false)
-                    throw error
+                } else {
+                    try await offlineCache.unpin(trackID: track.id)
                 }
                 loadCurrentPage(reset: false)
                 refreshSidebarCounts()
+                if isFavorite {
+                    protectedCacheIsReconciled = false
+                    syncProtectedTracksToCacheIfNeeded()
+                }
             } catch { errorMessage = error.localizedDescription }
         }
     }
@@ -1717,9 +1768,22 @@ final class LibraryViewModel: ObservableObject {
                     for trackID in trackIDs {
                         try await offlineCache.unpin(trackID: trackID)
                     }
+                } else {
+                    for track in tracks {
+                        do {
+                            _ = try await offlineCache.cacheForFavorite(track)
+                            cachedTrackIDs.insert(track.id)
+                        } catch {
+                            continue
+                        }
+                    }
                 }
                 loadCurrentPage(reset: false)
                 refreshSidebarCounts()
+                if isFavorite {
+                    protectedCacheIsReconciled = false
+                    syncProtectedTracksToCacheIfNeeded()
+                }
             } catch { errorMessage = error.localizedDescription }
         }
     }
@@ -1884,11 +1948,10 @@ final class LibraryViewModel: ObservableObject {
         Task {
             do {
                 try await runFileOperationWithAuthorizationRetry(for: request.track) {
-                    try await self.trackFiles.updateMetadata(
+                    try await self.trackFiles.updateMetadataAfterID3RepairConfirmation(
                         track: request.track,
                         edit: request.edit,
-                        authorizedRoot: $0,
-                        repairingCorruptID3: true
+                        authorizedRoot: $0
                     )
                 }
                 loadCurrentPage(reset: false)
@@ -1934,8 +1997,21 @@ final class LibraryViewModel: ObservableObject {
                 )
                 do {
                     let edit = changes.applying(to: track, offset: index)
-                    try await runFileOperationWithAuthorizationRetry(for: track) {
-                        try await self.trackFiles.updateMetadata(track: track, edit: edit, authorizedRoot: $0)
+                    do {
+                        try await runFileOperationWithAuthorizationRetry(for: track) {
+                            try await self.trackFiles.updateMetadata(track: track, edit: edit, authorizedRoot: $0)
+                        }
+                    } catch let error as MassiveMusicError
+                        where track.format.lowercased() == "mp3" && error.isRepairableID3Damage
+                            && autoMigrateID3v22ToV23 {
+                        // The migration setting is the user's standing consent.
+                        // Finish conversion and this edit as one serial operation;
+                        // do not count the expected first v2.2 rejection as a failure.
+                        try await runFileOperationWithAuthorizationRetry(for: track) {
+                            try await self.trackFiles.updateMetadataAfterID3RepairConfirmation(
+                                track: track, edit: edit, authorizedRoot: $0
+                            )
+                        }
                     }
                     succeeded += 1
                 } catch is CancellationError {
@@ -2547,6 +2623,8 @@ final class LibraryViewModel: ObservableObject {
                 
                 if playlistID != nil, !importedTrackIDs.isEmpty {
                     refreshPlaylists()
+                    protectedCacheIsReconciled = false
+                    syncProtectedTracksToCacheIfNeeded()
                 }
                 
                 refreshStorage()
@@ -3003,10 +3081,15 @@ final class LibraryViewModel: ObservableObject {
         field.frame = NSRect(x: 0, y: 0, width: 320, height: 24)
         alert.accessoryView = field
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        _ = renamePlaylist(id: id, name: field.stringValue)
+    }
+
+    @discardableResult
+    func renamePlaylist(id: Int64, name: String) -> Bool {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else {
             errorMessage = text("プレイリスト名を入力してください。", "Enter a playlist name.")
-            return
+            return false
         }
         Task {
             do {
@@ -3014,6 +3097,7 @@ final class LibraryViewModel: ObservableObject {
                 refreshPlaylists()
             } catch { errorMessage = error.localizedDescription }
         }
+        return true
     }
 
     func addSelectionToPlaylist(_ playlistID: Int64) {
@@ -3031,6 +3115,8 @@ final class LibraryViewModel: ObservableObject {
                 if selectedPlaylistID == playlistID {
                     loadCurrentPage(reset: false)
                 }
+                protectedCacheIsReconciled = false
+                syncProtectedTracksToCacheIfNeeded()
             } catch { errorMessage = error.localizedDescription }
         }
     }
@@ -3233,6 +3319,11 @@ final class LibraryViewModel: ObservableObject {
         if !isStorageExternal, section == .cache {
             changeSection(.tracks)
         }
+        if primaryStorageIsConnected {
+            syncProtectedTracksToCacheIfNeeded()
+        } else {
+            protectedCacheIsReconciled = false
+        }
     }
 
     private func refreshDifferenceSummary() {
@@ -3285,6 +3376,9 @@ final class LibraryViewModel: ObservableObject {
                 if primaryStorageIsConnected {
                     syncOfflineImportsIfNeeded()
                     syncPendingMetadataEditsIfNeeded()
+                    syncProtectedTracksToCacheIfNeeded()
+                } else {
+                    protectedCacheIsReconciled = false
                 }
                 if hadMissingRoots, !hasMissingRoots {
                     startLeadingTitleSpaceCleanup()
@@ -3294,6 +3388,46 @@ final class LibraryViewModel: ObservableObject {
                 driveMessage = error.localizedDescription
             }
             try? await Task.sleep(for: .seconds(3))
+        }
+    }
+
+    private func syncProtectedTracksToCacheIfNeeded() {
+        guard cacheEnabled,
+              isStorageExternal,
+              primaryStorageIsConnected,
+              !protectedCacheIsReconciled,
+              !isSyncingProtectedCache else { return }
+        isSyncingProtectedCache = true
+        Task {
+            defer { isSyncingProtectedCache = false }
+            var cursor: Int64 = 0
+            while !Task.isCancelled, primaryStorageIsConnected {
+                do {
+                    let requestedCursor = cursor
+                    let page = try await Task.detached(priority: .utility) {
+                        try self.database.protectedTracksForCaching(afterID: requestedCursor, limit: 50)
+                    }.value
+                    guard !page.isEmpty else {
+                        protectedCacheIsReconciled = true
+                        if section == .cache { loadCurrentPage(reset: true) }
+                        return
+                    }
+                    for track in page {
+                        guard primaryStorageIsConnected else { return }
+                        do {
+                            _ = try await offlineCache.cacheForFavorite(track)
+                            cachedTrackIDs.insert(track.id)
+                        } catch {
+                            // A missing individual file must not prevent the rest of a
+                            // favorite or playlist from becoming available offline.
+                            continue
+                        }
+                    }
+                    cursor = page.last?.id ?? cursor
+                } catch {
+                    return
+                }
+            }
         }
     }
 

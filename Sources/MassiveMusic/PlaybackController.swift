@@ -8,8 +8,8 @@ import MassiveMusicCore
 final class PlaybackController: ObservableObject {
     enum RepeatMode: String, CaseIterable {
         case off = "リピートなし"
-        case all = "全体リピート"
         case one = "1曲リピート"
+        case all = "全体リピート"
     }
 
     @Published private(set) var currentTrack: Track?
@@ -17,7 +17,11 @@ final class PlaybackController: ObservableObject {
     @Published private(set) var elapsed: Double = 0
     @Published private(set) var duration: Double = 0
     @Published var volume: Double = 0.8 {
-        didSet { player.volume = Float(max(0, min(1, volume))) }
+        didSet {
+            let normalizedVolume = Float(max(0, min(1, volume)))
+            player.volume = normalizedVolume
+            audioNode.volume = normalizedVolume
+        }
     }
     @Published var repeatMode: RepeatMode = .off
     @Published var shuffleEnabled = false
@@ -26,40 +30,78 @@ final class PlaybackController: ObservableObject {
     @Published private(set) var upNextTracks: [Track] = []
     @Published private(set) var queueTotalCount = 0
     @Published private(set) var queueOffset = 0
+    @Published private(set) var playbackSpeed: Double
+    @Published private(set) var pitchSemitones: Int
+    @Published private(set) var sectionLoopStart: Double?
+    @Published private(set) var sectionLoopEnd: Double?
+    @Published private(set) var isSectionLoopEnabled = false
+    @Published private(set) var activeSectionLoopSlot = 0
 
     let queuePageSize = 100
+    static let sectionLoopSlotCount = 3
 
     private let database: LibraryDatabase
     private let offlineCache: OfflineCacheManager
     private let player = AVPlayer()
+    private let audioEngine = AVAudioEngine()
+    private let audioNode = AVAudioPlayerNode()
+    private let timePitch = AVAudioUnitTimePitch()
     private var periodicObserver: Any?
+    private var practiceTimer: AnyCancellable?
     private var endObserver: NSObjectProtocol?
     private var activeScopedURL: URL?
     private var activeScopeStarted = false
+    private var activePlaybackURL: URL?
+    private var activeAudioFile: AVAudioFile?
+    private var engineStartFrame: AVAudioFramePosition = 0
+    private var engineGeneration = UUID()
     private var loadToken = UUID()
     private var shuffleSeed = Int64.random(in: 1...Int64.max)
     private var sequenceContext: TrackPlaybackContext?
     private var sequenceCursor: Track?
+    private let sectionLoopStorageKey = "playback.practice.sectionLoops.v1"
+
+    private struct StoredSectionLoop: Codable {
+        let start: Double
+        let end: Double?
+    }
 
     init(database: LibraryDatabase) {
         self.database = database
         offlineCache = OfflineCacheManager(database: database)
+        let savedSpeed = UserDefaults.standard.double(forKey: "playback.practice.speed")
+        playbackSpeed = Self.supportedSpeeds.contains(savedSpeed) ? savedSpeed : 1
+        let savedPitch = UserDefaults.standard.integer(forKey: "playback.practice.pitch")
+        pitchSemitones = (-1...1).contains(savedPitch) ? savedPitch : 0
         player.volume = Float(volume)
+        audioNode.volume = Float(volume)
+        audioEngine.attach(audioNode)
+        audioEngine.attach(timePitch)
+        audioEngine.connect(audioNode, to: timePitch, format: nil)
+        audioEngine.connect(timePitch, to: audioEngine.mainMixerNode, format: nil)
         periodicObserver = player.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 0.25, preferredTimescale: 600),
             queue: .main
         ) { [weak self] time in
             MainActor.assumeIsolated {
-                self?.elapsed = time.seconds.isFinite ? max(0, time.seconds) : 0
-                self?.isPlaying = (self?.player.rate ?? 0) > 0
+                guard let self, self.pitchSemitones == 0 else { return }
+                let seconds = time.seconds.isFinite ? max(0, time.seconds) : 0
+                if self.restartSectionLoopIfNeeded(at: seconds) { return }
+                self.elapsed = seconds
+                self.isPlaying = self.player.rate > 0
             }
         }
+        practiceTimer = Timer.publish(every: 0.1, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                MainActor.assumeIsolated { self?.updateEnginePlaybackState() }
+            }
         endObserver = NotificationCenter.default.addObserver(
             forName: AVPlayerItem.didPlayToEndTimeNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.didFinishTrack() }
+            Task { @MainActor in self?.handlePlaybackReachedEnd() }
         }
         configureRemoteCommands()
         refreshQueue()
@@ -80,6 +122,8 @@ final class PlaybackController: ObservableObject {
     private func startPlayback(_ track: Track) {
         let token = UUID()
         loadToken = token
+        resetSectionLoopState()
+        stopPitchPlayback()
         Task {
             var resolvedSourceURL: URL?
             do {
@@ -108,13 +152,26 @@ final class PlaybackController: ObservableObject {
                     url = try await offlineCache.playableURL(for: track, sourceURL: sourceURL)
                 }
                 let item = AVPlayerItem(url: url)
+                item.audioTimePitchAlgorithm = .spectral
                 unavailableTrackIDs.remove(track.id)
                 player.replaceCurrentItem(with: item)
+                activePlaybackURL = url
                 currentTrack = track
                 elapsed = 0
                 duration = track.duration
+                restoreSectionLoopPreset(for: track, enableIfComplete: false)
                 errorMessage = nil
-                player.play()
+                if pitchSemitones == 0 {
+                    playAVPlayer()
+                } else {
+                    do {
+                        try startPitchPlayback(at: 0, shouldPlay: true)
+                    } catch {
+                        pitchSemitones = 0
+                        UserDefaults.standard.set(0, forKey: "playback.practice.pitch")
+                        playAVPlayer()
+                    }
+                }
                 try? await Task.detached { try self.database.markPlayed(trackID: track.id) }.value
                 updateNowPlaying()
             } catch {
@@ -161,10 +218,165 @@ final class PlaybackController: ObservableObject {
     }
 
     func togglePlayPause() {
-        guard player.currentItem != nil else { return }
-        if player.rate > 0 { player.pause() } else { player.play() }
-        isPlaying = player.rate > 0
+        guard currentTrack != nil else { return }
+        if isPlaying { pauseActivePlayer() } else { playActivePlayer() }
         updateNowPlaying()
+    }
+
+    static let supportedSpeeds: [Double] = [0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95, 1.00]
+
+    func setPlaybackSpeed(_ speed: Double) {
+        guard Self.supportedSpeeds.contains(speed) else { return }
+        let wasPlaying = isPlaying
+        let position = elapsed
+        playbackSpeed = speed
+        UserDefaults.standard.set(speed, forKey: "playback.practice.speed")
+        guard currentTrack != nil else { return }
+        if pitchSemitones == 0 {
+            stopPitchPlayback()
+            guard player.currentItem != nil else { return }
+            seekAVPlayer(to: position)
+            if wasPlaying { playAVPlayer() }
+        } else {
+            do {
+                try startPitchPlayback(at: position, shouldPlay: wasPlaying)
+            } catch {
+                pitchSemitones = 0
+                UserDefaults.standard.set(0, forKey: "playback.practice.pitch")
+                errorMessage = error.localizedDescription
+                seekAVPlayer(to: position)
+                if wasPlaying { playAVPlayer() }
+            }
+        }
+        updateNowPlaying()
+    }
+
+    func setPitchSemitones(_ semitones: Int) {
+        guard (-1...1).contains(semitones) else { return }
+        let wasPlaying = isPlaying
+        let position = elapsed
+        pitchSemitones = semitones
+        UserDefaults.standard.set(semitones, forKey: "playback.practice.pitch")
+        guard currentTrack != nil else { return }
+        if semitones == 0 {
+            stopPitchPlayback()
+            seekAVPlayer(to: position)
+            if wasPlaying { playAVPlayer() }
+        } else {
+            player.pause()
+            do {
+                try startPitchPlayback(at: position, shouldPlay: wasPlaying)
+            } catch {
+                pitchSemitones = 0
+                UserDefaults.standard.set(0, forKey: "playback.practice.pitch")
+                errorMessage = error.localizedDescription
+                seekAVPlayer(to: position)
+                if wasPlaying { playAVPlayer() }
+            }
+        }
+        updateNowPlaying()
+    }
+
+    var canSetSectionLoopEnd: Bool {
+        guard let sectionLoopStart else { return false }
+        return elapsed >= sectionLoopStart + 0.5
+    }
+
+    func setSectionLoopStart() {
+        guard currentTrack != nil else { return }
+        sectionLoopStart = max(0, min(duration, elapsed))
+        sectionLoopEnd = nil
+        isSectionLoopEnabled = false
+        persistActiveSectionLoop()
+    }
+
+    func setSectionLoopEnd() {
+        guard let start = sectionLoopStart, canSetSectionLoopEnd else { return }
+        sectionLoopEnd = max(start + 0.5, min(duration, elapsed))
+        isSectionLoopEnabled = true
+        persistActiveSectionLoop()
+        seek(to: start)
+    }
+
+    func toggleSectionLoop() {
+        guard let start = sectionLoopStart,
+              let end = sectionLoopEnd,
+              end > start else { return }
+        isSectionLoopEnabled.toggle()
+        if isSectionLoopEnabled, !(start..<end).contains(elapsed) {
+            seek(to: start)
+        }
+    }
+
+    func clearSectionLoop() {
+        resetSectionLoopState()
+        persistActiveSectionLoop()
+    }
+
+    func selectSectionLoopSlot(_ slot: Int) {
+        guard (0..<Self.sectionLoopSlotCount).contains(slot), slot != activeSectionLoopSlot else { return }
+        let wasEnabled = isSectionLoopEnabled
+        activeSectionLoopSlot = slot
+        if let currentTrack {
+            restoreSectionLoopPreset(for: currentTrack, enableIfComplete: wasEnabled)
+        } else {
+            resetSectionLoopState()
+        }
+    }
+
+    func sectionLoopIsConfigured(at slot: Int) -> Bool {
+        guard let currentTrack,
+              (0..<Self.sectionLoopSlotCount).contains(slot),
+              let trackLoops = storedSectionLoops()[sectionLoopTrackKey(currentTrack)],
+              slot < trackLoops.count else { return false }
+        return trackLoops[slot]?.end != nil
+    }
+
+    private func resetSectionLoopState() {
+        sectionLoopStart = nil
+        sectionLoopEnd = nil
+        isSectionLoopEnabled = false
+    }
+
+    private func restoreSectionLoopPreset(for track: Track, enableIfComplete: Bool) {
+        let trackLoops = storedSectionLoops()[sectionLoopTrackKey(track)] ?? []
+        let preset = activeSectionLoopSlot < trackLoops.count ? trackLoops[activeSectionLoopSlot] : nil
+        sectionLoopStart = preset?.start
+        sectionLoopEnd = preset?.end
+        isSectionLoopEnabled = enableIfComplete && preset?.end != nil
+    }
+
+    private func persistActiveSectionLoop() {
+        guard let currentTrack else { return }
+        var allLoops = storedSectionLoops()
+        let key = sectionLoopTrackKey(currentTrack)
+        var trackLoops = allLoops[key] ?? Array(repeating: nil, count: Self.sectionLoopSlotCount)
+        if trackLoops.count < Self.sectionLoopSlotCount {
+            trackLoops.append(contentsOf: Array(repeating: nil, count: Self.sectionLoopSlotCount - trackLoops.count))
+        }
+        trackLoops[activeSectionLoopSlot] = sectionLoopStart.map {
+            StoredSectionLoop(start: $0, end: sectionLoopEnd)
+        }
+        if trackLoops.allSatisfy({ $0 == nil }) {
+            allLoops.removeValue(forKey: key)
+        } else {
+            allLoops[key] = trackLoops
+        }
+        if let data = try? JSONEncoder().encode(allLoops) {
+            UserDefaults.standard.set(data, forKey: sectionLoopStorageKey)
+        }
+    }
+
+    private func storedSectionLoops() -> [String: [StoredSectionLoop?]] {
+        guard let data = UserDefaults.standard.data(forKey: sectionLoopStorageKey),
+              let loops = try? JSONDecoder().decode([String: [StoredSectionLoop?]].self, from: data) else {
+            return [:]
+        }
+        return loops
+    }
+
+    private func sectionLoopTrackKey(_ track: Track) -> String {
+        "\(track.rootID):\(track.relativePath)"
     }
 
     func dismissError() { errorMessage = nil }
@@ -175,8 +387,18 @@ final class PlaybackController: ObservableObject {
     }
 
     func seek(to seconds: Double) {
-        let target = CMTime(seconds: max(0, min(duration, seconds)), preferredTimescale: 600)
-        player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
+        let target = max(0, min(duration, seconds))
+        if pitchSemitones == 0 {
+            seekAVPlayer(to: target)
+        } else {
+            let wasPlaying = isPlaying
+            do {
+                try startPitchPlayback(at: target, shouldPlay: wasPlaying)
+                elapsed = target
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
     }
 
     func next() {
@@ -202,6 +424,7 @@ final class PlaybackController: ObservableObject {
         let seed = shuffleSeed
         let context = sequenceContext
         let cursor = sequenceCursor ?? currentTrack
+        let shouldWrap = repeatMode == .all
         Task {
             do {
                 let nextTrack = try await Task.detached(priority: .userInitiated) {
@@ -213,7 +436,12 @@ final class PlaybackController: ObservableObject {
                         ).first ?? self.database.adjacentTrack(to: currentTrack.id, direction: direction)
                     }
                     if let context {
-                        return try self.database.adjacentTrack(in: context, from: cursor, direction: direction)
+                        return try self.database.adjacentTrack(
+                            in: context,
+                            from: cursor,
+                            direction: direction,
+                            wraps: shouldWrap
+                        )
                     }
                     return try self.database.adjacentTrack(to: currentTrack.id, direction: direction)
                 }.value
@@ -221,7 +449,7 @@ final class PlaybackController: ObservableObject {
                     if context != nil { sequenceCursor = nextTrack }
                     startPlayback(nextTrack)
                 }
-                else if repeatMode == .all { seek(to: 0); player.play() }
+                else if repeatMode == .all { seek(to: 0); playActivePlayer() }
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -231,7 +459,7 @@ final class PlaybackController: ObservableObject {
     private func didFinishTrack() {
         if repeatMode == .one {
             seek(to: 0)
-            player.play()
+            playActivePlayer()
         } else {
             next()
         }
@@ -316,14 +544,125 @@ final class PlaybackController: ObservableObject {
         activeScopedURL = nil
     }
 
+    private func playAVPlayer() {
+        player.playImmediately(atRate: Float(playbackSpeed))
+        isPlaying = true
+    }
+
+    private func seekAVPlayer(to seconds: Double) {
+        let target = CMTime(seconds: max(0, min(duration, seconds)), preferredTimescale: 600)
+        player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
+        elapsed = target.seconds
+    }
+
+    private func playActivePlayer() {
+        if pitchSemitones == 0 {
+            playAVPlayer()
+        } else {
+            guard activeAudioFile != nil else { return }
+            do {
+                if !audioEngine.isRunning { try audioEngine.start() }
+                audioNode.play()
+                isPlaying = true
+            } catch {
+                errorMessage = error.localizedDescription
+                isPlaying = false
+            }
+        }
+    }
+
+    private func pauseActivePlayer() {
+        if pitchSemitones == 0 {
+            player.pause()
+        } else {
+            audioNode.pause()
+        }
+        isPlaying = false
+    }
+
+    private func startPitchPlayback(at seconds: Double, shouldPlay: Bool) throws {
+        guard let activePlaybackURL else { throw CocoaError(.fileNoSuchFile) }
+        engineGeneration = UUID()
+        let generation = engineGeneration
+        audioNode.stop()
+        let file = try AVAudioFile(forReading: activePlaybackURL)
+        activeAudioFile = file
+        let sampleRate = file.processingFormat.sampleRate
+        let requestedFrame = AVAudioFramePosition(max(0, seconds) * sampleRate)
+        let startFrame = min(file.length, requestedFrame)
+        engineStartFrame = startFrame
+        let remainingFrames = min(Int64(UInt32.max), max(0, file.length - startFrame))
+        guard remainingFrames > 0 else {
+            handlePlaybackReachedEnd()
+            return
+        }
+        timePitch.rate = Float(playbackSpeed)
+        timePitch.pitch = Float(pitchSemitones * 100)
+        audioNode.scheduleSegment(
+            file,
+            startingFrame: startFrame,
+            frameCount: AVAudioFrameCount(remainingFrames),
+            at: nil,
+            completionCallbackType: .dataPlayedBack
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self,
+                      self.engineGeneration == generation,
+                      self.pitchSemitones != 0 else { return }
+                self.handlePlaybackReachedEnd()
+            }
+        }
+        if !audioEngine.isRunning {
+            audioEngine.prepare()
+            try audioEngine.start()
+        }
+        if shouldPlay { audioNode.play() }
+        isPlaying = shouldPlay
+    }
+
+    private func stopPitchPlayback() {
+        engineGeneration = UUID()
+        audioNode.stop()
+        activeAudioFile = nil
+    }
+
+    private func updateEnginePlaybackState() {
+        guard pitchSemitones != 0,
+              let file = activeAudioFile,
+              let nodeTime = audioNode.lastRenderTime,
+              let playerTime = audioNode.playerTime(forNodeTime: nodeTime) else { return }
+        let frame = engineStartFrame + AVAudioFramePosition(playerTime.sampleTime)
+        let seconds = min(duration, max(0, Double(frame) / file.processingFormat.sampleRate))
+        if restartSectionLoopIfNeeded(at: seconds) { return }
+        elapsed = seconds
+        isPlaying = audioNode.isPlaying
+    }
+
+    private func restartSectionLoopIfNeeded(at seconds: Double) -> Bool {
+        guard isSectionLoopEnabled,
+              let start = sectionLoopStart,
+              let end = sectionLoopEnd,
+              seconds >= end else { return false }
+        seek(to: start)
+        return true
+    }
+
+    private func handlePlaybackReachedEnd() {
+        if isSectionLoopEnabled, let start = sectionLoopStart {
+            seek(to: start)
+        } else {
+            didFinishTrack()
+        }
+    }
+
     private func configureRemoteCommands() {
         let center = MPRemoteCommandCenter.shared()
         center.playCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.player.play() }
+            Task { @MainActor in self?.playActivePlayer() }
             return .success
         }
         center.pauseCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.player.pause() }
+            Task { @MainActor in self?.pauseActivePlayer() }
             return .success
         }
         center.nextTrackCommand.addTarget { [weak self] _ in
@@ -352,7 +691,7 @@ final class PlaybackController: ObservableObject {
             MPMediaItemPropertyAlbumTitle: track.album,
             MPMediaItemPropertyPlaybackDuration: duration,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: elapsed,
-            MPNowPlayingInfoPropertyPlaybackRate: player.rate
+            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? playbackSpeed : 0
         ]
     }
 

@@ -232,6 +232,29 @@ public final class LibraryDatabase: @unchecked Sendable {
         }
     }
 
+    public func protectedTracksForCaching(afterID: Int64, limit: Int = 50) throws -> [Track] {
+        guard (1...500).contains(limit) else { throw MassiveMusicError.invalidPageSize }
+        return try pool.read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT t.* FROM tracks t
+                    WHERE t.id > ?
+                      AND t.is_available = 1
+                      AND (
+                          t.is_favorite = 1
+                          OR EXISTS (
+                              SELECT 1 FROM playlist_items i WHERE i.track_id = t.id
+                          )
+                      )
+                    ORDER BY t.id
+                    LIMIT ?
+                    """,
+                arguments: [afterID, limit]
+            ).map(Self.decodeTrack)
+        }
+    }
+
     public func setTrackAvailability(id: Int64, isAvailable: Bool) throws {
         try pool.write { db in
             try db.execute(
@@ -1086,7 +1109,18 @@ public final class LibraryDatabase: @unchecked Sendable {
         try pool.read { db in
             try Row.fetchAll(
                 db,
-                sql: "SELECT track_id, local_path FROM local_cache WHERE is_pinned = 0 ORDER BY last_accessed_at DESC LIMIT -1 OFFSET ?",
+                sql: """
+                    SELECT c.track_id, c.local_path
+                    FROM local_cache c
+                    JOIN tracks t ON t.id = c.track_id
+                    WHERE c.is_pinned = 0
+                      AND t.is_favorite = 0
+                      AND NOT EXISTS (
+                          SELECT 1 FROM playlist_items i WHERE i.track_id = c.track_id
+                      )
+                    ORDER BY c.last_accessed_at DESC
+                    LIMIT -1 OFFSET ?
+                    """,
                 arguments: [max(0, limit)]
             ).map { ($0["track_id"], $0["local_path"]) }
         }
@@ -2017,7 +2051,8 @@ public final class LibraryDatabase: @unchecked Sendable {
     public func adjacentTrack(
         in context: TrackPlaybackContext,
         from current: Track,
-        direction: Int
+        direction: Int,
+        wraps: Bool = false
     ) throws -> Track? {
         let forward = direction >= 0
         let queryDirection: SortDirection
@@ -2089,14 +2124,26 @@ public final class LibraryDatabase: @unchecked Sendable {
                 arguments += [value]
             }
 
+            let boundaryPredicates = predicates
+            let boundaryArguments = arguments
             predicates.append(cursor.sql)
             arguments += cursor.arguments
             let whereSQL = " WHERE " + predicates.joined(separator: " AND ")
-            let row = try Row.fetchOne(
+            var row = try Row.fetchOne(
                 db,
                 sql: "SELECT t.* FROM \(from)\(whereSQL) ORDER BY \(Self.orderSQL(context.sort, direction: queryDirection)) LIMIT 1",
                 arguments: arguments
             )
+            if row == nil, wraps {
+                let boundaryWhereSQL = boundaryPredicates.isEmpty
+                    ? ""
+                    : " WHERE " + boundaryPredicates.joined(separator: " AND ")
+                row = try Row.fetchOne(
+                    db,
+                    sql: "SELECT t.* FROM \(from)\(boundaryWhereSQL) ORDER BY \(Self.orderSQL(context.sort, direction: queryDirection)) LIMIT 1",
+                    arguments: boundaryArguments
+                )
+            }
             return row.map(Self.decodeTrack)
         }
     }
