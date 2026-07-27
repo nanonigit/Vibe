@@ -185,6 +185,81 @@ public struct MetadataIssueSummary: Identifiable, Hashable, Sendable {
     }
 }
 
+public enum MusicBrainzAutoFillStatus: String, Codable, CaseIterable, Sendable {
+    case completed
+    case noMatch
+    case transientFailure
+}
+
+public struct MusicBrainzAutoFillAttempt: Equatable, Sendable {
+    public let albumKey: String
+    public let fingerprint: String
+    public let artist: String
+    public let album: String
+    public let status: MusicBrainzAutoFillStatus
+    public let attemptCount: Int
+    public let retryAfter: Date?
+    public let lastError: String?
+    public let attemptedAt: Date
+
+    public init(
+        albumKey: String,
+        fingerprint: String,
+        artist: String,
+        album: String,
+        status: MusicBrainzAutoFillStatus,
+        attemptCount: Int,
+        retryAfter: Date?,
+        lastError: String?,
+        attemptedAt: Date
+    ) {
+        self.albumKey = albumKey
+        self.fingerprint = fingerprint
+        self.artist = artist
+        self.album = album
+        self.status = status
+        self.attemptCount = attemptCount
+        self.retryAfter = retryAfter
+        self.lastError = lastError
+        self.attemptedAt = attemptedAt
+    }
+}
+
+public struct MusicBrainzAutoFillSummary: Equatable, Sendable {
+    public let completed: Int
+    public let noMatch: Int
+    public let transientFailure: Int
+
+    public init(completed: Int = 0, noMatch: Int = 0, transientFailure: Int = 0) {
+        self.completed = completed
+        self.noMatch = noMatch
+        self.transientFailure = transientFailure
+    }
+
+    public static let empty = MusicBrainzAutoFillSummary()
+}
+
+public enum MusicBrainzAutoFillPolicy {
+    public static func shouldAnalyze(
+        previous: MusicBrainzAutoFillAttempt?,
+        fingerprint: String,
+        now: Date
+    ) -> Bool {
+        guard let previous, previous.fingerprint == fingerprint else { return true }
+        switch previous.status {
+        case .completed, .noMatch:
+            return false
+        case .transientFailure:
+            return previous.retryAfter.map { $0 <= now } ?? true
+        }
+    }
+
+    public static func retryDelay(attemptCount: Int) -> TimeInterval {
+        let exponent = max(0, min(attemptCount - 1, 4))
+        return min(24 * 60 * 60, TimeInterval(1 << exponent) * 60 * 60)
+    }
+}
+
 public struct MetadataVariationCandidate: Identifiable, Hashable, Sendable {
     public let id: Int64
     public let field: MetadataField

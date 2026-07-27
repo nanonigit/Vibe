@@ -996,7 +996,7 @@ struct LibraryDatabaseTests {
 
     @Test func migrationEnablesExpectedSchemaAndWAL() throws {
         let context = try TestContext()
-        #expect(try context.database.schemaVersion() == 9)
+        #expect(try context.database.schemaVersion() == 10)
         #expect(try context.database.journalMode().lowercased() == "wal")
     }
 

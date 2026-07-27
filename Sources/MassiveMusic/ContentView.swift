@@ -4256,6 +4256,22 @@ private struct LibrarySettingsView: View {
                     ))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    Text(model.text(
+                        "未解析 \(model.musicBrainzAutoFillPendingCount)・完了 \(model.musicBrainzAutoFillSummary.completed)・一致なし \(model.musicBrainzAutoFillSummary.noMatch)・通信失敗 \(model.musicBrainzAutoFillSummary.transientFailure)",
+                        "Pending \(model.musicBrainzAutoFillPendingCount) · Completed \(model.musicBrainzAutoFillSummary.completed) · No match \(model.musicBrainzAutoFillSummary.noMatch) · Network failures \(model.musicBrainzAutoFillSummary.transientFailure)"
+                    ))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    HStack {
+                        Button(model.text("一致なしを再解析", "Retry No Matches")) {
+                            model.retryMusicBrainzNoMatches()
+                        }
+                        .disabled(model.isBulkAutoFilling || model.musicBrainzAutoFillSummary.noMatch == 0)
+                        Button(model.text("通信失敗を再試行", "Retry Network Failures")) {
+                            model.retryMusicBrainzFailures()
+                        }
+                        .disabled(model.isBulkAutoFilling || model.musicBrainzAutoFillSummary.transientFailure == 0)
+                    }
                     Divider()
                     Toggle(
                         model.text(

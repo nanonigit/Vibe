@@ -174,6 +174,8 @@ final class LibraryViewModel: ObservableObject {
     @Published var autoFillMusicBrainzTrackNumbers = true
     @Published var isBulkAutoFilling = false
     @Published var bulkAutoFillProgress = ""
+    @Published private(set) var musicBrainzAutoFillSummary = MusicBrainzAutoFillSummary.empty
+    @Published private(set) var musicBrainzAutoFillPendingCount = 0
     @Published var normalizeMetadataCharacterWidths = false
     @Published var autoMigrateID3v22ToV23 = true
     @Published var autoRegisterHighConfidenceGenres = false
@@ -272,6 +274,7 @@ final class LibraryViewModel: ObservableObject {
         cacheEnabled = (try? database.setting(forKey: "cache.enabled")) != "false"
         cacheTrackLimit = Int((try? database.setting(forKey: "cache.trackLimit")) ?? "24") ?? 24
         autoFillMusicBrainzTrackNumbers = (try? database.setting(forKey: "musicbrainz.autoFillTrackNumbers")) != "false"
+        musicBrainzAutoFillSummary = (try? database.musicBrainzAutoFillSummary()) ?? .empty
         normalizeMetadataCharacterWidths = (try? database.setting(forKey: "metadata.normalizeCharacterWidths")) == "true"
         autoMigrateID3v22ToV23 = (try? database.setting(forKey: "metadata.autoMigrateID3v22ToV23")) != "false"
         autoRegisterHighConfidenceGenres = (try? database.setting(forKey: "genre.autoRegisterHighConfidence")) == "true"
@@ -2721,6 +2724,28 @@ final class LibraryViewModel: ObservableObject {
         } catch { errorMessage = error.localizedDescription }
     }
 
+    func retryMusicBrainzNoMatches() {
+        retryMusicBrainzAttempts(status: .noMatch)
+    }
+
+    func retryMusicBrainzFailures() {
+        retryMusicBrainzAttempts(status: .transientFailure)
+    }
+
+    private func retryMusicBrainzAttempts(status: MusicBrainzAutoFillStatus) {
+        do {
+            try database.clearMusicBrainzAutoFillAttempts(status: status)
+            refreshMusicBrainzAutoFillSummary()
+            startBulkAutoFillIfNeeded()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func refreshMusicBrainzAutoFillSummary() {
+        musicBrainzAutoFillSummary = (try? database.musicBrainzAutoFillSummary()) ?? .empty
+    }
+
     private func startBulkAutoFillIfNeeded() {
         guard autoFillMusicBrainzTrackNumbers else {
             bulkAutoFillTask?.cancel()
@@ -2769,9 +2794,32 @@ final class LibraryViewModel: ObservableObject {
             groups[key, default: []].append(track)
         }
         
-        let totalAlbums = groups.count
+        let previousAttempts = (try? database.musicBrainzAutoFillAttempts()) ?? [:]
+        let now = Date()
+        let workItems = groups.compactMap { key, tracks -> MusicBrainzAutoFillWorkItem? in
+            guard let firstTrack = tracks.first else { return nil }
+            let fingerprint = Self.musicBrainzAutoFillFingerprint(tracks: tracks)
+            guard MusicBrainzAutoFillPolicy.shouldAnalyze(
+                previous: previousAttempts[key],
+                fingerprint: fingerprint,
+                now: now
+            ) else { return nil }
+            return MusicBrainzAutoFillWorkItem(
+                albumKey: key,
+                fingerprint: fingerprint,
+                artist: firstTrack.artist,
+                album: firstTrack.album,
+                tracks: tracks
+            )
+        }.sorted { $0.albumKey < $1.albumKey }
+
+        let totalAlbums = workItems.count
         var processedAlbums = 0
         var updatedCount = 0
+
+        await MainActor.run {
+            musicBrainzAutoFillPendingCount = totalAlbums
+        }
         
         let fileLogger = { (msg: String) in
             if let fileHandle = FileHandle(forWritingAtPath: logPath) {
@@ -2791,13 +2839,13 @@ final class LibraryViewModel: ObservableObject {
                 .filter { $0.isLetter || $0.isNumber }
         }
         
-        for (artistAlbumKey, localTracks) in groups {
+        for workItem in workItems {
             guard !Task.isCancelled else { break }
-            guard let firstTrack = localTracks.first else { continue }
+            guard let firstTrack = workItem.tracks.first else { continue }
             
             processedAlbums += 1
-            let albumName = firstTrack.album
-            let artistName = firstTrack.artist
+            let albumName = workItem.album
+            let artistName = workItem.artist
             
             await MainActor.run {
                 bulkAutoFillProgress = text(
@@ -2817,6 +2865,15 @@ final class LibraryViewModel: ObservableObject {
                     normalized(cand.album) == normalized(albumName) &&
                     cand.mediumTrackCount == localCount
                 }) else {
+                    try database.recordMusicBrainzAutoFillAttempt(
+                        albumKey: workItem.albumKey,
+                        fingerprint: workItem.fingerprint,
+                        artist: artistName,
+                        album: albumName,
+                        status: .noMatch,
+                        retryAfter: nil,
+                        lastError: text("一致するリリースがありません", "No matching release")
+                    )
                     continue
                 }
                 
@@ -2826,7 +2883,8 @@ final class LibraryViewModel: ObservableObject {
                 let mbTracks = try await musicMetadata.lookupRelease(releaseID: candidate.releaseID)
                 
                 // Match local tracks with MusicBrainz tracks by title
-                for localTrack in localTracks {
+                var matchedTrackCount = 0
+                for localTrack in workItem.tracks {
                     guard !Task.isCancelled else { break }
                     let localTitleNorm = normalized(localTrack.title)
                     if let matchedMBTrack = mbTracks.first(where: { normalized($0.title) == localTitleNorm }) {
@@ -2838,20 +2896,77 @@ final class LibraryViewModel: ObservableObject {
                         // Update
                         try await self.updateMetadataAsync(for: localTrack, edit: edit)
                         updatedCount += 1
+                        matchedTrackCount += 1
                         
                         let updateLog = "  -> Updated: \(localTrack.title) -> Disc: \(matchedMBTrack.discNumber), Track: \(matchedMBTrack.trackNumber) (File: \(localTrack.filename))\n"
                         fileLogger(updateLog)
                     }
                 }
+                let completed = matchedTrackCount == workItem.tracks.count
+                try database.recordMusicBrainzAutoFillAttempt(
+                    albumKey: workItem.albumKey,
+                    fingerprint: workItem.fingerprint,
+                    artist: artistName,
+                    album: albumName,
+                    status: completed ? .completed : .noMatch,
+                    retryAfter: nil,
+                    lastError: completed ? nil : text(
+                        "一部の曲名が一致しません（\(matchedTrackCount)/\(workItem.tracks.count)）",
+                        "Some track titles did not match (\(matchedTrackCount)/\(workItem.tracks.count))"
+                    )
+                )
+            } catch is CancellationError {
+                break
             } catch {
                 fileLogger("  Error processing \(artistName) - \(albumName): \(error.localizedDescription)\n")
+                let previous = previousAttempts[workItem.albumKey]
+                let previousCount = previous?.fingerprint == workItem.fingerprint ? previous?.attemptCount ?? 0 : 0
+                let retryAfter = Date().addingTimeInterval(
+                    MusicBrainzAutoFillPolicy.retryDelay(attemptCount: previousCount + 1)
+                )
+                try? database.recordMusicBrainzAutoFillAttempt(
+                    albumKey: workItem.albumKey,
+                    fingerprint: workItem.fingerprint,
+                    artist: artistName,
+                    album: albumName,
+                    status: .transientFailure,
+                    retryAfter: retryAfter,
+                    lastError: error.localizedDescription
+                )
+            }
+
+            if processedAlbums.isMultiple(of: 25) {
+                await MainActor.run {
+                    refreshMusicBrainzAutoFillSummary()
+                    musicBrainzAutoFillPendingCount = max(0, totalAlbums - processedAlbums)
+                }
             }
         }
         
         fileLogger("=== Bulk Auto-Fill Finished. Total updated: \(updatedCount) tracks ===\n")
         await MainActor.run {
+            refreshMusicBrainzAutoFillSummary()
+            musicBrainzAutoFillPendingCount = max(0, totalAlbums - processedAlbums)
             loadCurrentPage(reset: false)
         }
+    }
+
+    private struct MusicBrainzAutoFillWorkItem {
+        let albumKey: String
+        let fingerprint: String
+        let artist: String
+        let album: String
+        let tracks: [Track]
+    }
+
+    private static func musicBrainzAutoFillFingerprint(tracks: [Track]) -> String {
+        let normalizedTitles = tracks.map { track in
+            track.title.folding(
+                options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
+                locale: .current
+            ).trimmingCharacters(in: .whitespacesAndNewlines)
+        }.sorted()
+        return "\(tracks.count)|\(normalizedTitles.joined(separator: "\u{1F}"))"
     }
 
     func saveMetadataNormalizationSettings() {

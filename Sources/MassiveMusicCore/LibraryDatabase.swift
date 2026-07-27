@@ -126,6 +126,13 @@ public final class LibraryDatabase: @unchecked Sendable {
                 arguments: [9, Date().timeIntervalSince1970]
             )
         }
+        migrator.registerMigration("v10_musicbrainz_autofill_attempts") { db in
+            try db.execute(sql: Schema.musicBrainzAutoFillAttempts)
+            try db.execute(
+                sql: "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                arguments: [10, Date().timeIntervalSince1970]
+            )
+        }
         return migrator
     }
 
@@ -510,6 +517,93 @@ public final class LibraryDatabase: @unchecked Sendable {
                 sql: "SELECT * FROM tracks WHERE track_number IS NULL OR disc_number IS NULL"
             )
             return rows.map(Self.decodeTrack)
+        }
+    }
+
+    public func musicBrainzAutoFillAttempts() throws -> [String: MusicBrainzAutoFillAttempt] {
+        try pool.read { db in
+            let rows = try Row.fetchAll(db, sql: "SELECT * FROM musicbrainz_autofill_attempts")
+            return Dictionary(uniqueKeysWithValues: rows.compactMap { row in
+                guard let attempt = Self.decodeMusicBrainzAutoFillAttempt(row) else { return nil }
+                return (attempt.albumKey, attempt)
+            })
+        }
+    }
+
+    public func musicBrainzAutoFillAttempt(albumKey: String) throws -> MusicBrainzAutoFillAttempt? {
+        try pool.read { db in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: "SELECT * FROM musicbrainz_autofill_attempts WHERE album_key = ?",
+                arguments: [albumKey]
+            ) else { return nil }
+            return Self.decodeMusicBrainzAutoFillAttempt(row)
+        }
+    }
+
+    public func recordMusicBrainzAutoFillAttempt(
+        albumKey: String,
+        fingerprint: String,
+        artist: String,
+        album: String,
+        status: MusicBrainzAutoFillStatus,
+        retryAfter: Date?,
+        lastError: String?,
+        attemptedAt: Date = Date()
+    ) throws {
+        try pool.write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO musicbrainz_autofill_attempts(
+                        album_key, fingerprint, artist, album, status, attempt_count,
+                        retry_after, last_error, attempted_at
+                    ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
+                    ON CONFLICT(album_key) DO UPDATE SET
+                        fingerprint = excluded.fingerprint,
+                        artist = excluded.artist,
+                        album = excluded.album,
+                        status = excluded.status,
+                        attempt_count = CASE
+                            WHEN musicbrainz_autofill_attempts.fingerprint = excluded.fingerprint
+                            THEN musicbrainz_autofill_attempts.attempt_count + 1
+                            ELSE 1
+                        END,
+                        retry_after = excluded.retry_after,
+                        last_error = excluded.last_error,
+                        attempted_at = excluded.attempted_at
+                    """,
+                arguments: [
+                    albumKey, fingerprint, artist, album, status.rawValue,
+                    retryAfter?.timeIntervalSince1970, lastError, attemptedAt.timeIntervalSince1970
+                ]
+            )
+        }
+    }
+
+    public func musicBrainzAutoFillSummary() throws -> MusicBrainzAutoFillSummary {
+        try pool.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: "SELECT status, COUNT(*) AS count FROM musicbrainz_autofill_attempts GROUP BY status"
+            )
+            let counts = Dictionary(uniqueKeysWithValues: rows.compactMap { row -> (MusicBrainzAutoFillStatus, Int)? in
+                guard let status = MusicBrainzAutoFillStatus(rawValue: row["status"]) else { return nil }
+                return (status, row["count"])
+            })
+            return MusicBrainzAutoFillSummary(
+                completed: counts[.completed, default: 0],
+                noMatch: counts[.noMatch, default: 0],
+                transientFailure: counts[.transientFailure, default: 0]
+            )
+        }
+    }
+
+    public func clearMusicBrainzAutoFillAttempts(status: MusicBrainzAutoFillStatus) throws {
+        try pool.write { db in
+            try db.execute(
+                sql: "DELETE FROM musicbrainz_autofill_attempts WHERE status = ?",
+                arguments: [status.rawValue]
+            )
         }
     }
 
@@ -2434,6 +2528,22 @@ public final class LibraryDatabase: @unchecked Sendable {
         )
     }
 
+    private static func decodeMusicBrainzAutoFillAttempt(_ row: Row) -> MusicBrainzAutoFillAttempt? {
+        guard let status = MusicBrainzAutoFillStatus(rawValue: row["status"]) else { return nil }
+        let retryTimestamp: Double? = row["retry_after"]
+        return MusicBrainzAutoFillAttempt(
+            albumKey: row["album_key"],
+            fingerprint: row["fingerprint"],
+            artist: row["artist"],
+            album: row["album"],
+            status: status,
+            attemptCount: row["attempt_count"],
+            retryAfter: retryTimestamp.map(Date.init(timeIntervalSince1970:)),
+            lastError: row["last_error"],
+            attemptedAt: Date(timeIntervalSince1970: row["attempted_at"])
+        )
+    }
+
     private static func decodeActivityEvent(_ row: Row) -> LibraryActivityEvent {
         let json: String = row["changes_json"]
         let changes = (try? JSONDecoder().decode(
@@ -2627,6 +2737,22 @@ private enum SQL {
 }
 
 private enum Schema {
+    static let musicBrainzAutoFillAttempts = """
+        CREATE TABLE musicbrainz_autofill_attempts(
+            album_key TEXT PRIMARY KEY,
+            fingerprint TEXT NOT NULL,
+            artist TEXT NOT NULL,
+            album TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('completed', 'noMatch', 'transientFailure')),
+            attempt_count INTEGER NOT NULL DEFAULT 1,
+            retry_after REAL,
+            last_error TEXT,
+            attempted_at REAL NOT NULL
+        );
+        CREATE INDEX musicbrainz_autofill_status_retry_idx
+            ON musicbrainz_autofill_attempts(status, retry_after);
+        """
+
     static let pendingMetadataEdits = """
         CREATE TABLE pending_metadata_edits(
             id INTEGER PRIMARY KEY,
