@@ -2574,12 +2574,6 @@ private struct NowPlayingInspector: View {
             idleDiscovery
         } else {
             VStack(spacing: 12) {
-                PlayerArtwork(
-                    artworkURL: model.enrichedInfo?.artworkURL,
-                    size: 210,
-                    cornerRadius: 12,
-                    placeholderPointSize: 48
-                )
                 Text(player.currentTrack?.title ?? "").font(.title3.bold()).lineLimit(2).multilineTextAlignment(.center)
                 Text(player.currentTrack?.artist ?? "").foregroundStyle(.secondary).lineLimit(1)
                 Picker("情報", selection: $tab) {
@@ -4742,58 +4736,69 @@ private struct InspectorPlayerControls: View {
     @State private var isVolumePopoverPresented = false
 
     var body: some View {
-        VStack(spacing: 9) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(player.currentTrack?.title ?? model.text("再生していません", "Not Playing"))
-                        .font(.headline)
-                        .lineLimit(1)
-                    Text(player.currentTrack?.artist ?? model.text("曲を選択してください", "Select a song"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 0)
-                repeatButton
-                miniPlayerButton
-                volumeButton
-            }
+        HStack(alignment: .top, spacing: 12) {
+            PlayerArtwork(
+                artworkURL: model.enrichedInfo?.artworkURL,
+                size: 72,
+                cornerRadius: 9,
+                placeholderPointSize: 25
+            )
+            .accessibilityLabel(model.text("アルバムジャケット", "Album artwork"))
 
-            HStack(spacing: 8) {
-                shuffleButton
-                Spacer(minLength: 4)
-                Button(action: player.previous) {
-                    Image(systemName: "backward.fill")
+            VStack(spacing: 9) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(player.currentTrack?.title ?? model.text("再生していません", "Not Playing"))
+                            .font(.headline)
+                            .lineLimit(1)
+                        Text(player.currentTrack?.artist ?? model.text("曲を選択してください", "Select a song"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                    repeatButton
+                    miniPlayerButton
+                    volumeButton
                 }
-                .accessibilityLabel(model.text("前の曲", "Previous Track"))
-                Button(action: player.togglePlayPause) {
-                    Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                        .font(.system(size: 34))
-                        .foregroundStyle(Color.accentColor)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(player.isPlaying ? model.text("一時停止", "Pause") : model.text("再生", "Play"))
-                Button(action: player.next) {
-                    Image(systemName: "forward.fill")
-                }
-                .accessibilityLabel(model.text("次の曲", "Next Track"))
-                Spacer(minLength: 4)
-            }
-            .disabled(player.currentTrack == nil)
 
-            HStack(spacing: 7) {
-                timeLabel(player.elapsed)
-                Slider(
-                    value: Binding(
-                        get: { player.elapsed },
-                        set: { player.seek(to: $0) }
-                    ),
-                    in: 0...max(1, player.duration)
-                )
-                .accessibilityLabel(model.text("再生位置", "Playback Position"))
-                timeLabel(player.duration)
+                HStack(spacing: 8) {
+                    shuffleButton
+                    Spacer(minLength: 4)
+                    Button(action: player.previous) {
+                        Image(systemName: "backward.fill")
+                    }
+                    .accessibilityLabel(model.text("前の曲", "Previous Track"))
+                    Button(action: player.togglePlayPause) {
+                        Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                            .font(.system(size: 34))
+                            .foregroundStyle(Color.accentColor)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(player.isPlaying ? model.text("一時停止", "Pause") : model.text("再生", "Play"))
+                    Button(action: player.next) {
+                        Image(systemName: "forward.fill")
+                    }
+                    .accessibilityLabel(model.text("次の曲", "Next Track"))
+                    Spacer(minLength: 4)
+                }
+                .disabled(player.currentTrack == nil)
+
+                HStack(spacing: 7) {
+                    timeLabel(player.elapsed)
+                    Slider(
+                        value: Binding(
+                            get: { player.elapsed },
+                            set: { player.seek(to: $0) }
+                        ),
+                        in: 0...max(1, player.duration)
+                    )
+                    .accessibilityLabel(model.text("再生位置", "Playback Position"))
+                    timeLabel(player.duration)
+                }
+                .disabled(player.currentTrack == nil)
             }
-            .disabled(player.currentTrack == nil)
+            .frame(maxWidth: .infinity)
         }
         .buttonStyle(.borderless)
         .padding(.horizontal, 14)

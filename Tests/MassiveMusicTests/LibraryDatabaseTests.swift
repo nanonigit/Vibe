@@ -500,6 +500,27 @@ struct LibraryDatabaseTests {
         #expect(source.contains("model.text(\"右ペインを閉じる\", \"Hide Right Pane\")"))
     }
 
+    @Test func inspectorArtworkLivesBesideCompactPlayerInsteadOfTakingDetailSpace() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let controlsStart = try #require(source.range(of: "private struct InspectorPlayerControls: View"))
+        let controlsEnd = try #require(source.range(of: "struct MiniPlayerView: View", range: controlsStart.upperBound..<source.endIndex))
+        let controlsSource = String(source[controlsStart.lowerBound..<controlsEnd.lowerBound])
+        let informationStart = try #require(source.range(of: "@ViewBuilder private var playerInformation: some View"))
+        let informationEnd = try #require(source.range(of: "private var chordifySearchURL", range: informationStart.upperBound..<source.endIndex))
+        let informationSource = String(source[informationStart.lowerBound..<informationEnd.lowerBound])
+
+        #expect(controlsSource.contains("PlayerArtwork("))
+        #expect(controlsSource.contains("artworkURL: model.enrichedInfo?.artworkURL"))
+        #expect(controlsSource.contains("size: 72"))
+        #expect(controlsSource.contains("HStack(alignment: .top, spacing: 12)"))
+        #expect(!informationSource.contains("PlayerArtwork("))
+        #expect(!informationSource.contains("size: 210"))
+    }
+
     @Test func inspectorPlayerExposesOneTrackAndAlbumOrPlaylistRepeat() throws {
         let repository = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
