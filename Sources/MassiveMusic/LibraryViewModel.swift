@@ -2844,6 +2844,12 @@ final class LibraryViewModel: ObservableObject {
             guard let firstTrack = workItem.tracks.first else { continue }
             
             processedAlbums += 1
+            defer {
+                if processedAlbums.isMultiple(of: 25) {
+                    refreshMusicBrainzAutoFillSummary()
+                    musicBrainzAutoFillPendingCount = max(0, totalAlbums - processedAlbums)
+                }
+            }
             let albumName = workItem.album
             let artistName = workItem.artist
             
@@ -2935,12 +2941,6 @@ final class LibraryViewModel: ObservableObject {
                 )
             }
 
-            if processedAlbums.isMultiple(of: 25) {
-                await MainActor.run {
-                    refreshMusicBrainzAutoFillSummary()
-                    musicBrainzAutoFillPendingCount = max(0, totalAlbums - processedAlbums)
-                }
-            }
         }
         
         fileLogger("=== Bulk Auto-Fill Finished. Total updated: \(updatedCount) tracks ===\n")

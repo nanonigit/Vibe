@@ -830,6 +830,23 @@ struct LibraryDatabaseTests {
             now: now.addingTimeInterval(60)
         ))
 
+        let completed = MusicBrainzAutoFillAttempt(
+            albumKey: "completed",
+            fingerprint: "fingerprint-v1",
+            artist: "Artist",
+            album: "Completed Album",
+            status: .completed,
+            attemptCount: 1,
+            retryAfter: nil,
+            lastError: nil,
+            attemptedAt: now
+        )
+        #expect(MusicBrainzAutoFillPolicy.shouldAnalyze(
+            previous: completed,
+            fingerprint: "fingerprint-v1",
+            now: now.addingTimeInterval(60)
+        ))
+
         try context.database.recordMusicBrainzAutoFillAttempt(
             albumKey: "artist|album",
             fingerprint: "fingerprint-v1",
@@ -855,6 +872,9 @@ struct LibraryDatabaseTests {
             fingerprint: "fingerprint-v1",
             now: now.addingTimeInterval(3_601)
         ))
+        #expect(MusicBrainzAutoFillPolicy.retryDelay(attemptCount: 1) == 3_600)
+        #expect(MusicBrainzAutoFillPolicy.retryDelay(attemptCount: 5) == 57_600)
+        #expect(MusicBrainzAutoFillPolicy.retryDelay(attemptCount: 50) == 57_600)
     }
 
     @Test func musicBrainzAutoFillSummaryAndManualRetriesAreSeparatedByStatus() throws {

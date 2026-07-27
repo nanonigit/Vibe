@@ -247,7 +247,11 @@ public enum MusicBrainzAutoFillPolicy {
     ) -> Bool {
         guard let previous, previous.fingerprint == fingerprint else { return true }
         switch previous.status {
-        case .completed, .noMatch:
+        case .completed:
+            // A completed album normally disappears from the missing-number query.
+            // Seeing it again means its metadata changed after completion.
+            return true
+        case .noMatch:
             return false
         case .transientFailure:
             return previous.retryAfter.map { $0 <= now } ?? true
