@@ -798,6 +798,115 @@ struct LibraryDatabaseTests {
         #expect(!bulkAutoFill.contains("closeRenamedAlbumDetail: true"))
     }
 
+    @Test func musicBrainzAutoFillAttemptsPersistAndRespectRetryPolicy() throws {
+        let context = try TestContext()
+        defer { try? FileManager.default.removeItem(at: context.directory) }
+        let now = Date(timeIntervalSince1970: 2_000)
+
+        try context.database.recordMusicBrainzAutoFillAttempt(
+            albumKey: "artist|album",
+            fingerprint: "fingerprint-v1",
+            artist: "Artist",
+            album: "Album",
+            status: .noMatch,
+            retryAfter: nil,
+            lastError: nil,
+            attemptedAt: now
+        )
+
+        let noMatch = try #require(
+            try context.database.musicBrainzAutoFillAttempt(albumKey: "artist|album")
+        )
+        #expect(noMatch.status == .noMatch)
+        #expect(noMatch.attemptCount == 1)
+        #expect(!MusicBrainzAutoFillPolicy.shouldAnalyze(
+            previous: noMatch,
+            fingerprint: "fingerprint-v1",
+            now: now.addingTimeInterval(60)
+        ))
+        #expect(MusicBrainzAutoFillPolicy.shouldAnalyze(
+            previous: noMatch,
+            fingerprint: "fingerprint-v2",
+            now: now.addingTimeInterval(60)
+        ))
+
+        try context.database.recordMusicBrainzAutoFillAttempt(
+            albumKey: "artist|album",
+            fingerprint: "fingerprint-v1",
+            artist: "Artist",
+            album: "Album",
+            status: .transientFailure,
+            retryAfter: now.addingTimeInterval(3_600),
+            lastError: "HTTP 503",
+            attemptedAt: now.addingTimeInterval(120)
+        )
+
+        let transient = try #require(
+            try context.database.musicBrainzAutoFillAttempt(albumKey: "artist|album")
+        )
+        #expect(transient.attemptCount == 2)
+        #expect(!MusicBrainzAutoFillPolicy.shouldAnalyze(
+            previous: transient,
+            fingerprint: "fingerprint-v1",
+            now: now.addingTimeInterval(3_599)
+        ))
+        #expect(MusicBrainzAutoFillPolicy.shouldAnalyze(
+            previous: transient,
+            fingerprint: "fingerprint-v1",
+            now: now.addingTimeInterval(3_601)
+        ))
+    }
+
+    @Test func musicBrainzAutoFillSummaryAndManualRetriesAreSeparatedByStatus() throws {
+        let context = try TestContext()
+        defer { try? FileManager.default.removeItem(at: context.directory) }
+        let attemptedAt = Date(timeIntervalSince1970: 3_000)
+
+        for (key, status) in [
+            ("complete", MusicBrainzAutoFillStatus.completed),
+            ("missing", .noMatch),
+            ("network", .transientFailure)
+        ] {
+            try context.database.recordMusicBrainzAutoFillAttempt(
+                albumKey: key,
+                fingerprint: "fingerprint",
+                artist: "Artist",
+                album: key,
+                status: status,
+                retryAfter: status == .transientFailure ? attemptedAt.addingTimeInterval(600) : nil,
+                lastError: status == .transientFailure ? "offline" : nil,
+                attemptedAt: attemptedAt
+            )
+        }
+
+        #expect(try context.database.musicBrainzAutoFillSummary() == MusicBrainzAutoFillSummary(
+            completed: 1,
+            noMatch: 1,
+            transientFailure: 1
+        ))
+
+        try context.database.clearMusicBrainzAutoFillAttempts(status: .noMatch)
+        #expect(try context.database.musicBrainzAutoFillAttempt(albumKey: "missing") == nil)
+        #expect(try context.database.musicBrainzAutoFillAttempt(albumKey: "network")?.status == .transientFailure)
+
+        try context.database.clearMusicBrainzAutoFillAttempts(status: .transientFailure)
+        #expect(try context.database.musicBrainzAutoFillAttempt(albumKey: "network") == nil)
+        #expect(try context.database.musicBrainzAutoFillAttempt(albumKey: "complete")?.status == .completed)
+    }
+
+    @Test func musicBrainzSettingsExposeResultsAndExplicitRetryActions() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+
+        #expect(model.contains("musicBrainzAutoFillSummary"))
+        #expect(model.contains("retryMusicBrainzNoMatches"))
+        #expect(model.contains("retryMusicBrainzFailures"))
+        #expect(content.contains("一致なしを再解析"))
+        #expect(content.contains("通信失敗を再試行"))
+    }
+
     @Test func musicBrainzCandidatesPreferMatchingOfficialAlbumAndParseNumbers() throws {
         let track = Track(
             rootID: 1, relativePath: "Beatles/Come Together.mp3", filename: "Come Together.mp3",
