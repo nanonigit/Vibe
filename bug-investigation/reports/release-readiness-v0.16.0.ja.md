@@ -39,3 +39,13 @@
 - ZIP化前と展開後のdeep strict署名検証が成功する。
 - 公開後にGitHub配布物の名前、サイズ、SHA-256を確認する。
 - Homebrew Caskが同じバージョン、URL形式、SHA-256を参照する。
+
+## 検証結果
+
+- 3スイート163テストが成功した。
+- Releaseビルドが成功し、配布アプリはバージョン0.16／ビルド16、arm64だった。
+- ローカルとGitHubから独立して再取得したアーカイブはいずれもSHA-256 `b8d3bf41fb8accc43f8693b6536260ec73845a48dd26e012cdc27841e4f614ab`だった。
+- ローカル／リモート両アーカイブの展開後にdeep strict署名検証が成功した。
+- GitHub Release `v0.16.0`はコミット`fda74089a0b7a94c2b39d97e9495c494ec7387a0`を参照している。
+- Homebrew Caskコミット`9c92b00945e3eeaa49db89a5bf11d123256b139e`は`brew style`と`brew fetch`のチェックサム検証に成功した。
+- `brew audit --online --strict`は、インストール済みHomebrewがXcode 27.0を要求し、このMacがXcode 26.6のため開始できなかった。Caskの指摘ではなく環境要件による停止である。

@@ -7,6 +7,6 @@
 - [x] Add bilingual release notes and release-readiness analysis.
 - [x] Run tests and build/sign/package the arm64 Release app.
 - [x] Review the exact staged diff and scan for secrets.
-- [ ] Commit and push Vibe `main`.
-- [ ] Publish and verify GitHub Release `v0.16.0`.
-- [ ] Update, validate, commit, and push `homebrew-vibe`.
+- [x] Commit and push Vibe `main`.
+- [x] Publish and verify GitHub Release `v0.16.0`.
+- [x] Update, validate, commit, and push `homebrew-vibe`.

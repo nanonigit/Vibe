@@ -39,3 +39,13 @@ Publish the accumulated tested Vibe changes as an Apple Silicon GitHub release a
 - Deep strict code-signature verification passes before and after ZIP extraction.
 - GitHub asset name, size, and SHA-256 are verified after upload.
 - Homebrew Cask references the same version, URL pattern, and SHA-256.
+
+## Verification result
+
+- 163 tests in 3 suites passed.
+- Release build succeeded; the packaged app is version 0.16/build 16 and arm64.
+- The local and independently downloaded GitHub archives both have SHA-256 `b8d3bf41fb8accc43f8693b6536260ec73845a48dd26e012cdc27841e4f614ab`.
+- Deep strict signature verification passed after extracting both the local and remote archives.
+- GitHub release `v0.16.0` targets commit `fda74089a0b7a94c2b39d97e9495c494ec7387a0`.
+- Homebrew Cask commit `9c92b00945e3eeaa49db89a5bf11d123256b139e` passed `brew style` and `brew fetch` checksum verification.
+- `brew audit --online --strict` could not start because the installed Homebrew currently requires Xcode 27.0 while this Mac has Xcode 26.6; this is an environment prerequisite failure, not a Cask finding.
