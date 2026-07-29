@@ -8,7 +8,9 @@ struct GenreSuggestion: Equatable, Sendable {
     let source: Source
 
     enum Source: Equatable, Sendable {
+        case library
         case local
+        case musicBrainz
         case openAI
         case gemini
     }

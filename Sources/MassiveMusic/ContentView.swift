@@ -112,6 +112,7 @@ struct ContentView: View {
     @State private var artistScrollPosition: String?
     @State private var artistReturnScrollPosition: String?
     @FocusState private var isTrackTableFocused: Bool
+    @FocusState private var isLibrarySearchFocused: Bool
     @FocusState private var focusedPlaylistEditorID: Int64?
     @AppStorage("inspector.width") private var inspectorWidth = 310.0
     @AppStorage("columns.title.width") private var titleColumnWidth = 150.0
@@ -147,13 +148,16 @@ struct ContentView: View {
         NavigationSplitView {
             sidebar
                 .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 300)
+                .background(model.appearance.palette.sidebar)
         } detail: {
             GeometryReader { geometry in
                 HStack(spacing: 0) {
                     libraryContent
-                        .frame(minWidth: 420)
+                        .frame(minWidth: 420, maxWidth: .infinity)
+                        .clipped()
                     if showInspector {
                         inspectorDivider
+                            .zIndex(10)
                         NowPlayingInspector(
                             model: model,
                             player: player,
@@ -176,6 +180,9 @@ struct ContentView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(model.appearance.palette.canvas)
+        .background(WindowAppearanceSynchronizer(mode: model.appearance).frame(width: 0, height: 0))
+        .tint(model.appearance.palette.accent)
         .toolbar(removing: .sidebarToggle)
         .onChange(of: player.currentTrack) { _, track in model.enrich(track) }
         .onChange(of: model.language) { _, _ in
@@ -198,6 +205,7 @@ struct ContentView: View {
         }
         .onChange(of: model.isLoading) { _, _ in
             restorePendingArtistScrollPositionIfNeeded()
+            restorePendingBrowseScrollPositionIfNeeded()
         }
         .onChange(of: browserURL) { _, url in
             if url != nil {
@@ -322,7 +330,7 @@ struct ContentView: View {
             if hovering { NSCursor.resizeLeftRight.push() }
             else { NSCursor.pop() }
         }
-        .gesture(
+        .highPriorityGesture(
             DragGesture(minimumDistance: 0, coordinateSpace: .global)
                 .onChanged { value in
                     let start = inspectorDragStartWidth ?? inspectorWidth
@@ -356,7 +364,7 @@ struct ContentView: View {
 
     private var sidebar: some View {
         List {
-            Section(isExpanded: .constant(true)) {
+            Section {
                 ForEach(model.visibleLibrarySections) { section in
                     HStack(spacing: 4) {
                         Button {
@@ -444,6 +452,7 @@ struct ContentView: View {
                         Image(systemName: "ellipsis.circle")
                     }
                     .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
                     .help(model.text("ライブラリ項目を整理", "Organize Library items"))
                 }
             }
@@ -569,6 +578,7 @@ struct ContentView: View {
                         Image(systemName: "ellipsis.circle")
                     }
                     .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
                     .help(model.text("プレイリストを整理", "Organize Playlists"))
                 }
             }
@@ -602,11 +612,13 @@ struct ContentView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             sidebarBackgroundStatus
         }
+        .scrollContentBackground(.hidden)
+        .background(model.appearance.palette.sidebar)
     }
 
     @ViewBuilder
     private var sidebarBackgroundStatus: some View {
-        if model.driveMessage != nil || model.isBulkAutoFilling || model.isID3Migrating {
+        if model.driveMessage != nil || model.isBulkAutoFilling || model.isID3Migrating || model.isScanningAutomaticGenres {
             VStack(spacing: 0) {
                 if let message = model.driveMessage {
                     Label(message, systemImage: "externaldrive.badge.exclamationmark")
@@ -620,6 +632,9 @@ struct ContentView: View {
                 }
                 if model.isID3Migrating {
                     sidebarProgressStatus(model.id3MigrationProgress)
+                }
+                if model.isScanningAutomaticGenres {
+                    sidebarAutomaticGenreProgress
                 }
             }
             .font(.caption)
@@ -638,6 +653,42 @@ struct ContentView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var sidebarAutomaticGenreProgress: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.mini)
+                Text(model.automaticGenreRetrySecondsRemaining > 0
+                    ? model.text(
+                        "外部AIへ\(model.automaticGenreRetrySecondsRemaining)秒後に再接続",
+                        "Reconnecting to external AI in \(model.automaticGenreRetrySecondsRemaining)s"
+                    )
+                    : model.text("ジャンル判定中", "Classifying genre"))
+                    .fontWeight(.semibold)
+                    .foregroundStyle(model.automaticGenreRetrySecondsRemaining > 0 ? Color.orange : Color.primary)
+                    .monospacedDigit()
+                Spacer(minLength: 0)
+            }
+            Text(model.automaticGenreScanCurrentTrack)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            if !model.automaticGenreScanCurrentSource.isEmpty {
+                Text(model.text("判定元: \(model.automaticGenreScanCurrentSource)", "Source: \(model.automaticGenreScanCurrentSource)"))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Text(model.text(
+                "確認 \(model.automaticGenreScanProcessedCount.formatted())/\(model.automaticGenreScanTotalCount.formatted())・登録 \(model.automaticGenreRegisteredCount.formatted())・80%未満 \(model.automaticGenreScanBelowThresholdCount.formatted())・失敗 \(model.automaticGenreScanFailedCount.formatted())",
+                "Checked \(model.automaticGenreScanProcessedCount.formatted())/\(model.automaticGenreScanTotalCount.formatted()) · Registered \(model.automaticGenreRegisteredCount.formatted()) · Below 80% \(model.automaticGenreScanBelowThresholdCount.formatted()) · Failed \(model.automaticGenreScanFailedCount.formatted())"
+            ))
+            .foregroundStyle(.secondary)
+            .monospacedDigit()
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -682,6 +733,8 @@ struct ContentView: View {
             if [.running, .paused].contains(model.scanProgress.state) { scanStatus }
             if model.importProgress.state != .idle { importStatus }
         }
+        .scrollContentBackground(.hidden)
+        .background(model.appearance.palette.library)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color.clear)
         .contentShape(Rectangle())
@@ -805,8 +858,21 @@ struct ContentView: View {
             } else if model.selectedGenre != nil {
                 Text(model.text("\(model.genreDetailTitle(model.genreDetailMode))・\(model.totalCount.formatted()) 件", "\(model.genreDetailTitle(model.genreDetailMode)) · \(model.totalCount.formatted()) items"))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                if let genre = model.selectedGenre {
+                    Text(GenreDescriptionCatalog.detailDescription(for: genre, language: model.language))
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             } else {
-                Text(model.text("\(model.totalCount.formatted()) 件", "\(model.totalCount.formatted()) items"))
+                Text(model.section == .cache
+                    ? model.text(
+                        "\(model.totalCount.formatted()) 件・合計 \(formattedFileSize(model.cachedStorageBytes))",
+                        "\(model.totalCount.formatted()) items · \(formattedFileSize(model.cachedStorageBytes)) total"
+                    )
+                    : model.text("\(model.totalCount.formatted()) 件", "\(model.totalCount.formatted()) items")
+                )
                     .font(.caption).foregroundStyle(.secondary)
                     .lineLimit(1)
                 if model.section == .cache {
@@ -848,15 +914,24 @@ struct ContentView: View {
         return gigabytes.formatted(.number.precision(.fractionLength(gigabytes >= 100 ? 1 : 2)))
     }
 
+    private func formattedFileSize(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: max(0, bytes), countStyle: .file)
+    }
+
     private var headerControls: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 12) {
-                if model.section == .cache { cacheHeaderControls }
-                nonCacheHeaderControls
+        HStack(spacing: 12) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    if model.section == .cache { cacheHeaderControls }
+                    nonCacheHeaderControls
+                }
+                VStack(alignment: .trailing, spacing: 10) {
+                    if model.section == .cache { cacheHeaderControls }
+                    nonCacheHeaderControls
+                }
             }
-            VStack(alignment: .trailing, spacing: 10) {
-                if model.section == .cache { cacheHeaderControls }
-                nonCacheHeaderControls
+            if model.section != .diagnostics {
+                LibrarySearchField(model: model, isFocused: $isLibrarySearchFocused)
             }
         }
     }
@@ -968,9 +1043,6 @@ struct ContentView: View {
                     Label(model.text("表示項目", "Columns"), systemImage: "rectangle.3.group")
                 }
                 .help(model.text("表示する列を選択", "Choose visible columns"))
-            }
-            if model.section != .diagnostics {
-                LibrarySearchField(model: model)
             }
         }
     }
@@ -1111,6 +1183,7 @@ struct ContentView: View {
                                 .help(track.isFavorite ? model.text("お気に入りから外す", "Remove from Favorites") : model.text("お気に入りに追加", "Add to Favorites"))
                                 ForEach(orderedVisibleTrackColumns) { column in
                                     trackColumnCell(column, track: track, index: index)
+                                        .tableColumnDivider()
                                 }
                                 }
                                 .padding(.horizontal, 8)
@@ -1147,9 +1220,12 @@ struct ContentView: View {
                                 )
                                 .draggable(trackDragPayload(for: track))
                                 .contextMenu { trackContextMenu(track) }
+                                .id(track.id)
                             }
                         }
+                        .scrollTargetLayout()
                     }
+                    .scrollPosition(id: $model.trackScrollPosition, anchor: .top)
                     .frame(width: contentWidth, height: max(0, geometry.size.height - 32), alignment: .top)
                 }
                 .frame(width: contentWidth, height: geometry.size.height, alignment: .topLeading)
@@ -1408,12 +1484,14 @@ struct ContentView: View {
                     .overlay(alignment: .trailing) {
                         ColumnResizeHandle(width: $albumViewAlbumWidth, range: 140...900)
                     }
+                    .tableColumnDivider()
                 if isAlbumViewArtistVisible {
                     albumHeaderButton(.artist, title: model.text("アーティスト", "Artist"))
                         .frame(width: albumViewArtistWidth, alignment: .leading)
                         .overlay(alignment: .trailing) {
                             ColumnResizeHandle(width: $albumViewArtistWidth, range: 100...600)
                         }
+                        .tableColumnDivider()
                 }
                 if isAlbumViewSongsVisible {
                     albumHeaderButton(.trackCount, title: model.text("曲数", "Songs"))
@@ -1421,6 +1499,7 @@ struct ContentView: View {
                         .overlay(alignment: .trailing) {
                             ColumnResizeHandle(width: $albumViewSongsWidth, range: 55...180)
                         }
+                        .tableColumnDivider()
                 }
                 Spacer().frame(width: 28)
             }
@@ -1431,12 +1510,19 @@ struct ContentView: View {
             Divider()
             List(model.albumSummaries) { album in
                 HStack {
-                    Button { model.openAlbum(album) } label: { Label(album.name, systemImage: "square.stack").frame(width: albumViewAlbumWidth, alignment: .leading) }.buttonStyle(.plain)
+                    Button { model.openAlbum(album) } label: { Label(album.name, systemImage: "square.stack").frame(width: albumViewAlbumWidth, alignment: .leading) }.buttonStyle(.plain).tableColumnDivider()
                     if isAlbumViewArtistVisible {
-                        Button(model.displayArtist(album.artist)) { model.openArtist(named: album.artist) }.buttonStyle(.link).frame(width: albumViewArtistWidth, alignment: .leading).lineLimit(1)
+                        Button { model.openArtist(named: album.artist) } label: {
+                            Text(model.displayArtist(album.artist))
+                                .foregroundStyle(.primary)
+                                .frame(width: albumViewArtistWidth, alignment: .leading)
+                                .lineLimit(1)
+                        }
+                        .buttonStyle(.plain)
+                        .tableColumnDivider()
                     }
                     if isAlbumViewSongsVisible {
-                        Text(album.trackCount.formatted()).frame(width: albumViewSongsWidth, alignment: .trailing).monospacedDigit()
+                        Text(album.trackCount.formatted()).frame(width: albumViewSongsWidth, alignment: .trailing).monospacedDigit().tableColumnDivider()
                     }
                     Image(systemName: "chevron.right").foregroundStyle(.tertiary).frame(width: 20)
                 }.padding(.vertical, 3)
@@ -1523,12 +1609,14 @@ struct ContentView: View {
                     .overlay(alignment: .trailing) {
                         ColumnResizeHandle(width: $artistViewArtistWidth, range: 140...900)
                     }
+                    .tableColumnDivider()
                 if isArtistViewAlbumsVisible {
                     artistHeaderButton(.albumCount, title: model.text("アルバム数", "Albums"))
                         .frame(width: artistViewAlbumsWidth, alignment: .trailing)
                         .overlay(alignment: .trailing) {
                             ColumnResizeHandle(width: $artistViewAlbumsWidth, range: 65...200)
                         }
+                        .tableColumnDivider()
                 }
                 if isArtistViewSongsVisible {
                     artistHeaderButton(.trackCount, title: model.text("曲数", "Songs"))
@@ -1536,6 +1624,7 @@ struct ContentView: View {
                         .overlay(alignment: .trailing) {
                             ColumnResizeHandle(width: $artistViewSongsWidth, range: 55...180)
                         }
+                        .tableColumnDivider()
                 }
                 Spacer().frame(width: 28)
             }
@@ -1549,12 +1638,12 @@ struct ContentView: View {
                     ForEach(model.artistSummaries) { artist in
                         Button { openArtistPreservingScrollPosition(artist) } label: {
                             HStack {
-                                Label(model.displayArtist(artist.name), systemImage: artist.name.isEmpty ? "person.crop.circle.badge.questionmark" : "music.mic").frame(width: artistViewArtistWidth, alignment: .leading)
+                                Label(model.displayArtist(artist.name), systemImage: artist.name.isEmpty ? "person.crop.circle.badge.questionmark" : "music.mic").frame(width: artistViewArtistWidth, alignment: .leading).tableColumnDivider()
                                 if isArtistViewAlbumsVisible {
-                                    Text(artist.albumCount.formatted()).frame(width: artistViewAlbumsWidth, alignment: .trailing).monospacedDigit()
+                                    Text(artist.albumCount.formatted()).frame(width: artistViewAlbumsWidth, alignment: .trailing).monospacedDigit().tableColumnDivider()
                                 }
                                 if isArtistViewSongsVisible {
-                                    Text(artist.trackCount.formatted()).frame(width: artistViewSongsWidth, alignment: .trailing).monospacedDigit()
+                                    Text(artist.trackCount.formatted()).frame(width: artistViewSongsWidth, alignment: .trailing).monospacedDigit().tableColumnDivider()
                                 }
                                 Image(systemName: "chevron.right").foregroundStyle(.tertiary).frame(width: 20)
                             }
@@ -1629,6 +1718,20 @@ struct ContentView: View {
         }
     }
 
+    private func restorePendingBrowseScrollPositionIfNeeded() {
+        guard !model.isLoading, model.needsBrowseScrollRestoration else { return }
+        let trackPosition = model.trackScrollPosition
+        let variationPosition = model.resolvedVariationScrollPositionForRestoration()
+        model.trackScrollPosition = nil
+        model.variationScrollPosition = nil
+        model.completeBrowseScrollRestoration()
+        Task { @MainActor in
+            await Task.yield()
+            model.trackScrollPosition = trackPosition
+            model.variationScrollPosition = variationPosition
+        }
+    }
+
     private var artistSummaryContentWidth: Double {
         artistViewArtistWidth
             + (isArtistViewAlbumsVisible ? artistViewAlbumsWidth + 8 : 0)
@@ -1665,30 +1768,108 @@ struct ContentView: View {
     }
 
     private var facetList: some View {
-        List(model.facets) { facet in
+        VStack(spacing: 0) {
             if model.section == .genres {
-                Button { model.openGenre(facet.name) } label: {
+                genreAutomaticScanControls
+                Divider()
+            }
+            List(model.facets) { facet in
+                if model.section == .genres {
+                    Button { model.openGenre(facet.name) } label: {
+                        HStack {
+                            Image(systemName: icon(for: model.section)).frame(width: 24)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(facet.name)
+                                    .lineLimit(1)
+                                Text(GenreDescriptionCatalog.shortDescription(for: facet.name, language: model.language))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            Text(facet.count.formatted()).foregroundStyle(.secondary).monospacedDigit()
+                            Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.vertical, 3)
+                } else {
                     HStack {
                         Image(systemName: icon(for: model.section)).frame(width: 24)
                         Text(facet.name)
                         Spacer()
                         Text(facet.count.formatted()).foregroundStyle(.secondary).monospacedDigit()
-                        Image(systemName: "chevron.right").foregroundStyle(.tertiary)
                     }
-                    .contentShape(Rectangle())
+                    .padding(.vertical, 3)
                 }
-                .buttonStyle(.plain)
-                .padding(.vertical, 3)
-            } else {
-                HStack {
-                    Image(systemName: icon(for: model.section)).frame(width: 24)
-                    Text(facet.name)
-                    Spacer()
-                    Text(facet.count.formatted()).foregroundStyle(.secondary).monospacedDigit()
-                }
-                .padding(.vertical, 3)
             }
         }
+    }
+
+    private var genreAutomaticScanControls: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "point.3.connected.trianglepath.dotted")
+                .font(.title3)
+                .foregroundStyle(.purple)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(model.text("ジャンル自動登録", "Automatic Genre Registration"))
+                    .font(.headline)
+                Text(model.text(
+                    "ライブラリ内一致→ローカル判定→MusicBrainz→外部AIの順に調べ、確度80%以上だけを登録します。",
+                    "Checks library matches, local rules, MusicBrainz, then external AI; only results at 80% confidence or higher are saved."
+                ))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+            }
+            Spacer(minLength: 12)
+            if model.isScanningAutomaticGenres {
+                VStack(alignment: .trailing, spacing: 4) {
+                    ProgressView(value: Double(model.automaticGenreScanProcessedCount), total: Double(max(1, model.automaticGenreScanTotalCount)))
+                        .frame(width: 150)
+                    if model.automaticGenreRetrySecondsRemaining > 0 {
+                        Text(model.text(
+                            "外部AIへ\(model.automaticGenreRetrySecondsRemaining)秒後に自動再接続",
+                            "Reconnecting to external AI in \(model.automaticGenreRetrySecondsRemaining)s"
+                        ))
+                        .font(.caption.bold().monospacedDigit())
+                        .foregroundStyle(.orange)
+                    }
+                    Text(model.text(
+                        "確認 \(model.automaticGenreScanProcessedCount.formatted()) / \(model.automaticGenreScanTotalCount.formatted())・登録 \(model.automaticGenreRegisteredCount.formatted())・80%未満 \(model.automaticGenreScanBelowThresholdCount.formatted())・失敗 \(model.automaticGenreScanFailedCount.formatted())",
+                        "Checked \(model.automaticGenreScanProcessedCount.formatted()) / \(model.automaticGenreScanTotalCount.formatted()) · Registered \(model.automaticGenreRegisteredCount.formatted()) · Below 80% \(model.automaticGenreScanBelowThresholdCount.formatted()) · Failed \(model.automaticGenreScanFailedCount.formatted())"
+                    ))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    Text(model.text(
+                        "内訳: ライブラリ \(model.automaticGenreLibraryRegisteredCount)・ローカル \(model.automaticGenreLocalRegisteredCount)・MusicBrainz \(model.automaticGenreMusicBrainzRegisteredCount)・外部AI \(model.automaticGenreExternalAIRegisteredCount)",
+                        "Sources: library \(model.automaticGenreLibraryRegisteredCount) · local \(model.automaticGenreLocalRegisteredCount) · MusicBrainz \(model.automaticGenreMusicBrainzRegisteredCount) · external AI \(model.automaticGenreExternalAIRegisteredCount)"
+                    ))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                }
+                Button(model.text("停止", "Stop")) { model.cancelAutomaticGenreScan() }
+            } else {
+                if model.hasRunAutomaticGenreScan {
+                    Text(model.text(
+                        "登録 \(model.automaticGenreRegisteredCount.formatted())・80%未満 \(model.automaticGenreScanBelowThresholdCount.formatted())・失敗 \(model.automaticGenreScanFailedCount.formatted())",
+                        "Registered \(model.automaticGenreRegisteredCount.formatted()) · Below 80% \(model.automaticGenreScanBelowThresholdCount.formatted()) · Failed \(model.automaticGenreScanFailedCount.formatted())"
+                    ))
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                }
+                Button {
+                    model.startAutomaticGenreScan()
+                } label: {
+                    Label(model.text("ジャンル検索を開始", "Start Genre Scan"), systemImage: "play.fill")
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
+        .background(.bar)
     }
 
     private var activityLogView: some View {
@@ -1801,7 +1982,7 @@ struct ContentView: View {
     private var metadataDiagnosticsView: some View {
         VStack(spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     ForEach(MetadataIssueKind.allCases) { kind in
                         Button { model.selectDiagnostic(kind) } label: {
                             VStack(alignment: .leading, spacing: 3) {
@@ -1809,14 +1990,15 @@ struct ContentView: View {
                                 Text(diagnosticCount(kind).formatted())
                                     .font(.title3.bold()).monospacedDigit()
                             }
-                            .frame(minWidth: 150, alignment: .leading)
-                            .padding(10)
+                            .frame(minWidth: 132, alignment: .leading)
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 7)
                             .background(model.diagnosticKind == kind ? Color.accentColor.opacity(0.16) : Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 9))
                         }
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(12)
+                .padding(8)
             }
             Divider()
             if isDuplicateSelectionMode {
@@ -1840,6 +2022,29 @@ struct ContentView: View {
                         Button(model.text("表記ゆれを解析", "Analyze Variations"), action: model.runMetadataAnalysis)
                     }
                 }.padding(10)
+                HStack(spacing: 10) {
+                    Picker(model.text("表示対象", "Show"), selection: Binding(
+                        get: { model.variationFieldFilter },
+                        set: { model.setVariationFieldFilter($0) }
+                    )) {
+                        Text(model.text("すべて", "All")).tag(MetadataField?.none)
+                        Text(model.text("曲名", "Title")).tag(MetadataField?.some(.title))
+                        Text(model.text("アルバム名", "Album")).tag(MetadataField?.some(.album))
+                        Text(model.text("アーティスト名", "Artist")).tag(MetadataField?.some(.artist))
+                    }
+                    .pickerStyle(.segmented)
+                    .controlSize(.small)
+                    .frame(maxWidth: 520)
+                    Spacer()
+                    Text(model.text(
+                        "該当候補: \(model.totalCount.formatted())件",
+                        "Matching: \(model.totalCount.formatted())"
+                    ))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 10)
+                .padding(.bottom, 10)
                 Divider()
                 List(model.variationCandidates) { candidate in
                     HStack(spacing: 14) {
@@ -1857,16 +2062,49 @@ struct ContentView: View {
                         Button(model.text("候補から除外", "Ignore")) { model.ignoreVariation(candidate) }
                     }.padding(.vertical, 4)
                 }
+                .scrollPosition(id: $model.variationScrollPosition, anchor: .top)
                 .overlay {
                     if !model.isAnalyzingMetadata && model.variationCandidates.isEmpty {
                         ContentUnavailableView(
-                            model.text("表記ゆれ候補はまだありません", "No Variation Candidates Yet"),
+                            model.variationFieldFilter == nil
+                                ? model.text("表記ゆれ候補はまだありません", "No Variation Candidates Yet")
+                                : model.text("選択した項目の候補はありません", "No Candidates for This Field"),
                             systemImage: "text.magnifyingglass",
-                            description: Text(model.text("「表記ゆれを解析」をクリックしてください。", "Click Analyze Variations to scan the library."))
+                            description: Text(
+                                model.variationFieldFilter == nil
+                                    ? model.text("「表記ゆれを解析」をクリックしてください。", "Click Analyze Variations to scan the library.")
+                                    : model.text("別の項目を選ぶか、表記ゆれを再解析してください。", "Choose another field or analyze variations again.")
+                            )
                         )
                     }
                 }
             } else {
+                if [.urlInMP3Metadata, .suspectedMojibake].contains(model.diagnosticKind) {
+                    HStack(spacing: 10) {
+                        Picker(model.text("表示対象", "Show"), selection: Binding(
+                            get: { model.metadataIssueFieldFilter },
+                            set: { model.setMetadataIssueFieldFilter($0) }
+                        )) {
+                            Text(model.text("すべて", "All")).tag(MetadataField?.none)
+                            Text(model.text("曲名", "Title")).tag(MetadataField?.some(.title))
+                            Text(model.text("アルバム名", "Album")).tag(MetadataField?.some(.album))
+                            Text(model.text("アーティスト名", "Artist")).tag(MetadataField?.some(.artist))
+                        }
+                        .pickerStyle(.segmented)
+                        .controlSize(.small)
+                        .frame(maxWidth: 520)
+                        Spacer()
+                        Text(model.text(
+                            "該当曲: \(model.totalCount.formatted())曲",
+                            "Matching: \(model.totalCount.formatted()) songs"
+                        ))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 10)
+                    Divider()
+                }
                 trackTable
             }
         }
@@ -2067,12 +2305,15 @@ struct ContentView: View {
 
     private func sidebarCount(for section: LibrarySection) -> String? {
         switch section {
-        case .favorites:
-            return model.favoriteTrackCount.formatted()
-        case .upNext:
-            return player.upNextTracks.count.formatted()
-        case .recentlyAdded:
-            return model.recentlyAddedTrackCount.formatted()
+        case .cache: return model.cachedTrackCount.formatted()
+        case .tracks: return model.libraryTrackCount.formatted()
+        case .albums: return model.libraryAlbumCount.formatted()
+        case .artists: return model.libraryArtistCount.formatted()
+        case .genres: return model.libraryGenreCount.formatted()
+        case .folders: return model.libraryFolderCount.formatted()
+        case .favorites: return model.favoriteTrackCount.formatted()
+        case .upNext: return player.upNextTracks.count.formatted()
+        case .recentlyAdded: return model.recentlyAddedTrackCount.formatted()
         default:
             return nil
         }
@@ -2274,6 +2515,7 @@ struct ContentView: View {
 
 private struct LibrarySearchField: View {
     @ObservedObject var model: LibraryViewModel
+    @FocusState.Binding var isFocused: Bool
 
     var body: some View {
         HStack(spacing: 7) {
@@ -2285,17 +2527,15 @@ private struct LibrarySearchField: View {
                 text: $model.searchText
             )
             .textFieldStyle(.plain)
+            .focused($isFocused)
             .onChange(of: model.searchText) { _, _ in model.searchChanged() }
 
-            if model.isSearchInProgress {
-                ProgressView()
-                    .controlSize(.small)
-                    .accessibilityLabel(model.text("検索中", "Searching"))
-                Text(model.text("検索中…", "Searching…"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+            ProgressView()
+                .controlSize(.small)
+                .frame(width: 16, height: 16)
+                .opacity(model.isSearchInProgress ? 1 : 0)
+                .accessibilityHidden(!model.isSearchInProgress)
+                .accessibilityLabel(model.text("検索中", "Searching"))
 
             if !model.searchText.isEmpty {
                 Button(action: model.clearSearch) {
@@ -2311,7 +2551,7 @@ private struct LibrarySearchField: View {
             }
         }
         .padding(.horizontal, 9)
-        .frame(minWidth: 160, idealWidth: 280, maxWidth: 360)
+        .frame(width: 360)
         .frame(height: 30)
         .background(.background, in: RoundedRectangle(cornerRadius: 7))
         .overlay {
@@ -2343,6 +2583,7 @@ private struct TrackSortHeader: View {
             Color.clear.frame(width: 30)
             ForEach(columns) { column in
                 columnHeader(column)
+                    .tableColumnDivider()
                     .draggable(column.rawValue)
                     .dropDestination(for: String.self) { values, _ in
                         guard let rawValue = values.first,
@@ -2415,6 +2656,23 @@ private struct TrackSortHeader: View {
         }
         .buttonStyle(.plain)
         .help(model.text("クリックして並び順を変更", "Click to change sort order"))
+    }
+}
+
+private struct TableColumnDividerModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content.overlay(alignment: .trailing) {
+            Rectangle()
+                .fill(Color(nsColor: .separatorColor).opacity(0.7))
+                .frame(width: 1)
+                .allowsHitTesting(false)
+        }
+    }
+}
+
+private extension View {
+    func tableColumnDivider() -> some View {
+        modifier(TableColumnDividerModifier())
     }
 }
 
@@ -2544,10 +2802,14 @@ private struct NowPlayingInspector: View {
     let openAISettings: () -> Void
     @State private var tab = 0
     @AppStorage("lyrics.autoScroll") private var lyricsAutoScroll = true
-    @State private var lyricsContentHeight: CGFloat = 0
-    @State private var lyricsViewHeight: CGFloat = 0
     @State private var isEditingManualLyrics = false
-    private let lyricsAnchorCount = 100
+    @State private var tabSearchInstrument = "guitar"
+
+    private struct DisplayLyricLine: Identifiable {
+        let id: Int
+        let text: String
+        let time: Double?
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -2558,7 +2820,7 @@ private struct NowPlayingInspector: View {
                 if let browserURL {
                     EmbeddedBrowserView(url: browserURL, targetLanguage: model.language.rawValue) {
                         self.browserURL = nil
-                        if tab == 4 { tab = 0 }
+                        if tab == 5 { tab = 0 }
                     }
                 } else {
                     playerInformation
@@ -2566,7 +2828,7 @@ private struct NowPlayingInspector: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background(.background)
+        .background(model.appearance.palette.inspector)
     }
 
     @ViewBuilder private var playerInformation: some View {
@@ -2574,14 +2836,13 @@ private struct NowPlayingInspector: View {
             idleDiscovery
         } else {
             VStack(spacing: 12) {
-                Text(player.currentTrack?.title ?? "").font(.title3.bold()).lineLimit(2).multilineTextAlignment(.center)
-                Text(player.currentTrack?.artist ?? "").foregroundStyle(.secondary).lineLimit(1)
                 Picker("情報", selection: $tab) {
                     Text(model.text("情報", "Info")).tag(0)
                     Text(model.text("歌詞", "Lyrics")).tag(1)
                     Text(model.text("発見", "Discover")).tag(2)
                     Text(model.text("練習", "Practice")).tag(3)
-                    Text(model.text("コード", "Chords")).tag(4)
+                    Text("TAB").tag(4)
+                    Text(model.text("コード", "Chords")).tag(5)
                 }.pickerStyle(.segmented).labelsHidden()
                 Group {
                     if model.isEnriching { ProgressView(model.text("情報を取得中…", "Loading information…")) }
@@ -2589,13 +2850,14 @@ private struct NowPlayingInspector: View {
                     else if tab == 1 { lyrics }
                     else if tab == 2 { discovery }
                     else if tab == 3 { practice }
+                    else if tab == 4 { tabSearch }
                     else { ProgressView(model.text("コードを検索中…", "Searching for chords…")) }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
             .padding(16)
             .onChange(of: tab) { _, newTab in
-                if newTab == 4 {
+                if newTab == 5 {
                     browserURL = chordifySearchURL
                 }
             }
@@ -2621,6 +2883,56 @@ private struct NowPlayingInspector: View {
         let allowed = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/?#"))
         guard let encoded = query.addingPercentEncoding(withAllowedCharacters: allowed) else { return nil }
         return URL(string: "https://chordify.net/search/\(encoded)")
+    }
+
+    private var youtubeTabSearchURL: URL? {
+        guard let track = player.currentTrack else { return nil }
+        let query = [track.title, track.artist, "tab", tabSearchInstrument]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        guard !query.isEmpty else { return nil }
+        var components = URLComponents(string: "https://www.youtube.com/results")
+        components?.queryItems = [URLQueryItem(name: "search_query", value: query)]
+        return components?.url
+    }
+
+    private var tabSearch: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label(model.text("TAB動画を探す", "Find TAB Videos"), systemImage: "play.rectangle.fill")
+                .font(.headline)
+            Text(model.text(
+                "曲名・アーティスト名に「tab」と選んだ楽器を加えてYouTubeを検索します。",
+                "Search YouTube using the title, artist, “tab”, and your selected instrument."
+            ))
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            Picker(model.text("楽器", "Instrument"), selection: $tabSearchInstrument) {
+                Text("guitar").tag("guitar")
+                Text("bass").tag("bass")
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            Button {
+                browserURL = youtubeTabSearchURL
+            } label: {
+                Label(model.text("YouTubeでTABを検索", "Search TAB on YouTube"), systemImage: "magnifyingglass")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(youtubeTabSearchURL == nil)
+
+            if let track = player.currentTrack {
+                Text("\(track.title)  ·  \(track.artist)  ·  tab  ·  \(tabSearchInstrument)")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(2)
+            }
+            Spacer()
+        }
+        .padding(.vertical, 4)
     }
 
     private var idleDiscovery: some View {
@@ -2696,83 +3008,78 @@ private struct NowPlayingInspector: View {
             }
             .padding(.bottom, 4)
 
-            GeometryReader { geo in
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        VStack(spacing: 0) {
-                            VStack(alignment: .leading, spacing: 12) {
-                                Text(model.enrichedInfo?.lyrics?.plainLyrics ?? model.text(
-                                    "歌詞が見つかりませんでした。LRCLIBで一致した歌詞は自動保存され、次回はオフラインで表示されます。",
-                                    "No matching lyrics were found. LRCLIB matches are saved for offline viewing."
-                                ))
-                                .textSelection(.enabled)
-
-                                if model.enrichedInfo?.lyrics?.plainLyrics == nil, player.currentTrack != nil {
-                                    Button {
-                                        isEditingManualLyrics = true
-                                    } label: {
-                                        Label(model.text("歌詞を手動で登録…", "Add Lyrics Manually…"), systemImage: "square.and.pencil")
-                                    }
-                                    .buttonStyle(.bordered)
-                                }
-                            }
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(
-                                GeometryReader { contentGeo in
-                                    Color.clear
-                                        .onAppear { lyricsContentHeight = contentGeo.size.height }
-                                        .onChange(of: contentGeo.size.height) { lyricsContentHeight = $0 }
-                                }
-                            )
-
-                            // Bottom spacer so last line is never hidden
-                            Color.clear.frame(height: 80)
-
-                            // Anchor at the very bottom for 100% position
-                            Color.clear.frame(height: 1).id("lyricsAnchorEnd")
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 5) {
+                        ForEach(displayLyricLines) { line in
+                            Text(line.text.isEmpty ? " " : line.text)
+                                .foregroundStyle(line.id == activeLyricLineIndex ? Color.primary : Color.secondary)
+                                .fontWeight(line.id == activeLyricLineIndex ? .semibold : .regular)
+                                .id(line.id)
                         }
-                        // Proportional scroll anchors: placed at equally spaced intervals in layout
-                        .background(
-                            GeometryReader { fullGeo in
-                                ZStack(alignment: .topLeading) {
-                                    ForEach(0...lyricsAnchorCount, id: \.self) { i in
-                                        Color.clear
-                                            .frame(width: 1, height: 1)
-                                            .position(
-                                                x: 1,
-                                                y: fullGeo.size.height * CGFloat(i) / CGFloat(lyricsAnchorCount)
-                                            )
-                                            .id("lyricsAnchor_\(i)")
-                                    }
-                                }
+
+                        if player.currentTrack != nil {
+                            Button {
+                                isEditingManualLyrics = true
+                            } label: {
+                                Label(
+                                    model.enrichedInfo?.lyrics?.plainLyrics == nil
+                                        ? model.text("歌詞を手動で登録…", "Add Lyrics Manually…")
+                                        : model.text("歌詞を編集…", "Edit Lyrics…"),
+                                    systemImage: "square.and.pencil"
+                                )
                             }
-                        )
-                    }
-                    .onAppear {
-                        lyricsViewHeight = geo.size.height
-                    }
-                    .onChange(of: geo.size.height) { lyricsViewHeight = $0 }
-                    .onChange(of: player.elapsed) { _ in
-                        guard lyricsAutoScroll,
-                              player.duration > 0,
-                              lyricsContentHeight > lyricsViewHeight else { return }
-                        // Scroll so that the visible window tracks playback:
-                        // target offset = pct * scrollableRange, anchor = .top of an
-                        // anchor placed at pct * totalContentHeight → approx correct
-                        let pct = player.elapsed / player.duration
-                        let rawIndex = Int((pct * Double(lyricsAnchorCount)).rounded())
-                        let anchorIndex = min(lyricsAnchorCount, max(0, rawIndex))
-                        withAnimation(.linear(duration: 0.9)) {
-                            proxy.scrollTo("lyricsAnchor_\(anchorIndex)", anchor: .top)
+                            .buttonStyle(.bordered)
+                            .padding(.top, 12)
                         }
+                        Color.clear.frame(height: 80)
                     }
-                    .onChange(of: model.enrichedInfo?.lyrics?.plainLyrics) { _ in
-                        proxy.scrollTo("lyricsAnchor_0", anchor: .top)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .onChange(of: activeLyricLineIndex) { _, index in
+                    guard lyricsAutoScroll, displayLyricLines.indices.contains(index) else { return }
+                    withAnimation(.easeInOut(duration: 0.35)) {
+                        proxy.scrollTo(index, anchor: .center)
                     }
+                }
+                .onChange(of: model.enrichedInfo?.lyrics?.plainLyrics) { _, _ in
+                    proxy.scrollTo(0, anchor: .top)
                 }
             }
         }
+    }
+
+    private var displayLyricLines: [DisplayLyricLine] {
+        if let synced = model.enrichedInfo?.lyrics?.syncedLyrics,
+           !synced.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let parsed = synced.components(separatedBy: .newlines).compactMap(parseSyncedLyricLine)
+            if !parsed.isEmpty { return parsed.enumerated().map { DisplayLyricLine(id: $0.offset, text: $0.element.text, time: $0.element.time) } }
+        }
+        let text = model.enrichedInfo?.lyrics?.plainLyrics ?? model.text(
+            "歌詞が見つかりませんでした。LRCLIBで一致した歌詞は自動保存され、次回はオフラインで表示されます。",
+            "No matching lyrics were found. LRCLIB matches are saved for offline viewing."
+        )
+        return text.components(separatedBy: .newlines).enumerated().map {
+            DisplayLyricLine(id: $0.offset, text: $0.element, time: nil)
+        }
+    }
+
+    private var activeLyricLineIndex: Int {
+        let lines = displayLyricLines
+        guard !lines.isEmpty else { return 0 }
+        if lines.contains(where: { $0.time != nil }) {
+            return lines.last(where: { ($0.time ?? .greatestFiniteMagnitude) <= player.elapsed })?.id ?? 0
+        }
+        guard player.duration > 0 else { return 0 }
+        return min(lines.count - 1, max(0, Int((player.elapsed / player.duration) * Double(lines.count))))
+    }
+
+    private func parseSyncedLyricLine(_ raw: String) -> (time: Double, text: String)? {
+        guard raw.first == "[", let close = raw.firstIndex(of: "]") else { return nil }
+        let stamp = raw[raw.index(after: raw.startIndex)..<close].split(separator: ":")
+        guard stamp.count == 2, let minutes = Double(stamp[0]), let seconds = Double(stamp[1]) else { return nil }
+        return (minutes * 60 + seconds, String(raw[raw.index(after: close)...]).trimmingCharacters(in: .whitespaces))
     }
 
 
@@ -2800,6 +3107,38 @@ private struct NowPlayingInspector: View {
     private var practice: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                HStack(spacing: 12) {
+                    Image(systemName: "metronome")
+                        .font(.title2)
+                        .foregroundStyle(Color.accentColor)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("BPM").font(.caption.bold()).foregroundStyle(.secondary)
+                        if let bpm = player.currentBPM {
+                            Text("\(Int(bpm.rounded()))")
+                                .font(.title2.bold().monospacedDigit())
+                        } else if player.isAnalyzingBPM {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.small)
+                                Text(model.text("自動解析中…", "Analyzing…"))
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        } else {
+                            Text(model.text("取得できません", "Unavailable"))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer()
+                    Text(model.text("音源タグを優先し、未登録なら音声から推定します", "Uses the audio tag first, then estimates from audio"))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.trailing)
+                        .frame(maxWidth: 180)
+                }
+                .padding(10)
+                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 9))
+
                 VStack(alignment: .leading, spacing: 8) {
                     Label(model.text("区間リピート", "Section Loop"), systemImage: "repeat")
                         .font(.headline)
@@ -2929,6 +3268,9 @@ private struct NowPlayingInspector: View {
                 .foregroundStyle(Color.accentColor)
             }
             .padding(.vertical, 4)
+        }
+        .task(id: player.currentTrack?.id) {
+            player.requestCurrentTrackBPM()
         }
     }
 
@@ -3204,8 +3546,21 @@ private struct CurrentTrackInfoEditorView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
         }
-        .onAppear(perform: loadTrackData)
+        .onAppear { loadTrackData() }
         .onChange(of: track) { _, _ in loadTrackData() }
+        .onChange(of: model.lastMetadataEditedTrack) { _, updatedTrack in
+            guard let updatedTrack, updatedTrack.id == track.id else { return }
+            loadTrackData(from: updatedTrack)
+            player.updateCurrentTrack(
+                title: updatedTrack.title,
+                artist: updatedTrack.artist,
+                album: updatedTrack.album,
+                albumArtist: updatedTrack.albumArtist,
+                genre: updatedTrack.genre,
+                discNumber: updatedTrack.discNumber,
+                trackNumber: updatedTrack.trackNumber
+            )
+        }
     }
 
     private var hasChanges: Bool {
@@ -3224,14 +3579,15 @@ private struct CurrentTrackInfoEditorView: View {
         return discOK && trackOK
     }
 
-    private func loadTrackData() {
-        title = track.title
-        artist = track.artist
-        album = track.album
-        albumArtist = track.albumArtist
-        genre = track.genre
-        discNumber = track.discNumber.map(String.init) ?? ""
-        trackNumber = track.trackNumber.map(String.init) ?? ""
+    private func loadTrackData(from updatedTrack: Track? = nil) {
+        let source = updatedTrack ?? track
+        title = source.title
+        artist = source.artist
+        album = source.album
+        albumArtist = source.albumArtist
+        genre = source.genre
+        discNumber = source.discNumber.map(String.init) ?? ""
+        trackNumber = source.trackNumber.map(String.init) ?? ""
         saveError = nil
         saveSuccess = false
     }
@@ -3301,17 +3657,19 @@ private struct ManualLyricsEditor: View {
     @Environment(\.dismiss) private var dismiss
     @State private var lyrics: String
     @State private var isSaving = false
+    let isEditingExistingLyrics: Bool
 
     init(model: LibraryViewModel, track: Track, initialLyrics: String) {
         self.model = model
         self.track = track
         _lyrics = State(initialValue: initialLyrics)
+        isEditingExistingLyrics = !initialLyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(model.text("歌詞を手動で登録", "Add Lyrics Manually"))
+                Text(model.text(isEditingExistingLyrics ? "歌詞を修正" : "歌詞を手動で登録", isEditingExistingLyrics ? "Edit Lyrics" : "Add Lyrics Manually"))
                     .font(.title2.bold())
                 Text("\(track.title) — \(model.displayArtist(track.artist))")
                     .foregroundStyle(.secondary)
@@ -3845,13 +4203,6 @@ private struct BatchTrackMetadataEditor: View {
     @ObservedObject var model: LibraryViewModel
     let tracks: [Track]
     @Environment(\.dismiss) private var dismiss
-    @State private var changeArtist = false
-    @State private var changeAlbum = false
-    @State private var changeAlbumArtist = false
-    @State private var changeGenre = false
-    @State private var changeCompilation = false
-    @State private var changeArtwork = false
-    @State private var changeDiscNumber = false
     @State private var artist: String
     @State private var album: String
     @State private var albumArtist: String
@@ -3879,8 +4230,8 @@ private struct BatchTrackMetadataEditor: View {
                 Text(model.text("曲情報を一括編集", "Bulk Edit Song Info"))
                     .font(.title2.bold())
                 Text(model.text(
-                    "選択した\(tracks.count)曲のうち、チェックした項目だけを変更します。",
-                    "Only checked fields will be changed for the \(tracks.count) selected songs."
+                    "変更する項目を入力し、その行の登録ボタンを押してください。選択した\(tracks.count)曲へ反映します。",
+                    "Enter a value and use that row's Apply button to update the \(tracks.count) selected songs."
                 ))
                 .foregroundStyle(.secondary)
             }
@@ -3891,22 +4242,37 @@ private struct BatchTrackMetadataEditor: View {
                 VStack(alignment: .leading, spacing: 14) {
                     GroupBox(model.text("変更する曲情報", "Song Information to Change")) {
                         VStack(spacing: 10) {
-                            batchField(model.text("アーティスト", "Artist"), enabled: $changeArtist, value: $artist)
-                            batchField(model.text("アルバム", "Album"), enabled: $changeAlbum, value: $album)
-                            batchField(model.text("アルバムアーティスト", "Album Artist"), enabled: $changeAlbumArtist, value: $albumArtist)
-                            batchField(model.text("ジャンル", "Genre"), enabled: $changeGenre, value: $genre)
+                            batchField(model.text("アーティスト", "Artist"), value: $artist) {
+                                apply(BatchMetadataChanges(artist: artist))
+                            }
+                            batchField(model.text("アルバム", "Album"), value: $album) {
+                                apply(BatchMetadataChanges(album: album))
+                            }
+                            batchField(model.text("アルバムアーティスト", "Album Artist"), value: $albumArtist) {
+                                apply(BatchMetadataChanges(albumArtist: albumArtist))
+                            }
+                            batchField(model.text("ジャンル", "Genre"), value: $genre) {
+                                apply(BatchMetadataChanges(genre: genre))
+                            }
                             batchNumberField(
                                 model.text("ディスク番号", "Disc Number"),
-                                enabled: $changeDiscNumber,
-                                value: $discNumber
+                                value: $discNumber,
+                                action: {
+                                    apply(BatchMetadataChanges(
+                                        discNumber: parsedNumber(discNumber),
+                                        changesDiscNumber: true
+                                    ))
+                                }
                             )
                             HStack(spacing: 12) {
-                                Toggle("", isOn: $changeCompilation).labelsHidden().toggleStyle(.checkbox)
                                 Text(model.text("コンピレーション", "Compilation"))
                                     .frame(width: 145, alignment: .leading)
                                 Toggle(model.text("コンピレーションアルバム", "Compilation Album"), isOn: $isCompilation)
-                                    .disabled(!changeCompilation)
+                                    .toggleStyle(.switch)
                                 Spacer()
+                                applyButton(disabled: unsupportedCompilationCount > 0) {
+                                    apply(BatchMetadataChanges(isCompilation: isCompilation))
+                                }
                             }
                         }
                         .padding(.top, 4)
@@ -3914,9 +4280,6 @@ private struct BatchTrackMetadataEditor: View {
 
                     GroupBox(model.text("アルバムジャケット", "Album Artwork")) {
                     HStack(spacing: 12) {
-                        Toggle("", isOn: $changeArtwork)
-                            .labelsHidden()
-                            .toggleStyle(.checkbox)
                         if let artworkImage {
                             Image(nsImage: artworkImage)
                                 .resizable()
@@ -3933,10 +4296,15 @@ private struct BatchTrackMetadataEditor: View {
                             Button(model.text("解除", "Clear")) {
                                 artworkData = nil
                                 artworkImage = nil
-                                changeArtwork = false
                             }
                             .buttonStyle(.link)
                             .disabled(isRunning)
+                        }
+                        Spacer()
+                        applyButton(
+                            disabled: artworkData == nil || unsupportedArtworkCount > 0
+                        ) {
+                            apply(BatchMetadataChanges(artworkData: artworkData))
                         }
                     }
                     .padding(.top, 4)
@@ -3951,24 +4319,24 @@ private struct BatchTrackMetadataEditor: View {
                     }
                     }
 
-                    if changeArtwork, unsupportedArtworkCount > 0 {
+                    if unsupportedArtworkCount > 0 {
                         warningText(model.text(
                             "ジャケットはMP3だけに書き込めます。MP3以外が\(unsupportedArtworkCount)曲含まれています。",
                             "Artwork can be written only to MP3. The selection contains \(unsupportedArtworkCount) non-MP3 songs."
                         ))
                     }
-                    if changeCompilation, unsupportedCompilationCount > 0 {
+                    if unsupportedCompilationCount > 0 {
                         warningText(model.text(
                             "コンピレーション（TCMP）はMP3だけに書き込めます。MP3以外が\(unsupportedCompilationCount)曲含まれています。",
                             "Compilation (TCMP) can be written only to MP3. The selection contains \(unsupportedCompilationCount) non-MP3 songs."
                         ))
                     }
-                    if hasInvalidNumber {
+                    if !isValidNumberInput(discNumber) {
                         warningText(model.text("番号には0以上の整数を入力してください。", "Enter a whole number of zero or greater."))
                     }
                     Text(model.text(
-                        "チェックした項目だけを変更します。コンピレーションを有効にしても、曲ごとのアーティスト名は変わりません。",
-                        "Only checked fields change. Enabling Compilation does not alter each song's artist."
+                        "登録ボタンを押した行だけを変更します。コンピレーションを有効にしても、曲ごとのアーティスト名は変わりません。",
+                        "Only the row whose Apply button you press is changed. Enabling Compilation does not alter each song's artist."
                     ))
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -3992,28 +4360,45 @@ private struct BatchTrackMetadataEditor: View {
     }
 
     @ViewBuilder
-    private func batchField(_ title: String, enabled: Binding<Bool>, value: Binding<String>) -> some View {
+    private func batchField(
+        _ title: String,
+        value: Binding<String>,
+        action: @escaping () -> Void
+    ) -> some View {
         HStack(spacing: 12) {
-            Toggle("", isOn: enabled).labelsHidden().toggleStyle(.checkbox)
             Text(title).frame(width: 145, alignment: .leading)
-            TextField("", text: value).disabled(!enabled.wrappedValue)
+            TextField("", text: value)
+            applyButton(action: action)
         }
     }
 
     @ViewBuilder
     private func batchNumberField(
         _ title: String,
-        enabled: Binding<Bool>,
-        value: Binding<String>
+        value: Binding<String>,
+        action: @escaping () -> Void
     ) -> some View {
         HStack(spacing: 12) {
-            Toggle("", isOn: enabled).labelsHidden().toggleStyle(.checkbox)
             Text(title).frame(width: 145, alignment: .leading)
             TextField("", text: value)
                 .frame(width: 90)
-                .disabled(!enabled.wrappedValue)
             Spacer()
+            applyButton(disabled: !isValidNumberInput(value.wrappedValue), action: action)
         }
+    }
+
+    private func applyButton(
+        disabled: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(model.text("登録", "Apply"), action: action)
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .disabled(disabled || isRunning || isFinished)
+    }
+
+    private func apply(_ changes: BatchMetadataChanges) {
+        model.updateMetadata(for: tracks, changes: changes)
     }
 
     private func warningText(_ text: String) -> some View {
@@ -4049,34 +4434,10 @@ private struct BatchTrackMetadataEditor: View {
         } else {
             HStack {
                 Spacer()
-                Button(model.text("キャンセル", "Cancel")) { dismiss() }
+                Button(model.text("閉じる", "Close")) { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button(model.text("\(tracks.count)曲に適用", "Apply to \(tracks.count) Songs")) {
-                    model.updateMetadata(for: tracks, changes: changes)
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(!canApply)
             }
         }
-    }
-
-    private var changes: BatchMetadataChanges {
-        BatchMetadataChanges(
-            artist: changeArtist ? artist : nil,
-            album: changeAlbum ? album : nil,
-            albumArtist: changeAlbumArtist ? albumArtist : nil,
-            genre: changeGenre ? genre : nil,
-            isCompilation: changeCompilation ? isCompilation : nil,
-            discNumber: parsedNumber(discNumber),
-            changesDiscNumber: changeDiscNumber,
-            artworkData: changeArtwork ? artworkData : nil
-        )
-    }
-
-    private var canApply: Bool {
-        !changes.isEmpty && !hasInvalidNumber &&
-            (!changeArtwork || (artworkData != nil && unsupportedArtworkCount == 0)) &&
-            (!changeCompilation || unsupportedCompilationCount == 0)
     }
 
     private var isRunning: Bool { model.batchMetadataProgress.state == .running }
@@ -4088,9 +4449,6 @@ private struct BatchTrackMetadataEditor: View {
     }
     private var unsupportedCompilationCount: Int {
         tracks.lazy.filter { $0.format.lowercased() != "mp3" }.count
-    }
-    private var hasInvalidNumber: Bool {
-        changeDiscNumber && !isValidNumberInput(discNumber)
     }
 
     private func completionText(_ progress: BatchMetadataProgress) -> String {
@@ -4122,7 +4480,6 @@ private struct BatchTrackMetadataEditor: View {
         }
         artworkData = normalized
         artworkImage = NSImage(data: normalized)
-        changeArtwork = true
         artworkPasteError = nil
     }
 
@@ -4146,7 +4503,6 @@ private struct BatchTrackMetadataEditor: View {
         }
         artworkData = normalized
         artworkImage = NSImage(data: normalized)
-        changeArtwork = true
         artworkPasteError = nil
     }
 
@@ -4206,9 +4562,7 @@ private struct LibrarySettingsView: View {
                     Picker(model.text("言語", "Language"), selection: $model.language) {
                         ForEach(AppLanguage.allCases) { Text($0.displayName).tag($0) }
                     }
-                    Picker(model.text("外観", "Appearance"), selection: $model.appearance) {
-                        ForEach(AppearanceMode.allCases) { Text(model.appearanceTitle($0)).tag($0) }
-                    }
+                    AppearanceThemePicker(model: model, selection: $model.appearance)
                     Text(model.text("Wikipediaとニュースは選択言語の版を優先し、外部記事は内部ブラウザで選択言語へ自動翻訳します。", "Wikipedia and news prefer the selected locale. External articles are automatically translated in the internal browser."))
                         .font(.caption).foregroundStyle(.secondary)
                 }
@@ -4547,12 +4901,91 @@ private struct LibrarySettingsView: View {
             focusAPIKeyIfNeeded()
         }
         .frame(width: 760, height: 650)
+        .background(model.appearance.palette.canvas)
+        .tint(model.appearance.palette.accent)
+        .preferredColorScheme(model.appearance.colorScheme)
         .safeAreaInset(edge: .bottom) { HStack { Spacer(); Button(model.text("閉じる", "Close")) { dismiss() }.keyboardShortcut(.defaultAction) }.padding().background(.bar) }
     }
 
     private func focusAPIKeyIfNeeded() {
         guard selectedTab == .ai else { return }
         DispatchQueue.main.async { isAPIKeyFocused = true }
+    }
+}
+
+private struct AppearanceThemePicker: View {
+    @ObservedObject var model: LibraryViewModel
+    @Binding var selection: AppearanceMode
+
+    private let columns = [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10), GridItem(.flexible())]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            themeGroup(model.text("ダーク", "Dark"), modes: [.codexDark, .graphiteDark, .midnightDark])
+            themeGroup(model.text("ライト", "Light"), modes: [.paperLight, .warmLight, .mistLight])
+        }
+    }
+
+    private func themeGroup(_ title: String, modes: [AppearanceMode]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption.bold())
+                .foregroundStyle(.secondary)
+            LazyVGrid(columns: columns, spacing: 10) {
+                ForEach(modes) { mode in
+                    AppearanceThemeCard(
+                        title: model.appearanceTitle(mode),
+                        mode: mode,
+                        isSelected: selection == mode
+                    ) {
+                        selection = mode
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct AppearanceThemeCard: View {
+    let title: String
+    let mode: AppearanceMode
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 0) {
+                    mode.palette.sidebar.frame(width: 28)
+                    mode.palette.library
+                    mode.palette.inspector.frame(width: 30)
+                }
+                .frame(height: 42)
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 7)
+                        .stroke(mode.palette.divider, lineWidth: 1)
+                }
+                HStack(spacing: 5) {
+                    Text(title).lineLimit(1)
+                    Spacer(minLength: 2)
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(isSelected ? mode.palette.accent : Color.secondary)
+                }
+                .font(.caption.weight(isSelected ? .semibold : .regular))
+                .foregroundStyle(mode.isDark ? Color.white : Color.black.opacity(0.82))
+            }
+            .padding(8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(mode.palette.elevated.opacity(isSelected ? 1 : 0.72), in: RoundedRectangle(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(isSelected ? mode.palette.accent : mode.palette.divider, lineWidth: isSelected ? 2 : 1)
+        }
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 
@@ -4733,15 +5166,26 @@ private struct InspectorPlayerControls: View {
     @ObservedObject var player: PlaybackController
     @ObservedObject var model: LibraryViewModel
     @Binding var isMiniPlayer: Bool
+
+    var body: some View {
+        UnifiedPlayerControls(player: player, model: model, isMiniPlayer: $isMiniPlayer, isCompact: false)
+    }
+}
+
+private struct UnifiedPlayerControls: View {
+    @ObservedObject var player: PlaybackController
+    @ObservedObject var model: LibraryViewModel
+    @Binding var isMiniPlayer: Bool
+    let isCompact: Bool
     @State private var isVolumePopoverPresented = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             PlayerArtwork(
                 artworkURL: model.enrichedInfo?.artworkURL,
-                size: 72,
-                cornerRadius: 9,
-                placeholderPointSize: 25
+                size: isCompact ? 44 : 72,
+                cornerRadius: isCompact ? 8 : 9,
+                placeholderPointSize: isCompact ? 17 : 25
             )
             .accessibilityLabel(model.text("アルバムジャケット", "Album artwork"))
 
@@ -4757,13 +5201,15 @@ private struct InspectorPlayerControls: View {
                             .lineLimit(1)
                     }
                     Spacer(minLength: 0)
-                    repeatButton
+                    HStack(spacing: 2) {
+                        shuffleButton
+                        repeatButton
+                    }
                     miniPlayerButton
                     volumeButton
                 }
 
                 HStack(spacing: 8) {
-                    shuffleButton
                     Spacer(minLength: 4)
                     Button(action: player.previous) {
                         Image(systemName: "backward.fill")
@@ -4771,7 +5217,7 @@ private struct InspectorPlayerControls: View {
                     .accessibilityLabel(model.text("前の曲", "Previous Track"))
                     Button(action: player.togglePlayPause) {
                         Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                            .font(.system(size: 34))
+                            .font(.system(size: isCompact ? 27 : 34))
                             .foregroundStyle(Color.accentColor)
                     }
                     .buttonStyle(.plain)
@@ -4801,8 +5247,8 @@ private struct InspectorPlayerControls: View {
             .frame(maxWidth: .infinity)
         }
         .buttonStyle(.borderless)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.horizontal, isCompact ? 12 : 14)
+        .padding(.vertical, isCompact ? 8 : 12)
         .background {
             ZStack {
                 Rectangle().fill(.bar)
@@ -4813,30 +5259,58 @@ private struct InspectorPlayerControls: View {
                 )
             }
         }
+        .clipShape(RoundedRectangle(cornerRadius: isCompact ? 16 : 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: isCompact ? 16 : 14, style: .continuous)
+                .stroke(model.appearance.palette.divider, lineWidth: 1)
+        }
         .overlay(alignment: .leading) {
-            Rectangle()
+            Capsule()
                 .fill(Color.accentColor)
                 .frame(width: 3)
+                .padding(.vertical, 8)
         }
     }
 
     private var shuffleButton: some View {
-        Button(action: player.toggleShuffle) {
+        Menu {
+            Button(action: player.toggleShuffle) {
+                if player.shuffleEnabled && !player.isGlobalShuffleEnabled {
+                    Label(model.text("現在の一覧をランダム再生", "Shuffle Current List"), systemImage: "checkmark")
+                } else {
+                    Text(model.text("現在の一覧をランダム再生", "Shuffle Current List"))
+                }
+            }
+            Divider()
+            Button(action: player.startGlobalShuffle) {
+                if player.isGlobalShuffleEnabled {
+                    Label(model.text("ライブラリ全体をランダム再生", "Shuffle Entire Library"), systemImage: "checkmark")
+                } else {
+                    Label(model.text("ライブラリ全体をランダム再生", "Shuffle Entire Library"), systemImage: "music.note.list")
+                }
+            }
+        } label: {
             Image(systemName: "shuffle")
                 .foregroundStyle(player.shuffleEnabled ? Color.accentColor : Color.secondary)
                 .frame(width: 28, height: 28)
                 .background(player.shuffleEnabled ? Color.accentColor.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: 7))
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
         .help(model.text("ランダム再生", "Shuffle"))
         .accessibilityLabel(model.text("ランダム再生", "Shuffle"))
-        .accessibilityValue(player.shuffleEnabled ? model.text("オン", "On") : model.text("オフ", "Off"))
+        .accessibilityValue(player.isGlobalShuffleEnabled
+            ? model.text("ライブラリ全体", "Entire Library")
+            : (player.shuffleEnabled ? model.text("現在の一覧", "Current List") : model.text("オフ", "Off")))
     }
 
     private var miniPlayerButton: some View {
-        Button { isMiniPlayer = true } label: {
-            Label(model.text("ミニ", "Mini"), systemImage: "pip")
+        Button { isMiniPlayer.toggle() } label: {
+            Label(
+                isCompact ? model.text("通常", "Full") : model.text("ミニ", "Mini"),
+                systemImage: isCompact ? "arrow.up.left.and.arrow.down.right" : "pip"
+            )
                 .labelStyle(.iconOnly)
                 .font(.caption)
                 .frame(width: 30, height: 28)
@@ -4844,8 +5318,8 @@ private struct InspectorPlayerControls: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(model.text("ミニプレイヤーに切り替え", "Switch to Mini Player"))
-        .accessibilityLabel(model.text("ミニプレイヤーに切り替え", "Switch to Mini Player"))
+        .help(isCompact ? model.text("通常画面に戻す", "Return to Full Player") : model.text("ミニプレイヤーに切り替え", "Switch to Mini Player"))
+        .accessibilityLabel(isCompact ? model.text("通常画面に戻す", "Return to Full Player") : model.text("ミニプレイヤーに切り替え", "Switch to Mini Player"))
     }
 
     private var repeatButton: some View {
@@ -4870,6 +5344,7 @@ private struct InspectorPlayerControls: View {
                 .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
         .help(model.text("リピート", "Repeat"))
         .accessibilityLabel(model.text("リピート", "Repeat"))
         .accessibilityValue(repeatModeTitle(player.repeatMode))
@@ -4944,69 +5419,10 @@ struct MiniPlayerView: View {
     @Binding var isMiniPlayer: Bool
 
     var body: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 10) {
-                PlayerArtwork(
-                    artworkURL: model.enrichedInfo?.artworkURL,
-                    size: 44,
-                    cornerRadius: 8,
-                    placeholderPointSize: 17
-                )
-                .accessibilityLabel(model.text("アルバムジャケット", "Album artwork"))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(player.currentTrack?.title ?? model.text("再生していません", "Not Playing"))
-                        .font(.headline)
-                        .lineLimit(1)
-                    Text(player.currentTrack?.artist ?? "").font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                }
-                Spacer()
-                Button { isMiniPlayer = false } label: {
-                    Image(systemName: "arrow.up.left.and.arrow.down.right")
-                }
-                .buttonStyle(.borderless)
-                .help(model.text("通常画面に戻す", "Return to Full Player"))
-            }
-
-            HStack(spacing: 6) {
-                Text(format(player.elapsed))
-                Slider(value: Binding(
-                    get: { player.elapsed },
-                    set: { value in player.seek(to: value) }
-                ), in: 0...max(1, player.duration))
-                .accessibilityLabel(model.text("再生位置", "Playback Position"))
-                Text(format(player.duration))
-            }
-            .font(.caption2)
-            .monospacedDigit()
-            .foregroundStyle(.secondary)
-
-            HStack(spacing: 10) {
-                Button(action: player.previous) { Image(systemName: "backward.fill") }
-                Button(action: player.togglePlayPause) {
-                    Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                        .font(.system(size: 27))
-                }
-                .buttonStyle(.plain)
-                Button(action: player.next) { Image(systemName: "forward.fill") }
-                Spacer()
-                Image(systemName: "speaker.fill").foregroundStyle(.secondary)
-                Slider(value: $player.volume, in: 0...1)
-                    .frame(width: 82)
-                    .accessibilityLabel(model.text("音量", "Volume"))
-            }
-            .buttonStyle(.borderless)
-        }
-        .padding(.horizontal, 12)
-        .padding(.top, 4)
-        .padding(.bottom, 8)
+        UnifiedPlayerControls(player: player, model: model, isMiniPlayer: $isMiniPlayer, isCompact: true)
         .frame(width: 390, height: 132)
-        .background(.ultraThinMaterial)
+        .background(WindowAppearanceSynchronizer(mode: model.appearance).frame(width: 0, height: 0))
         .onAppear { model.enrich(player.currentTrack) }
         .onChange(of: player.currentTrack) { _, track in model.enrich(track) }
-    }
-
-    private func format(_ seconds: Double) -> String {
-        guard seconds.isFinite else { return "0:00" }
-        return String(format: "%d:%02d", Int(seconds) / 60, Int(seconds) % 60)
     }
 }

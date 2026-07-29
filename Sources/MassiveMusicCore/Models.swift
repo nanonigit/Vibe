@@ -152,7 +152,7 @@ public enum MetadataIssueKind: String, CaseIterable, Identifiable, Equatable, Se
     public var id: String { rawValue }
 }
 
-public enum MetadataField: String, CaseIterable, Identifiable, Sendable {
+public enum MetadataField: String, CaseIterable, Identifiable, Hashable, Sendable {
     case title
     case artist
     case album
@@ -956,6 +956,11 @@ public struct Facet: Identifiable, Hashable, Sendable {
     public let name: String
     public let count: Int
     public var id: String { name }
+
+    public init(name: String, count: Int) {
+        self.name = name
+        self.count = count
+    }
 }
 
 public struct AlbumSummary: Identifiable, Hashable, Sendable {

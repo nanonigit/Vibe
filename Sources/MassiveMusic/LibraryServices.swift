@@ -446,6 +446,8 @@ actor MusicBrainzMetadataService {
     private let session: URLSession
     private var lastRequestAt: ContinuousClock.Instant?
     private let clock = ContinuousClock()
+    private var genreCache: [String: GenreSuggestion] = [:]
+    private var genreNoMatchCache: Set<String> = []
 
     init() {
         let configuration = URLSessionConfiguration.ephemeral
@@ -471,6 +473,106 @@ actor MusicBrainzMetadataService {
             if !albumMatches.isEmpty { return albumMatches }
         }
         return try await request(terms: terms, matching: track)
+    }
+
+    func genreSuggestion(for track: Track, language: String) async throws -> GenreSuggestion? {
+        let album = track.album.trimmingCharacters(in: .whitespacesAndNewlines)
+        let artist = (track.albumArtist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? track.artist : track.albumArtist).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !album.isEmpty, !artist.isEmpty else { return nil }
+
+        let cacheKey = "\(normalized(album))|\(normalized(artist))"
+        if let cached = genreCache[cacheKey] { return cached }
+        if genreNoMatchCache.contains(cacheKey) { return nil }
+
+        struct ArtistCredit: Decodable {
+            let name: String
+            let joinphrase: String?
+        }
+        struct ReleaseGroup: Decodable {
+            let id: String
+            let title: String
+            let score: Int?
+            let artistCredit: [ArtistCredit]?
+
+            enum CodingKeys: String, CodingKey {
+                case id, title, score
+                case artistCredit = "artist-credit"
+            }
+        }
+        struct SearchResponse: Decodable {
+            let releaseGroups: [ReleaseGroup]
+
+            enum CodingKeys: String, CodingKey {
+                case releaseGroups = "release-groups"
+            }
+        }
+        struct Genre: Decodable {
+            let name: String
+            let count: Int?
+        }
+        struct LookupResponse: Decodable {
+            let genres: [Genre]?
+        }
+
+        var search = URLComponents(string: "https://musicbrainz.org/ws/2/release-group/")!
+        search.queryItems = [
+            URLQueryItem(
+                name: "query",
+                value: "releasegroup:\"\(quotedPhrase(album))\" AND artist:\"\(quotedPhrase(artist))\""
+            ),
+            URLQueryItem(name: "fmt", value: "json"),
+            URLQueryItem(name: "limit", value: "5")
+        ]
+        guard let searchURL = search.url else { throw MusicMetadataLookupError.invalidResponse }
+        let searchData = try await throttledData(from: searchURL)
+        let response = try JSONDecoder().decode(SearchResponse.self, from: searchData)
+        let match = response.releaseGroups.first { candidate in
+            let creditedArtist = candidate.artistCredit?.map { $0.name + ($0.joinphrase ?? "") }.joined() ?? ""
+            return (candidate.score ?? 0) >= 90
+                && normalized(candidate.title) == normalized(album)
+                && normalized(creditedArtist) == normalized(artist)
+        }
+        guard let match else {
+            genreNoMatchCache.insert(cacheKey)
+            return nil
+        }
+
+        let lookupURL = URL(string: "https://musicbrainz.org/ws/2/release-group/\(match.id)?inc=genres&fmt=json")!
+        let lookupData = try await throttledData(from: lookupURL)
+        let lookup = try JSONDecoder().decode(LookupResponse.self, from: lookupData)
+        guard let genre = lookup.genres?
+            .filter({ !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+            .sorted(by: { ($0.count ?? 0) > ($1.count ?? 0) })
+            .first else {
+            genreNoMatchCache.insert(cacheKey)
+            return nil
+        }
+
+        let suggestion = GenreSuggestion(
+            genre: genre.name,
+            confidence: 0.90,
+            rationale: language == "ja"
+                ? "MusicBrainzの一致アルバムに登録されたジャンルです。"
+                : "Genre registered on the matching MusicBrainz release group.",
+            source: .musicBrainz
+        )
+        genreCache[cacheKey] = suggestion
+        return suggestion
+    }
+
+    private func throttledData(from url: URL) async throws -> Data {
+        if let lastRequestAt {
+            let elapsed = lastRequestAt.duration(to: clock.now)
+            let minimumInterval = Duration.milliseconds(1_100)
+            if elapsed < minimumInterval { try await clock.sleep(for: minimumInterval - elapsed) }
+        }
+        try Task.checkCancellation()
+        lastRequestAt = clock.now
+        let (data, response) = try await session.data(from: url)
+        guard let http = response as? HTTPURLResponse else { throw MusicMetadataLookupError.invalidResponse }
+        guard http.statusCode == 200 else { throw MusicMetadataLookupError.serviceUnavailable(http.statusCode) }
+        return data
     }
 
     private func request(terms: [String], matching track: Track) async throws -> [MusicMetadataCandidate] {
@@ -562,6 +664,11 @@ actor MusicBrainzMetadataService {
     private func quotedPhrase(_ value: String) -> String {
         value.replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
+    }
+
+    private func normalized(_ value: String) -> String {
+        value.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: .current)
+            .filter { $0.isLetter || $0.isNumber }
     }
 }
 

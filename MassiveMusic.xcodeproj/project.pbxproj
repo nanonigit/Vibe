@@ -23,6 +23,7 @@
 		5ED317B158BF91E15FAAB001 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5765F04AD4E45D554B4FACB /* AppEnvironment.swift */; };
 		61C9B0CC945519771ACB25E3 /* AudioMetadataWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D65C5F2911C29C43704DB0E /* AudioMetadataWriter.swift */; };
 		684B6E76C8A2B5AB3FC6C0E8 /* LibraryScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8D4ED5E9A2C8A672C38B39B /* LibraryScanner.swift */; };
+		6CD3018A3425C02524E0DD56 /* BPMDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE1F91D5C6C504912E396C7D /* BPMDetector.swift */; };
 		76894A5A059F88B1B80C07BF /* MassiveMusicCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1D6D0D4E68792929A77AF7CA /* MassiveMusicCore.framework */; };
 		7AAFC97D55DCF728E28C6CF9 /* MassiveMusicCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 1D6D0D4E68792929A77AF7CA /* MassiveMusicCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		7EA47FDE38F08E0FCA3CB43D /* MetadataDiagnosticsAnalyzer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EEC747A5909F9C60375360D /* MetadataDiagnosticsAnalyzer.swift */; };
@@ -127,6 +128,7 @@
 		ADBB1CD1634FECCBA83CA7F5 /* M4AMetadataWriter.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = M4AMetadataWriter.m; sourceTree = "<group>"; };
 		B0E2E7F2C9825630F71DA352 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		B96F2D83339C0CDFD2B6859A /* ScannerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScannerTests.swift; sourceTree = "<group>"; };
+		BE1F91D5C6C504912E396C7D /* BPMDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BPMDetector.swift; sourceTree = "<group>"; };
 		D0672AB5C7130083E02762AC /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		D5765F04AD4E45D554B4FACB /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
 		D59077B85F29D508DAF5A884 /* LibraryDatabaseTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryDatabaseTests.swift; sourceTree = "<group>"; };
@@ -210,6 +212,7 @@
 			isa = PBXGroup;
 			children = (
 				D5765F04AD4E45D554B4FACB /* AppEnvironment.swift */,
+				BE1F91D5C6C504912E396C7D /* BPMDetector.swift */,
 				FFBDB49C2B1FE5C166380C4F /* ContentView.swift */,
 				7E88BA9AEC868BB617DEDBF5 /* InternalBrowserView.swift */,
 				2827A15AB32741F45EAE670D /* LibraryServices.swift */,
@@ -485,6 +488,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				5ED317B158BF91E15FAAB001 /* AppEnvironment.swift in Sources */,
+				6CD3018A3425C02524E0DD56 /* BPMDetector.swift in Sources */,
 				E567D5596132AE0E15DA5890 /* ContentView.swift in Sources */,
 				F6B23BF4E11F73A311F167E4 /* InternalBrowserView.swift in Sources */,
 				BEBC5E78750B5DC25608075D /* LibraryServices.swift in Sources */,

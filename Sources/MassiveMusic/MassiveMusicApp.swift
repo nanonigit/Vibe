@@ -25,18 +25,36 @@ struct MassiveMusicApp: App {
 private struct PlayerWindowRoot: View {
     @ObservedObject var environment: AppEnvironment
     @State private var isMiniPlayer = false
-    @State private var expandedSize = CGSize(width: 1_280, height: 800)
+    @State private var expandedFrame: NSRect?
+    private let playerWindowFrameStorageKey = "player.window.expandedFrame.v1"
+
+    private var miniPlayerBinding: Binding<Bool> {
+        Binding(
+            get: { isMiniPlayer },
+            set: { mini in
+                if mini,
+                   let window = NSApplication.shared.keyWindow ?? NSApplication.shared.mainWindow {
+                    expandedFrame = window.frame
+                    saveExpandedFrame(window.frame)
+                }
+                isMiniPlayer = mini
+            }
+        )
+    }
 
     var body: some View {
         Group {
             if let model = environment.model, let player = environment.player {
                 if isMiniPlayer {
-                    MiniPlayerView(player: player, model: model, isMiniPlayer: $isMiniPlayer)
+                    MiniPlayerView(player: player, model: model, isMiniPlayer: miniPlayerBinding)
                         .preferredColorScheme(model.appearance.colorScheme)
+                        .tint(model.appearance.palette.accent)
+                        .background(model.appearance.palette.canvas)
                         .background(MiniPlayerWindowSizeLock(size: NSSize(width: 390, height: 132)))
                 } else {
-                    ContentView(model: model, player: player, isMiniPlayer: $isMiniPlayer)
+                    ContentView(model: model, player: player, isMiniPlayer: miniPlayerBinding)
                         .frame(minWidth: 980, minHeight: 640)
+                        .preferredColorScheme(model.appearance.colorScheme)
                 }
             } else {
                 ContentUnavailableView(
@@ -47,15 +65,36 @@ private struct PlayerWindowRoot: View {
                 .frame(minWidth: 980, minHeight: 640)
             }
         }
-        .onAppear { fitWindowToVisibleScreen() }
+        .onAppear {
+            restoreWindowFrame()
+            synchronizeWindowAppearance()
+        }
         .onChange(of: isMiniPlayer) { _, mini in resizeWindow(mini: mini) }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMoveNotification)) {
+            persistNormalWindowFrame(from: $0)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResizeNotification)) {
+            persistNormalWindowFrame(from: $0)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) {
+            persistWindowFrameBeforeClosing(from: $0)
+        }
+    }
+
+    private func synchronizeWindowAppearance() {
+        guard let mode = environment.model?.appearance else { return }
+        let appearance = NSAppearance(named: mode.isDark ? .darkAqua : .aqua)
+        NSApplication.shared.appearance = appearance
+        for window in NSApplication.shared.windows {
+            window.appearance = appearance
+            window.contentView?.needsDisplay = true
+        }
     }
 
     private func resizeWindow(mini: Bool) {
         DispatchQueue.main.async {
             guard let window = NSApplication.shared.keyWindow ?? NSApplication.shared.mainWindow else { return }
             if mini {
-                expandedSize = window.contentLayoutRect.size
                 window.styleMask.remove(.resizable)
                 window.standardWindowButton(.zoomButton)?.isEnabled = false
                 let miniSize = NSSize(width: 390, height: 132)
@@ -74,17 +113,55 @@ private struct PlayerWindowRoot: View {
                 )
                 window.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
                 window.minSize = NSSize(width: 980, height: 640)
-                window.setContentSize(NSSize(width: max(980, expandedSize.width), height: max(640, expandedSize.height)))
+                if let restoredFrame = expandedFrame {
+                    window.setFrame(restoredFrame, display: true, animate: false)
+                }
             }
             fit(window: window)
         }
     }
 
-    private func fitWindowToVisibleScreen() {
+    private func restoreWindowFrame() {
         DispatchQueue.main.async {
             guard let window = NSApplication.shared.keyWindow ?? NSApplication.shared.mainWindow else { return }
+            if let value = UserDefaults.standard.string(forKey: playerWindowFrameStorageKey) {
+                let restoredFrame = NSRectFromString(value)
+                if restoredFrame.width >= 980, restoredFrame.height >= 640 {
+                    expandedFrame = restoredFrame
+                    window.setFrame(restoredFrame, display: true, animate: false)
+                }
+            }
             fit(window: window)
         }
+    }
+
+    private func persistNormalWindowFrame(from notification: Notification) {
+        guard !isMiniPlayer,
+              let window = notification.object as? NSWindow,
+              window == NSApplication.shared.keyWindow || window == NSApplication.shared.mainWindow else { return }
+        expandedFrame = window.frame
+        saveExpandedFrame(window.frame)
+    }
+
+    private func persistWindowFrameBeforeClosing(from notification: Notification) {
+        guard let window = notification.object as? NSWindow,
+              window == NSApplication.shared.keyWindow || window == NSApplication.shared.mainWindow else { return }
+        if isMiniPlayer {
+            if let expandedFrame { saveExpandedFrame(expandedFrame) }
+        } else {
+            expandedFrame = window.frame
+            saveExpandedFrame(window.frame)
+        }
+    }
+
+    private func saveExpandedFrame(_ frame: NSRect) {
+        guard !isMiniPlayer else {
+            if let expandedFrame {
+                UserDefaults.standard.set(NSStringFromRect(expandedFrame), forKey: playerWindowFrameStorageKey)
+            }
+            return
+        }
+        UserDefaults.standard.set(NSStringFromRect(frame), forKey: playerWindowFrameStorageKey)
     }
 
     private func fit(window: NSWindow) {
@@ -96,6 +173,26 @@ private struct PlayerWindowRoot: View {
         frame.origin.x = min(max(frame.origin.x, visible.minX), visible.maxX - frame.width)
         frame.origin.y = min(max(frame.origin.y, visible.minY), visible.maxY - frame.height)
         window.setFrame(frame, display: true, animate: false)
+    }
+}
+
+struct WindowAppearanceSynchronizer: NSViewRepresentable {
+    let mode: AppearanceMode
+
+    func makeNSView(context: Context) -> NSView {
+        NSView(frame: .zero)
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        let appearance = NSAppearance(named: mode.isDark ? .darkAqua : .aqua)
+        DispatchQueue.main.async {
+            NSApplication.shared.appearance = appearance
+            for window in NSApplication.shared.windows {
+                window.appearance = appearance
+                window.contentView?.needsDisplay = true
+            }
+            nsView.window?.appearance = appearance
+        }
     }
 }
 

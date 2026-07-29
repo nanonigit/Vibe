@@ -13,13 +13,168 @@ enum AppLanguage: String, CaseIterable, Identifiable {
     var locale: Locale { Locale(identifier: rawValue) }
 }
 
+struct AppearancePalette {
+    let canvas: Color
+    let sidebar: Color
+    let library: Color
+    let inspector: Color
+    let elevated: Color
+    let divider: Color
+    let selection: Color
+    let accent: Color
+}
+
 enum AppearanceMode: String, CaseIterable, Identifiable {
-    case system
-    case light
-    case dark
+    case codexDark
+    case graphiteDark
+    case midnightDark
+    case paperLight
+    case warmLight
+    case mistLight
+
     var id: String { rawValue }
     var colorScheme: ColorScheme? {
-        switch self { case .system: nil; case .light: .light; case .dark: .dark }
+        isDark ? .dark : .light
+    }
+    var isDark: Bool {
+        switch self {
+        case .codexDark, .graphiteDark, .midnightDark: true
+        case .paperLight, .warmLight, .mistLight: false
+        }
+    }
+    var palette: AppearancePalette {
+        switch self {
+        case .codexDark:
+            AppearancePalette(
+                canvas: Color(red: 0.070, green: 0.073, blue: 0.078),
+                sidebar: Color(red: 0.125, green: 0.128, blue: 0.135),
+                library: Color(red: 0.087, green: 0.090, blue: 0.096),
+                inspector: Color(red: 0.105, green: 0.108, blue: 0.114),
+                elevated: Color(red: 0.155, green: 0.158, blue: 0.166),
+                divider: Color.white.opacity(0.13),
+                selection: Color(red: 0.255, green: 0.490, blue: 0.960),
+                accent: Color(red: 0.350, green: 0.580, blue: 1.000)
+            )
+        case .graphiteDark:
+            AppearancePalette(
+                canvas: Color(red: 0.090, green: 0.090, blue: 0.094),
+                sidebar: Color(red: 0.145, green: 0.145, blue: 0.150),
+                library: Color(red: 0.108, green: 0.108, blue: 0.113),
+                inspector: Color(red: 0.125, green: 0.125, blue: 0.132),
+                elevated: Color(red: 0.180, green: 0.180, blue: 0.188),
+                divider: Color.white.opacity(0.14),
+                selection: Color(red: 0.565, green: 0.510, blue: 0.790),
+                accent: Color(red: 0.690, green: 0.620, blue: 0.940)
+            )
+        case .midnightDark:
+            AppearancePalette(
+                canvas: Color(red: 0.035, green: 0.055, blue: 0.085),
+                sidebar: Color(red: 0.060, green: 0.090, blue: 0.130),
+                library: Color(red: 0.045, green: 0.070, blue: 0.105),
+                inspector: Color(red: 0.055, green: 0.082, blue: 0.120),
+                elevated: Color(red: 0.085, green: 0.120, blue: 0.165),
+                divider: Color(red: 0.390, green: 0.620, blue: 0.850).opacity(0.22),
+                selection: Color(red: 0.060, green: 0.570, blue: 0.720),
+                accent: Color(red: 0.190, green: 0.720, blue: 0.890)
+            )
+        case .paperLight:
+            AppearancePalette(
+                canvas: Color(red: 0.955, green: 0.958, blue: 0.965),
+                sidebar: Color(red: 0.915, green: 0.922, blue: 0.935),
+                library: Color(red: 0.985, green: 0.986, blue: 0.990),
+                inspector: Color(red: 0.940, green: 0.945, blue: 0.955),
+                elevated: Color.white,
+                divider: Color.black.opacity(0.13),
+                selection: Color(red: 0.180, green: 0.430, blue: 0.850),
+                accent: Color(red: 0.100, green: 0.390, blue: 0.820)
+            )
+        case .warmLight:
+            AppearancePalette(
+                canvas: Color(red: 0.970, green: 0.950, blue: 0.910),
+                sidebar: Color(red: 0.930, green: 0.900, blue: 0.845),
+                library: Color(red: 0.990, green: 0.978, blue: 0.948),
+                inspector: Color(red: 0.950, green: 0.925, blue: 0.880),
+                elevated: Color(red: 1.000, green: 0.992, blue: 0.972),
+                divider: Color(red: 0.350, green: 0.270, blue: 0.180).opacity(0.18),
+                selection: Color(red: 0.780, green: 0.390, blue: 0.160),
+                accent: Color(red: 0.750, green: 0.330, blue: 0.100)
+            )
+        case .mistLight:
+            AppearancePalette(
+                canvas: Color(red: 0.925, green: 0.950, blue: 0.955),
+                sidebar: Color(red: 0.875, green: 0.915, blue: 0.925),
+                library: Color(red: 0.965, green: 0.978, blue: 0.980),
+                inspector: Color(red: 0.900, green: 0.935, blue: 0.940),
+                elevated: Color(red: 0.985, green: 0.995, blue: 0.995),
+                divider: Color(red: 0.110, green: 0.300, blue: 0.340).opacity(0.17),
+                selection: Color(red: 0.050, green: 0.500, blue: 0.540),
+                accent: Color(red: 0.020, green: 0.440, blue: 0.490)
+            )
+        }
+    }
+}
+
+enum GenreDescriptionCatalog {
+    static func shortDescription(for genre: String, language: AppLanguage) -> String {
+        let value = descriptions(for: genre)
+        return language == .japanese ? value.jaShort : value.enShort
+    }
+
+    static func detailDescription(for genre: String, language: AppLanguage) -> String {
+        let value = descriptions(for: genre)
+        return language == .japanese ? value.jaDetail : value.enDetail
+    }
+
+    private static func descriptions(for genre: String) -> (jaShort: String, enShort: String, jaDetail: String, enDetail: String) {
+        let key = genre.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current).lowercased()
+        switch key {
+        case "ambient":
+            return ("空間や質感を重視する穏やかな音楽", "Atmospheric music centered on space and texture", "旋律やビートよりも音色、余韻、空間の変化を重視し、環境に溶け込むように聴かせる音楽です。", "Music that emphasizes timbre, resonance, and evolving space more than melody or beat, often blending into its surroundings.")
+        case "classical":
+            return ("オーケストラや室内楽を含む伝統的な芸術音楽", "Traditional art music from orchestral to chamber works", "長い歴史の中で発展した作曲形式と演奏法を基盤に、管弦楽、室内楽、独奏、声楽などを含みます。", "A broad tradition built on established compositional forms and performance practice, including orchestral, chamber, solo, and vocal works.")
+        case "flamenco":
+            return ("歌・ギター・踊りが生むスペイン南部の音楽", "Southern Spanish music joining voice, guitar, and dance", "アンダルシアを中心に育ち、強いリズム、情感豊かな歌、打楽器的なギター奏法を特徴とします。", "Rooted in Andalusia, with forceful rhythmic cycles, expressive singing, and highly percussive guitar technique.")
+        case "funk":
+            return ("ベースとドラムの反復グルーヴを重視", "Built around repeating bass-and-drum grooves", "強調された1拍目、シンコペーション、短い反復フレーズによって身体的なグルーヴを作る音楽です。", "Music driven by a strong downbeat, syncopation, and short repeating phrases that create a physical groove.")
+        case "grunge":
+            return ("歪んだギターと内省的な歌詞の90年代ロック", "1990s rock with distorted guitars and introspective lyrics", "パンクの直接性とヘヴィなギターを結び、粗い音像や内省的な感情表現を特徴とします。", "Combines punk directness with heavy guitars, raw production, and often introspective emotional themes.")
+        case "j-pop":
+            return ("日本の歌謡性と現代的制作を組み合わせたポップ", "Japanese pop combining strong melody and modern production", "親しみやすい旋律を軸に、ロック、電子音楽、ダンスなど幅広い要素を取り込む日本のポップ音楽です。", "Japanese pop built on memorable melodies while freely absorbing rock, electronic, dance, and other contemporary styles.")
+        case "j-rock":
+            return ("日本で発展した多彩なロック音楽", "Diverse rock styles developed in Japan", "日本語の歌唱と独自の旋律感を軸に、ポップ、パンク、メタル、オルタナティブなどを横断します。", "Japanese rock spanning pop, punk, metal, and alternative styles, often shaped by Japanese-language phrasing and distinctive melody.")
+        case "jazz":
+            return ("即興、スウィング、豊かな和声が中心", "Centered on improvisation, swing, and rich harmony", "即興演奏、リズムの揺らぎ、拡張された和声を核に、時代や地域ごとに多くのスタイルへ発展しました。", "Built on improvisation, flexible rhythm, and extended harmony, with many styles evolving across eras and regions.")
+        case "blues rock":
+            return ("ブルースの語法を強いロック演奏で表現", "Blues vocabulary delivered with powerful rock instrumentation", "ブルースの音階、反復進行、ギター表現を、増幅されたロックの音圧と推進力で演奏します。", "Uses blues scales, repeating progressions, and expressive guitar within the louder, more driving sound of rock.")
+        case "hard rock":
+            return ("力強いリフと大きなドラムの重厚なロック", "Heavy rock powered by strong riffs and big drums", "歪んだギターリフ、押しの強いリズム、力強い歌唱を前面に出すロックです。", "Rock that foregrounds distorted guitar riffs, forceful rhythms, and powerful vocals.")
+        case "heavy metal":
+            return ("重いギター、強い音圧、劇的な展開", "Heavy guitars, high intensity, and dramatic arrangements", "強く歪んだギターと重厚なリズムを基盤に、技巧性や劇的な構成を発展させた音楽です。", "Music built on heavily distorted guitars and weighty rhythms, often extending into technical playing and dramatic forms.")
+        case "power metal":
+            return ("速い演奏と高揚感のある旋律を持つメタル", "Fast, uplifting metal with soaring melodies", "疾走感あるリズム、高音域の歌唱、英雄的・幻想的な旋律や物語性を特徴とします。", "Characterized by driving tempos, high-register vocals, and uplifting heroic or fantasy-inspired melodies.")
+        case "progressive rock":
+            return ("変拍子や長い構成で探究するロック", "Exploratory rock with odd meters and extended forms", "複雑な拍子、長尺の構成、音色の変化を用いて、アルバム単位の物語性や実験性を追求します。", "Uses complex meters, extended structures, and changing textures to pursue experimentation and album-scale narratives.")
+        case "thrash metal":
+            return ("高速リフと攻撃的なリズムのメタル", "Metal driven by fast riffs and aggressive rhythm", "刻みの細かい高速ギター、強烈なドラム、鋭い歌唱で切迫したエネルギーを生みます。", "Creates urgent energy through rapid palm-muted guitar, forceful drums, and incisive vocals.")
+        case "rap metal":
+            return ("ラップのリズムと重いギターを融合", "Fuses rhythmic rap delivery with heavy guitars", "ヒップホップのフロウやビート感を、メタルの歪んだリフと強いバンド演奏に結びつけます。", "Links hip-hop flow and rhythmic phrasing with distorted metal riffs and forceful band performance.")
+        case "french pop":
+            return ("フランス語の歌唱を中心とする洗練されたポップ", "Polished pop centered on French-language vocals", "フランス語の響きと歌詞表現を中心に、シャンソンから電子音楽まで多様な要素を取り入れます。", "French-language pop drawing on chanson, electronic music, and other styles while emphasizing vocal phrasing and lyrics.")
+        case "indie pop":
+            return ("親密な表現と軽やかな旋律の独立系ポップ", "Independent pop with intimate character and light melodies", "親しみやすい旋律に、手作り感のある音作りや個人的な歌詞を組み合わせる傾向があります。", "Often combines approachable melodies with handmade production character and personal songwriting.")
+        case "instrumental rock":
+            return ("歌唱なしで楽器の展開を聴かせるロック", "Rock that develops through instruments rather than vocals", "ボーカルを中心に置かず、ギターやリズム隊の旋律、音色、ダイナミクスで曲を展開します。", "Develops through instrumental melody, texture, rhythm, and dynamics instead of a lead vocal.")
+        case "folk metal":
+            return ("民族楽器や伝承旋律とメタルを融合", "Fuses folk instruments and traditional melody with metal", "地域の伝統旋律や民族楽器を、重いギターとメタルのリズムに組み合わせます。", "Combines regional traditional melodies and folk instruments with heavy guitars and metal rhythm.")
+        case "other":
+            return ("既存の大分類に収まりにくい音楽", "Music that does not fit a broad established category", "複数ジャンルの混合や独自性が強く、現在の大分類だけでは表しにくい曲をまとめています。", "A holding category for strongly hybrid or distinctive music that current broad labels do not describe well.")
+        default:
+            if key.contains("metal") { return ("重いギターと強いリズムを軸にしたメタル", "Metal centered on heavy guitars and forceful rhythm", "重いギターと強いリズムを共通項とするメタル系の音楽です。詳しい特徴はサブジャンルにより異なります。", "Metal music sharing heavy guitars and forceful rhythm; detailed traits vary by subgenre.") }
+            if key.contains("rock") { return ("ギターとバンド演奏を軸にしたロック", "Rock centered on guitars and band performance", "ギター、ベース、ドラムを中心とするロック系の音楽です。時代や地域により表現は大きく異なります。", "Rock centered on guitar, bass, and drums, with expression varying widely by era and region.") }
+            if key.contains("pop") { return ("親しみやすい旋律を重視するポップ", "Pop focused on accessible, memorable melody", "覚えやすい旋律と明快な構成を重視するポップ系の音楽です。", "Pop music emphasizing memorable melody and clear, accessible song structures.") }
+            if key.contains("rap") || key.contains("hip hop") { return ("言葉のリズムとビートを中心とする音楽", "Music centered on rhythmic words and beats", "ラップのフロウ、ビート、サンプリングや反復を軸に展開する音楽です。", "Music built around rap flow, beats, sampling, and repetition.") }
+            return ("\(genre)に分類された音楽", "Music classified as \(genre)", "\(genre)に分類された曲です。特徴は地域、時代、サブジャンルによって異なります。", "Tracks classified as \(genre); characteristics vary by region, era, and subgenre.")
+        }
     }
 }
 
@@ -92,6 +247,10 @@ struct MetadataRepairRequest: Identifiable, Sendable {
 
 private struct BrowseReturnState {
     let section: LibrarySection
+    let diagnosticKind: MetadataIssueKind
+    let variationFieldFilter: MetadataField?
+    let metadataIssueFieldFilter: MetadataField?
+    let exactMetadataFilter: ExactMetadataFilter?
     let sort: TrackSort
     let sortDirection: SortDirection
     let searchText: String
@@ -105,10 +264,16 @@ private struct BrowseReturnState {
     let usesDirectOffsetPaging: Bool
     let selectedTrackIDs: Set<Int64>
     let selectedIndexToken: String?
+    let trackScrollPosition: Int64?
+    let variationScrollPosition: Int64?
+    let variationScrollFallbackIDs: [Int64]
 }
 
 @MainActor
 final class LibraryViewModel: ObservableObject {
+    private static let defaultLibrarySectionOrder: [LibrarySection] = [.cache, .artists, .albums, .tracks, .genres, .favorites]
+    private static let defaultHiddenLibrarySections: Set<LibrarySection> = [.recentlyAdded, .upNext, .folders]
+
     @Published var section: LibrarySection = .tracks
     @Published private(set) var librarySectionOrder: [LibrarySection] = []
     @Published private(set) var hiddenLibrarySections: Set<LibrarySection> = []
@@ -131,11 +296,21 @@ final class LibraryViewModel: ObservableObject {
     @Published private(set) var playlists: [Playlist] = []
     @Published var selectedTrackIDs: Set<Int64> = []
     @Published var selectedIndexToken: String?
+    @Published var trackScrollPosition: Int64?
+    @Published var variationScrollPosition: Int64?
+    @Published private(set) var needsBrowseScrollRestoration = false
     @Published var selectedPlaylistID: Int64?
     @Published private(set) var offset = 0
     @Published private(set) var totalCount = 0
     @Published private(set) var favoriteTrackCount = 0
     @Published private(set) var recentlyAddedTrackCount = 0
+    @Published private(set) var libraryTrackCount = 0
+    @Published private(set) var libraryAlbumCount = 0
+    @Published private(set) var libraryArtistCount = 0
+    @Published private(set) var libraryGenreCount = 0
+    @Published private(set) var libraryFolderCount = 0
+    @Published private(set) var cachedTrackCount = 0
+    @Published private(set) var cachedStorageBytes: Int64 = 0
     @Published private(set) var isLoading = false
 
     var isStorageExternal: Bool {
@@ -166,6 +341,7 @@ final class LibraryViewModel: ObservableObject {
     @Published private(set) var driveMessage: String?
     @Published private(set) var errorMessage: String?
     @Published private(set) var metadataRepairRequest: MetadataRepairRequest?
+    @Published private(set) var lastMetadataEditedTrack: Track?
     @Published private(set) var pendingImports: [PendingImport] = []
     @Published private(set) var storageDestinations: [StorageDestination] = []
     @Published private(set) var primaryStorageIsConnected = false
@@ -203,6 +379,8 @@ final class LibraryViewModel: ObservableObject {
     @Published var diagnosticKind: MetadataIssueKind = .missingArtist
     @Published private(set) var diagnosticSummaries: [MetadataIssueSummary] = []
     @Published private(set) var variationCandidates: [MetadataVariationCandidate] = []
+    @Published var variationFieldFilter: MetadataField?
+    @Published var metadataIssueFieldFilter: MetadataField?
     @Published private(set) var exactMetadataFilter: ExactMetadataFilter?
     @Published private(set) var metadataAnalysisProgress = MetadataAnalysisProgress.idle
     @Published private(set) var isAnalyzingMetadata = false
@@ -215,6 +393,20 @@ final class LibraryViewModel: ObservableObject {
     @Published private(set) var aiFallbackMessage: String?
     @Published private(set) var genreSuggestion: GenreSuggestion?
     @Published private(set) var isClassifyingGenre = false
+    @Published private(set) var isScanningAutomaticGenres = false
+    @Published private(set) var automaticGenreScanProcessedCount = 0
+    @Published private(set) var automaticGenreScanTotalCount = 0
+    @Published private(set) var automaticGenreRegisteredCount = 0
+    @Published private(set) var automaticGenreScanBelowThresholdCount = 0
+    @Published private(set) var automaticGenreScanFailedCount = 0
+    @Published private(set) var automaticGenreScanCurrentTrack = ""
+    @Published private(set) var automaticGenreScanCurrentSource = ""
+    @Published private(set) var automaticGenreLibraryRegisteredCount = 0
+    @Published private(set) var automaticGenreLocalRegisteredCount = 0
+    @Published private(set) var automaticGenreMusicBrainzRegisteredCount = 0
+    @Published private(set) var automaticGenreExternalAIRegisteredCount = 0
+    @Published private(set) var automaticGenreRetrySecondsRemaining = 0
+    @Published private(set) var hasRunAutomaticGenreScan = false
     @Published private(set) var batchMetadataProgress = BatchMetadataProgress.idle
     @Published var importProgress = ImportProgress.idle
     @Published private(set) var pagePresentationID = UUID()
@@ -247,6 +439,7 @@ final class LibraryViewModel: ObservableObject {
     private var widthNormalizationTask: Task<Void, Never>?
     private var bulkAutoFillTask: Task<Void, Never>?
     private var id3MigrationTask: Task<Void, Never>?
+    private var automaticGenreScanTask: Task<Void, Never>?
     private var enrichmentTask: Task<Void, Never>?
     private var loadingAlbumArtworkIDs: Set<String> = []
     private var loadingArtistImageNames: Set<String> = []
@@ -258,6 +451,7 @@ final class LibraryViewModel: ObservableObject {
     private var isSyncingProtectedCache = false
     private var protectedCacheIsReconciled = false
     private var browseReturnStack: [BrowseReturnState] = []
+    private var variationScrollRestorationFallbackIDs: [Int64] = []
 
     init(database: LibraryDatabase, scanner: LibraryScanner) {
         self.database = database
@@ -268,7 +462,12 @@ final class LibraryViewModel: ObservableObject {
         enrichment = WebEnrichmentService(database: database)
         metadataAnalyzer = MetadataDiagnosticsAnalyzer(database: database)
         language = AppLanguage(rawValue: (try? database.setting(forKey: "app.language")) ?? "ja") ?? .japanese
-        appearance = AppearanceMode(rawValue: (try? database.setting(forKey: "app.appearance")) ?? "system") ?? .system
+        let legacyAppearance = (try? database.setting(forKey: "app.appearance")) ?? "system"
+        switch legacyAppearance {
+        case "light": appearance = .paperLight
+        case "system", "dark": appearance = .codexDark
+        default: appearance = AppearanceMode(rawValue: legacyAppearance) ?? .codexDark
+        }
         openAIModel = (try? database.setting(forKey: "openai.model")) ?? "gpt-5.6-luna"
         geminiModel = (try? database.setting(forKey: "gemini.model")) ?? "gemini-3.5-flash"
         cacheEnabled = (try? database.setting(forKey: "cache.enabled")) != "false"
@@ -283,12 +482,16 @@ final class LibraryViewModel: ObservableObject {
            let limit = LogRetentionLimit(rawValue: val) {
             maxLogRetentionLimit = limit
         }
-        librarySectionOrder = Self.decodeLibrarySectionOrder(
-            (try? database.setting(forKey: "sidebar.libraryOrder"))
-        )
-        hiddenLibrarySections = Self.decodeLibrarySectionVisibility(
-            (try? database.setting(forKey: "sidebar.libraryHidden"))
-        )
+        if let storedLibraryOrder = try? database.setting(forKey: "sidebar.libraryOrder") {
+            librarySectionOrder = Self.decodeLibrarySectionOrder(storedLibraryOrder)
+        } else {
+            librarySectionOrder = Self.defaultLibrarySectionOrder
+        }
+        if let storedLibraryVisibility = try? database.setting(forKey: "sidebar.libraryHidden") {
+            hiddenLibrarySections = Self.decodeLibrarySectionVisibility(storedLibraryVisibility)
+        } else {
+            hiddenLibrarySections = Self.defaultHiddenLibrarySections
+        }
         playlistOrder = Self.decodePlaylistOrder(
             (try? database.setting(forKey: "sidebar.playlistOrder"))
         )
@@ -314,7 +517,9 @@ final class LibraryViewModel: ObservableObject {
     private var activePageSize: Int { section == .activityLog ? activityPageSize : pageSize }
     var currentPageNumber: Int { totalCount == 0 ? 0 : (offset / activePageSize) + 1 }
     var pageCount: Int { totalCount == 0 ? 0 : Int(ceil(Double(totalCount) / Double(activePageSize))) }
-    var isInDetail: Bool { selectedAlbum != nil || selectedArtist != nil || selectedGenre != nil }
+    var isInDetail: Bool {
+        selectedAlbum != nil || selectedArtist != nil || selectedGenre != nil || !browseReturnStack.isEmpty
+    }
     var supportsAlphabetIndex: Bool { alphabetIndexTarget != nil }
     var trackPlaybackContext: TrackPlaybackContext? {
         let scope: TrackPlaybackScope
@@ -498,7 +703,21 @@ final class LibraryViewModel: ObservableObject {
 
     func selectDiagnostic(_ kind: MetadataIssueKind) {
         diagnosticKind = kind
+        trackScrollPosition = nil
+        variationScrollPosition = nil
         refreshMetadataDiagnostics()
+        loadCurrentPage(reset: true)
+    }
+
+    func setVariationFieldFilter(_ field: MetadataField?) {
+        guard variationFieldFilter != field else { return }
+        variationFieldFilter = field
+        loadCurrentPage(reset: true)
+    }
+
+    func setMetadataIssueFieldFilter(_ field: MetadataField?) {
+        guard metadataIssueFieldFilter != field else { return }
+        metadataIssueFieldFilter = field
         loadCurrentPage(reset: true)
     }
 
@@ -577,7 +796,7 @@ final class LibraryViewModel: ObservableObject {
 
     private static func decodeLibrarySectionOrder(_ stored: String?) -> [LibrarySection] {
         guard let stored, !stored.isEmpty else {
-            return LibrarySection.allCases.filter(isReorderableLibrarySection)
+            return defaultLibrarySectionOrder
         }
         var seen = Set<LibrarySection>()
         let decoded = stored.split(separator: "\n").compactMap { LibrarySection(rawValue: String($0)) }
@@ -689,10 +908,19 @@ final class LibraryViewModel: ObservableObject {
     }
 
     func searchVariationValue(_ value: String, field: MetadataField) {
-        searchTask?.cancel()
+        cancelPendingSearchNavigation()
+        captureBrowseReturnState()
+        usesDirectOffsetPaging = false
+        selectedIndexToken = nil
         isSearchPending = false
         searchText = ""
-        changeSection(.tracks, exactFilter: ExactMetadataFilter(field: field, value: value))
+        section = .tracks
+        selectedAlbum = nil
+        selectedArtist = nil
+        selectedGenre = nil
+        selectedPlaylistID = nil
+        exactMetadataFilter = ExactMetadataFilter(field: field, value: value)
+        loadCurrentPage(reset: true)
     }
 
     func selectPlaylist(_ id: Int64) {
@@ -810,6 +1038,10 @@ final class LibraryViewModel: ObservableObject {
     private func captureBrowseReturnState() {
         browseReturnStack.append(BrowseReturnState(
             section: section,
+            diagnosticKind: diagnosticKind,
+            variationFieldFilter: variationFieldFilter,
+            metadataIssueFieldFilter: metadataIssueFieldFilter,
+            exactMetadataFilter: exactMetadataFilter,
             sort: sort,
             sortDirection: sortDirection,
             searchText: searchText,
@@ -822,7 +1054,10 @@ final class LibraryViewModel: ObservableObject {
             trackPageCursors: trackPageCursors,
             usesDirectOffsetPaging: usesDirectOffsetPaging,
             selectedTrackIDs: selectedTrackIDs,
-            selectedIndexToken: selectedIndexToken
+            selectedIndexToken: selectedIndexToken,
+            trackScrollPosition: trackScrollPosition,
+            variationScrollPosition: variationScrollPosition,
+            variationScrollFallbackIDs: variationScrollFallbackIDs(from: variationScrollPosition)
         ))
         if browseReturnStack.count > 32 { browseReturnStack.removeFirst() }
     }
@@ -831,6 +1066,10 @@ final class LibraryViewModel: ObservableObject {
     private func restoreBrowseReturnState() -> Bool {
         guard let state = browseReturnStack.popLast() else { return false }
         section = state.section
+        diagnosticKind = state.diagnosticKind
+        variationFieldFilter = state.variationFieldFilter
+        metadataIssueFieldFilter = state.metadataIssueFieldFilter
+        exactMetadataFilter = state.exactMetadataFilter
         sort = state.sort
         sortDirection = state.sortDirection
         searchText = state.searchText
@@ -844,7 +1083,30 @@ final class LibraryViewModel: ObservableObject {
         usesDirectOffsetPaging = state.usesDirectOffsetPaging
         selectedTrackIDs = state.selectedTrackIDs
         selectedIndexToken = state.selectedIndexToken
+        trackScrollPosition = state.trackScrollPosition
+        variationScrollPosition = state.variationScrollPosition
+        variationScrollRestorationFallbackIDs = state.variationScrollFallbackIDs
+        needsBrowseScrollRestoration = state.trackScrollPosition != nil || state.variationScrollPosition != nil
         return true
+    }
+
+    private func variationScrollFallbackIDs(from anchorID: Int64?) -> [Int64] {
+        let ids = variationCandidates.map(\.id)
+        guard let anchorID, let index = ids.firstIndex(of: anchorID) else { return ids }
+        return Array(ids[index...]) + Array(ids[..<index].reversed())
+    }
+
+    func resolvedVariationScrollPositionForRestoration() -> Int64? {
+        let availableIDs = Set(variationCandidates.map(\.id))
+        if let variationScrollPosition, availableIDs.contains(variationScrollPosition) {
+            return variationScrollPosition
+        }
+        return variationScrollRestorationFallbackIDs.first { availableIDs.contains($0) }
+    }
+
+    func completeBrowseScrollRestoration() {
+        needsBrowseScrollRestoration = false
+        variationScrollRestorationFallbackIDs = []
     }
 
     func genreDetailTitle(_ mode: GenreDetailMode) -> String {
@@ -1091,9 +1353,9 @@ final class LibraryViewModel: ObservableObject {
         Task { [weak self] in
             guard let self else { return }
             do {
+                var edit = TrackMetadataEdit(track: track)
+                edit.genre = genre
                 if await trackFiles.sourceFileIsAvailable(for: track) {
-                    var edit = TrackMetadataEdit(track: track)
-                    edit.genre = genre
                     // A v2.2 tag needs an explicit decision before conversion.
                     // Keep the proposed genre in the request so confirmation
                     // performs conversion and the metadata write atomically.
@@ -1114,6 +1376,7 @@ final class LibraryViewModel: ObservableObject {
                     try await Task.detached {
                         try self.database.updateTrackGenre(id: track.id, genre: genre)
                     }.value
+                    lastMetadataEditedTrack = track.applying(edit)
                     loadCurrentPage(reset: false)
                 }
             } catch {
@@ -1158,9 +1421,12 @@ final class LibraryViewModel: ObservableObject {
 
     func appearanceTitle(_ mode: AppearanceMode) -> String {
         switch mode {
-        case .system: text("システム設定", "System")
-        case .light: text("ライト", "Light")
-        case .dark: text("ダーク", "Dark")
+        case .codexDark: text("ダーク", "Dark")
+        case .graphiteDark: text("グラファイト", "Graphite")
+        case .midnightDark: text("ミッドナイト", "Midnight")
+        case .paperLight: text("ペーパー", "Paper")
+        case .warmLight: text("ウォーム", "Warm")
+        case .mistLight: text("ミスト", "Mist")
         }
     }
 
@@ -1312,6 +1578,10 @@ final class LibraryViewModel: ObservableObject {
         pageLoadTask?.cancel()
         if reset {
             pagePresentationID = UUID()
+            trackScrollPosition = nil
+            variationScrollPosition = nil
+            variationScrollRestorationFallbackIDs = []
+            needsBrowseScrollRestoration = false
             offset = 0
             trackPageCursors = [nil]
         }
@@ -1328,6 +1598,8 @@ final class LibraryViewModel: ObservableObject {
         let pageCursor = trackPageCursors.last ?? nil
         let knownTotal = requestedOffset == 0 ? nil : totalCount
         let requestedDiagnosticKind = diagnosticKind
+        let requestedVariationFieldFilter = variationFieldFilter
+        let requestedMetadataIssueFieldFilter = metadataIssueFieldFilter
         let requestedActivityKind = activityKindFilter
         let requestedCategoryKinds = activityCategoryFilter.kinds
         let requestedActivityLimit = maxLogRetentionLimit.rawValue
@@ -1374,7 +1646,11 @@ final class LibraryViewModel: ObservableObject {
                 } else if requestedSection == .diagnostics {
                     if requestedDiagnosticKind == .suspectedVariations {
                         let page = try await Task.detached(priority: .userInitiated) {
-                            try self.database.pageMetadataVariations(offset: requestedOffset, limit: self.pageSize)
+                            try self.database.pageMetadataVariations(
+                                field: requestedVariationFieldFilter,
+                                offset: requestedOffset,
+                                limit: self.pageSize
+                            )
                         }.value
                         variationCandidates = page.candidates
                         activityEvents = []
@@ -1385,15 +1661,23 @@ final class LibraryViewModel: ObservableObject {
                         offset = page.offset
                         totalCount = page.totalCount
                     } else {
+                        let requestedFieldFilter = [.urlInMP3Metadata, .suspectedMojibake]
+                            .contains(requestedDiagnosticKind)
+                            ? requestedMetadataIssueFieldFilter
+                            : nil
                         let page = try await Task.detached(priority: .userInitiated) {
                             try self.database.pageMetadataIssues(
-                                kind: requestedDiagnosticKind, sort: requestedSort, direction: requestedDirection,
+                                kind: requestedDiagnosticKind,
+                                field: requestedFieldFilter,
+                                sort: requestedSort, direction: requestedDirection,
                                 offset: requestedOffset, limit: self.pageSize
                             )
                         }.value
                         try Task.checkCancellation()
                         apply(page: page)
-                        updateDiagnosticSummary(kind: requestedDiagnosticKind, count: page.totalCount)
+                        if requestedFieldFilter == nil {
+                            updateDiagnosticSummary(kind: requestedDiagnosticKind, count: page.totalCount)
+                        }
                     }
                 } else if let album = requestedAlbum {
                     let page = try await Task.detached(priority: .userInitiated) {
@@ -1717,6 +2001,7 @@ final class LibraryViewModel: ObservableObject {
             do {
                 _ = try await offlineCache.cacheExplicitly(track)
                 cachedTrackIDs.insert(track.id)
+                refreshSidebarCounts()
                 if section == .cache { loadCurrentPage(reset: true) }
             } catch { errorMessage = error.localizedDescription }
         }
@@ -1727,6 +2012,7 @@ final class LibraryViewModel: ObservableObject {
             do {
                 try await offlineCache.remove(trackID: track.id)
                 cachedTrackIDs.remove(track.id)
+                refreshSidebarCounts()
                 if section == .cache { loadCurrentPage(reset: false) }
             } catch { errorMessage = error.localizedDescription }
         }
@@ -1917,6 +2203,7 @@ final class LibraryViewModel: ObservableObject {
         edit: TrackMetadataEdit,
         closeRenamedAlbumDetail: Bool
     ) {
+        lastMetadataEditedTrack = track.applying(edit)
         let originalAlbumIdentity = AlbumSummary(
             name: track.album,
             artist: track.albumArtist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -1942,6 +2229,7 @@ final class LibraryViewModel: ObservableObject {
             loadCurrentPage(reset: false)
         }
         if edit.artworkData != nil { refreshEnrichmentIfNeeded(updatedTrackIDs: [track.id]) }
+        refreshMetadataDiagnostics()
         refreshSidebarCounts()
     }
 
@@ -1957,10 +2245,11 @@ final class LibraryViewModel: ObservableObject {
                         authorizedRoot: $0
                     )
                 }
-                loadCurrentPage(reset: false)
-                if request.edit.artworkData != nil {
-                    refreshEnrichmentIfNeeded(updatedTrackIDs: [request.track.id])
-                }
+                handleCompletedMetadataEdit(
+                    for: request.track,
+                    edit: request.edit,
+                    closeRenamedAlbumDetail: false
+                )
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -2034,6 +2323,7 @@ final class LibraryViewModel: ObservableObject {
             }
             headerStorageScope = nil
             loadCurrentPage(reset: false)
+            refreshMetadataDiagnostics()
             if changes.artworkData != nil {
                 refreshEnrichmentIfNeeded(updatedTrackIDs: Set(tracks.map(\.id)))
             }
@@ -2855,8 +3145,8 @@ final class LibraryViewModel: ObservableObject {
             
             await MainActor.run {
                 bulkAutoFillProgress = text(
-                    "解析中 (\(processedAlbums)/\(totalAlbums)): \(artistName) - \(albumName)",
-                    "Processing (\(processedAlbums)/\(totalAlbums)): \(artistName) - \(albumName)"
+                    "アルバム曲順を解析中 (\(processedAlbums)/\(totalAlbums)): \(artistName) - \(albumName)",
+                    "Analyzing album track order (\(processedAlbums)/\(totalAlbums)): \(artistName) - \(albumName)"
                 )
             }
             
@@ -3141,6 +3431,216 @@ final class LibraryViewModel: ObservableObject {
                 automaticallyClassifiedTrackIDs.remove(track.id)
                 errorMessage = error.localizedDescription
             }
+        }
+    }
+
+    /// Scans available tracks whose genre is missing using the configured
+    /// external providers. Requests run sequentially and progress is published
+    /// after every track so the operation cannot look like a local batch pass.
+    func startAutomaticGenreScan() {
+        guard !isScanningAutomaticGenres else { return }
+        automaticGenreScanTask?.cancel()
+        isScanningAutomaticGenres = true
+        automaticGenreScanProcessedCount = 0
+        automaticGenreScanTotalCount = 0
+        automaticGenreRegisteredCount = 0
+        automaticGenreScanBelowThresholdCount = 0
+        automaticGenreScanFailedCount = 0
+        automaticGenreScanCurrentTrack = ""
+        automaticGenreScanCurrentSource = ""
+        automaticGenreLibraryRegisteredCount = 0
+        automaticGenreLocalRegisteredCount = 0
+        automaticGenreMusicBrainzRegisteredCount = 0
+        automaticGenreExternalAIRegisteredCount = 0
+        automaticGenreRetrySecondsRemaining = 0
+        hasRunAutomaticGenreScan = true
+
+        automaticGenreScanTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let db = database
+                let openAIStore = openAIKeyStore
+                let geminiStore = geminiKeyStore
+                let reads = await Task.detached {
+                    (openAIStore.readResult(database: db), geminiStore.readResult(database: db))
+                }.value
+
+                let openAIKey: String?
+                switch reads.0 {
+                case let .value(key): openAIKey = key?.trimmingCharacters(in: .whitespacesAndNewlines)
+                case let .failure(message):
+                    openAIKey = nil
+                    openAIStatus = .invalid(message)
+                }
+                let geminiKey: String?
+                switch reads.1 {
+                case let .value(key): geminiKey = key?.trimmingCharacters(in: .whitespacesAndNewlines)
+                case let .failure(message):
+                    geminiKey = nil
+                    geminiStatus = .invalid(message)
+                }
+                automaticGenreScanTotalCount = try await Task.detached {
+                    try self.database.missingGenreTrackCount()
+                }.value
+                var afterID: Int64 = 0
+                var consecutiveProviderFailures = 0
+
+                while !Task.isCancelled {
+                    let cursor = afterID
+                    let batch = try await Task.detached {
+                        try self.database.tracksMissingGenre(afterID: cursor, limit: 100)
+                    }.value
+                    guard !batch.isEmpty else { break }
+                    afterID = batch.last?.id ?? afterID
+
+                    for track in batch {
+                        try Task.checkCancellation()
+                        automaticGenreScanCurrentTrack = "\(track.artist) - \(track.title)"
+                        var suggestion: GenreSuggestion?
+                        var externalProviderAttempted = false
+
+                        automaticGenreScanCurrentSource = text("ライブラリ内一致", "Library match")
+                        let libraryGenre = try await Task.detached {
+                            try self.database.consensusGenreForAlbum(track: track)
+                        }.value
+                        if let genre = libraryGenre {
+                            suggestion = GenreSuggestion(
+                                genre: genre,
+                                confidence: 0.98,
+                                rationale: text(
+                                    "同じアルバムとアーティストの登録済み曲から再利用しました。",
+                                    "Reused from a tagged track on the same album and credited artist."
+                                ),
+                                source: .library
+                            )
+                        }
+
+                        if suggestion == nil {
+                            automaticGenreScanCurrentSource = text("ローカル判定", "Local rules")
+                            let local = localSuggestion(for: track)
+                            if local.confidence >= 0.80 { suggestion = local }
+                        }
+
+                        if suggestion == nil {
+                            automaticGenreScanCurrentSource = "MusicBrainz"
+                            do {
+                                suggestion = try await musicMetadata.genreSuggestion(
+                                    for: track,
+                                    language: language.rawValue
+                                )
+                            } catch is CancellationError {
+                                throw CancellationError()
+                            } catch {
+                                // A temporary metadata-service failure is not a
+                                // classification failure; external AI remains the fallback.
+                            }
+                        }
+
+                        if suggestion == nil, let key = openAIKey, !key.isEmpty {
+                            automaticGenreScanCurrentSource = "OpenAI"
+                            externalProviderAttempted = true
+                            do {
+                                suggestion = try await genreClassifier.classify(
+                                    track: track,
+                                    apiKey: key,
+                                    model: openAIModel,
+                                    language: language.rawValue
+                                )
+                                openAIStatus = .valid
+                            } catch {
+                                let summary = providerErrorSummary(error)
+                                openAIStatus = .invalid(summary)
+                            }
+                        }
+
+                        if suggestion == nil, let key = geminiKey, !key.isEmpty {
+                            automaticGenreScanCurrentSource = "Gemini"
+                            externalProviderAttempted = true
+                            do {
+                                suggestion = try await geminiGenreClassifier.classify(
+                                    track: track,
+                                    apiKey: key,
+                                    model: geminiModel,
+                                    language: language.rawValue
+                                )
+                                geminiStatus = .valid
+                            } catch {
+                                let summary = providerErrorSummary(error)
+                                geminiStatus = .invalid(summary)
+                            }
+                        }
+
+                        if let suggestion {
+                            consecutiveProviderFailures = 0
+                            if suggestion.confidence >= 0.80 {
+                                do {
+                                    try await Task.detached {
+                                        try self.database.updateTrackGenre(id: track.id, genre: suggestion.genre)
+                                    }.value
+                                    automaticGenreRegisteredCount += 1
+                                    switch suggestion.source {
+                                    case .library: automaticGenreLibraryRegisteredCount += 1
+                                    case .local: automaticGenreLocalRegisteredCount += 1
+                                    case .musicBrainz: automaticGenreMusicBrainzRegisteredCount += 1
+                                    case .openAI, .gemini: automaticGenreExternalAIRegisteredCount += 1
+                                    }
+                                    recordAutomaticGenreRegistration(suggestion.genre)
+                                } catch {
+                                    automaticGenreScanFailedCount += 1
+                                }
+                            } else {
+                                automaticGenreScanBelowThresholdCount += 1
+                            }
+                        } else {
+                            automaticGenreScanFailedCount += 1
+                            if externalProviderAttempted { consecutiveProviderFailures += 1 }
+                            if externalProviderAttempted, consecutiveProviderFailures >= 3 {
+                                consecutiveProviderFailures = 0
+                                automaticGenreRetrySecondsRemaining = 10
+                                while automaticGenreRetrySecondsRemaining > 0 {
+                                    try Task.checkCancellation()
+                                    try await Task.sleep(for: .seconds(1))
+                                    automaticGenreRetrySecondsRemaining -= 1
+                                }
+                            }
+                        }
+
+                        automaticGenreScanProcessedCount += 1
+                        await Task.yield()
+                    }
+                }
+
+                if section == .genres {
+                    loadCurrentPage(reset: true)
+                }
+                refreshSidebarCounts()
+            } catch is CancellationError {
+                // Keep the counts visible so the user can see what completed.
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            automaticGenreScanCurrentTrack = ""
+            automaticGenreScanCurrentSource = ""
+            automaticGenreRetrySecondsRemaining = 0
+            isScanningAutomaticGenres = false
+            automaticGenreScanTask = nil
+        }
+    }
+
+    func cancelAutomaticGenreScan() {
+        automaticGenreScanTask?.cancel()
+    }
+
+    private func recordAutomaticGenreRegistration(_ genre: String) {
+        guard section == .genres, selectedGenre == nil else { return }
+        if let index = facets.firstIndex(where: { $0.name.compare(genre, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }) {
+            let existing = facets[index]
+            facets[index] = Facet(name: existing.name, count: existing.count + 1)
+        } else {
+            facets.append(Facet(name: genre, count: 1))
+            facets.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            totalCount += 1
+            libraryGenreCount += 1
         }
     }
 
@@ -3450,11 +3950,21 @@ final class LibraryViewModel: ObservableObject {
             let counts = await Task.detached {
                 (
                     (try? self.database.favoriteTrackCount()) ?? 0,
-                    (try? self.database.recentlyAddedTrackCount()) ?? 0
+                    (try? self.database.recentlyAddedTrackCount()) ?? 0,
+                    try? self.database.librarySidebarCounts()
                 )
             }.value
             favoriteTrackCount = counts.0
             recentlyAddedTrackCount = counts.1
+            if let library = counts.2 {
+                libraryTrackCount = library.tracks
+                libraryAlbumCount = library.albums
+                libraryArtistCount = library.artists
+                libraryGenreCount = library.genres
+                libraryFolderCount = library.folders
+                cachedTrackCount = library.cached
+                cachedStorageBytes = library.cachedBytes
+            }
         }
     }
 

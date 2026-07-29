@@ -165,6 +165,55 @@ public final class LibraryDatabase: @unchecked Sendable {
         try trackCount()
     }
 
+    public func librarySidebarCounts() throws -> (
+        tracks: Int,
+        albums: Int,
+        artists: Int,
+        genres: Int,
+        folders: Int,
+        cached: Int,
+        cachedBytes: Int64
+    ) {
+        try pool.read { db in
+            let row = try Row.fetchOne(db, sql: """
+                SELECT
+                    (SELECT COUNT(*) FROM tracks) AS tracks,
+                    (SELECT COUNT(*) FROM (
+                        SELECT 1 FROM tracks
+                        WHERE is_available = 1 AND album <> ''
+                        GROUP BY album COLLATE NOCASE, artist COLLATE NOCASE
+                    )) AS albums,
+                    (SELECT COUNT(DISTINCT artist COLLATE NOCASE) FROM tracks
+                        WHERE is_available = 1 AND artist <> '') AS artists,
+                    (SELECT COUNT(*) FROM (
+                        SELECT 1 FROM tracks
+                        WHERE is_available = 1 AND genre <> ''
+                        GROUP BY genre COLLATE NOCASE
+                    )) AS genres,
+                    (SELECT COUNT(*) FROM (
+                        SELECT 1 FROM tracks
+                        WHERE is_available = 1 AND relative_path <> ''
+                        GROUP BY CASE
+                            WHEN instr(relative_path, '/') > 0
+                            THEN substr(relative_path, 1, instr(relative_path, '/') - 1)
+                            ELSE '/'
+                        END COLLATE NOCASE
+                    )) AS folders,
+                    (SELECT COUNT(*) FROM local_cache) AS cached,
+                    (SELECT COALESCE(SUM(file_size), 0) FROM local_cache) AS cached_bytes
+                """)
+            return (
+                tracks: row?["tracks"] ?? 0,
+                albums: row?["albums"] ?? 0,
+                artists: row?["artists"] ?? 0,
+                genres: row?["genres"] ?? 0,
+                folders: row?["folders"] ?? 0,
+                cached: row?["cached"] ?? 0,
+                cachedBytes: row?["cached_bytes"] ?? 0
+            )
+        }
+    }
+
     public func unavailableTrackCount() throws -> Int {
         try pool.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks WHERE is_available = 0") ?? 0 }
     }
@@ -374,6 +423,7 @@ public final class LibraryDatabase: @unchecked Sendable {
                             edit.artworkData != nil, id]
             )
             if let updated = try Row.fetchOne(db, sql: "SELECT * FROM tracks WHERE id = ?", arguments: [id]) {
+                try Self.refreshMetadataVariationCandidates(db: db, previous: previous, updated: updated)
                 let changes = Self.activityChanges(from: previous, to: updated)
                 if !changes.isEmpty {
                     try Self.insertActivity(db: db, kind: .metadataChanged, trackRow: updated, changes: changes)
@@ -417,6 +467,7 @@ public final class LibraryDatabase: @unchecked Sendable {
                 arguments: [id, payloadJSON, Date().timeIntervalSince1970]
             )
             if let updated = try Row.fetchOne(db, sql: "SELECT * FROM tracks WHERE id = ?", arguments: [id]) {
+                try Self.refreshMetadataVariationCandidates(db: db, previous: previous, updated: updated)
                 let changes = Self.activityChanges(from: previous, to: updated)
                 if !changes.isEmpty {
                     try Self.insertActivity(db: db, kind: .metadataChanged, trackRow: updated, changes: changes)
@@ -475,6 +526,61 @@ public final class LibraryDatabase: @unchecked Sendable {
                     try Self.pruneActivityLog(db: db)
                 }
             }
+        }
+    }
+
+    public func missingGenreTrackCount() throws -> Int {
+        try pool.read { db in
+            try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM tracks
+                WHERE is_available = 1
+                  AND (trim(genre) = '' OR genre = '未判定' OR lower(trim(genre)) = 'unknown')
+                """) ?? 0
+        }
+    }
+
+    public func tracksMissingGenre(
+        afterID: Int64,
+        limit: Int = defaultPageSize
+    ) throws -> [Track] {
+        guard (1...1_000).contains(limit) else { throw MassiveMusicError.invalidPageSize }
+        return try pool.read { db in
+            try Row.fetchAll(db, sql: """
+                SELECT * FROM tracks
+                WHERE id > ? AND is_available = 1
+                  AND (trim(genre) = '' OR genre = '未判定' OR lower(trim(genre)) = 'unknown')
+                ORDER BY id ASC
+                LIMIT ?
+                """, arguments: [afterID, limit]).map(Self.decodeTrack)
+        }
+    }
+
+    /// Reuses a genre already assigned to the same album and credited artist.
+    /// A matching album is required so an artist's genre cannot be spread across
+    /// unrelated releases.
+    public func consensusGenreForAlbum(track: Track) throws -> String? {
+        let album = track.album.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !album.isEmpty else { return nil }
+        let creditedArtist = track.albumArtist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? track.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+            : track.albumArtist.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !creditedArtist.isEmpty else { return nil }
+
+        return try pool.read { db in
+            try String.fetchOne(db, sql: """
+                SELECT genre
+                FROM tracks
+                WHERE id <> ?
+                  AND is_available = 1
+                  AND album = ? COLLATE NOCASE
+                  AND COALESCE(NULLIF(trim(album_artist), ''), trim(artist)) = ? COLLATE NOCASE
+                  AND trim(genre) <> ''
+                  AND genre <> '未判定'
+                  AND lower(trim(genre)) <> 'unknown'
+                GROUP BY genre COLLATE NOCASE
+                ORDER BY COUNT(*) DESC, genre COLLATE NOCASE ASC
+                LIMIT 1
+                """, arguments: [track.id, album, creditedArtist])
         }
     }
 
@@ -757,6 +863,7 @@ public final class LibraryDatabase: @unchecked Sendable {
 
     public func pageMetadataIssues(
         kind: MetadataIssueKind,
+        field: MetadataField? = nil,
         sort: TrackSort = .title,
         direction: SortDirection = .ascending,
         offset: Int = 0,
@@ -779,7 +886,7 @@ public final class LibraryDatabase: @unchecked Sendable {
                 )
             }
         }
-        let predicate = Self.metadataIssuePredicate(kind)
+        let predicate = Self.metadataIssuePredicate(kind, field: field)
         return try pool.read { db in
             let total = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks t WHERE \(predicate)") ?? 0
             let rows = try Row.fetchAll(
@@ -912,22 +1019,55 @@ public final class LibraryDatabase: @unchecked Sendable {
         }
     }
 
-    public func metadataVariationCount() throws -> Int {
+    public func metadataVariationCount(field: MetadataField? = nil) throws -> Int {
         try pool.read { db in
-            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM metadata_variation_candidates WHERE status = 'pending'") ?? 0
+            if let field {
+                return try Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM metadata_variation_candidates WHERE status = 'pending' AND field = ?",
+                    arguments: [field.rawValue]
+                ) ?? 0
+            }
+            return try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM metadata_variation_candidates WHERE status = 'pending'"
+            ) ?? 0
         }
     }
 
-    public func pageMetadataVariations(offset: Int = 0, limit: Int = defaultPageSize) throws -> MetadataVariationPage {
+    public func pageMetadataVariations(
+        field: MetadataField? = nil,
+        offset: Int = 0,
+        limit: Int = defaultPageSize
+    ) throws -> MetadataVariationPage {
         guard (1...1_000).contains(limit) else { throw MassiveMusicError.invalidPageSize }
         let safeOffset = max(0, offset)
         return try pool.read { db in
-            let total = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM metadata_variation_candidates WHERE status = 'pending'") ?? 0
-            let rows = try Row.fetchAll(db, sql: """
-                SELECT * FROM metadata_variation_candidates WHERE status = 'pending'
-                ORDER BY CASE reason WHEN 'normalization' THEN 0 ELSE 1 END, field, value_a COLLATE NOCASE
-                LIMIT ? OFFSET ?
-                """, arguments: [limit, safeOffset])
+            let total: Int
+            let rows: [Row]
+            if let field {
+                total = try Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM metadata_variation_candidates WHERE status = 'pending' AND field = ?",
+                    arguments: [field.rawValue]
+                ) ?? 0
+                rows = try Row.fetchAll(db, sql: """
+                    SELECT * FROM metadata_variation_candidates
+                    WHERE status = 'pending' AND field = ?
+                    ORDER BY CASE reason WHEN 'normalization' THEN 0 ELSE 1 END, value_a COLLATE NOCASE
+                    LIMIT ? OFFSET ?
+                    """, arguments: [field.rawValue, limit, safeOffset])
+            } else {
+                total = try Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM metadata_variation_candidates WHERE status = 'pending'"
+                ) ?? 0
+                rows = try Row.fetchAll(db, sql: """
+                    SELECT * FROM metadata_variation_candidates WHERE status = 'pending'
+                    ORDER BY CASE reason WHEN 'normalization' THEN 0 ELSE 1 END, field, value_a COLLATE NOCASE
+                    LIMIT ? OFFSET ?
+                    """, arguments: [limit, safeOffset])
+            }
             let candidates = rows.compactMap { row -> MetadataVariationCandidate? in
                 guard let field = MetadataField(rawValue: row["field"]),
                       let reason = MetadataVariationReason(rawValue: row["reason"]) else { return nil }
@@ -944,6 +1084,41 @@ public final class LibraryDatabase: @unchecked Sendable {
     public func ignoreMetadataVariation(id: Int64) throws {
         try pool.write { db in
             try db.execute(sql: "UPDATE metadata_variation_candidates SET status = 'ignored' WHERE id = ?", arguments: [id])
+        }
+    }
+
+    private static func refreshMetadataVariationCandidates(db: Database, previous: Row?, updated: Row) throws {
+        guard let previous else { return }
+        for field in MetadataField.allCases {
+            let column = metadataColumn(field)
+            let oldValue: String = previous[column]
+            let newValue: String = updated[column]
+            guard oldValue != newValue else { continue }
+
+            let affectedArguments: StatementArguments = [
+                field.rawValue, oldValue, newValue, oldValue, newValue
+            ]
+            try db.execute(sql: """
+                UPDATE metadata_variation_candidates
+                SET track_count_a = (
+                        SELECT COUNT(*) FROM tracks
+                        WHERE \(column) = metadata_variation_candidates.value_a COLLATE BINARY
+                    ),
+                    track_count_b = (
+                        SELECT COUNT(*) FROM tracks
+                        WHERE \(column) = metadata_variation_candidates.value_b COLLATE BINARY
+                    )
+                WHERE field = ? AND status = 'pending'
+                  AND (value_a = ? COLLATE BINARY OR value_a = ? COLLATE BINARY
+                    OR value_b = ? COLLATE BINARY OR value_b = ? COLLATE BINARY)
+                """, arguments: affectedArguments)
+            try db.execute(sql: """
+                DELETE FROM metadata_variation_candidates
+                WHERE field = ? AND status = 'pending'
+                  AND (value_a = ? COLLATE BINARY OR value_a = ? COLLATE BINARY
+                    OR value_b = ? COLLATE BINARY OR value_b = ? COLLATE BINARY)
+                  AND (track_count_a = 0 OR track_count_b = 0)
+                """, arguments: affectedArguments)
         }
     }
 
@@ -2126,6 +2301,88 @@ public final class LibraryDatabase: @unchecked Sendable {
         }
     }
 
+    public func randomTrack(
+        rootIDs: [Int64],
+        seed: Int64,
+        excludingTrackID: Int64? = nil
+    ) throws -> Track? {
+        let uniqueRootIDs = Array(Set(rootIDs)).sorted()
+        guard !uniqueRootIDs.isEmpty else { return nil }
+        let placeholders = Array(repeating: "?", count: uniqueRootIDs.count).joined(separator: ",")
+        return try pool.read { db in
+            try Self.randomTrack(
+                in: db,
+                fromSQL: "tracks t",
+                whereSQL: "t.is_available = 1 AND t.root_id IN (\(placeholders))",
+                arguments: StatementArguments(uniqueRootIDs),
+                seed: seed,
+                excludingTrackID: excludingTrackID
+            )
+        }
+    }
+
+    public func randomCachedTrack(seed: Int64, excludingTrackID: Int64? = nil) throws -> Track? {
+        try pool.read { db in
+            try Self.randomTrack(
+                in: db,
+                fromSQL: "tracks t JOIN local_cache c ON c.track_id = t.id",
+                whereSQL: "1 = 1",
+                arguments: [],
+                seed: seed,
+                excludingTrackID: excludingTrackID
+            )
+        }
+    }
+
+    private static func randomTrack(
+        in db: Database,
+        fromSQL: String,
+        whereSQL: String,
+        arguments: StatementArguments,
+        seed: Int64,
+        excludingTrackID: Int64?
+    ) throws -> Track? {
+        guard let maxID = try Int64.fetchOne(
+            db,
+            sql: "SELECT MAX(t.id) FROM \(fromSQL) WHERE \(whereSQL)",
+            arguments: arguments
+        ) else { return nil }
+
+        let upperBound = UInt64(maxID) &+ 1
+        let targetID = upperBound == 0 ? 0 : Int64(UInt64(bitPattern: seed) % upperBound)
+        var candidateWhere = whereSQL
+        var candidateArguments = arguments
+        if let excludingTrackID {
+            candidateWhere += " AND t.id <> ?"
+            candidateArguments += [excludingTrackID]
+        }
+
+        var afterArguments = candidateArguments
+        afterArguments += [targetID]
+        let after = try Row.fetchOne(
+            db,
+            sql: "SELECT t.* FROM \(fromSQL) WHERE \(candidateWhere) AND t.id >= ? ORDER BY t.id LIMIT 1",
+            arguments: afterArguments
+        )
+        if let after { return Self.decodeTrack(after) }
+
+        let wrapped = try Row.fetchOne(
+            db,
+            sql: "SELECT t.* FROM \(fromSQL) WHERE \(candidateWhere) ORDER BY t.id LIMIT 1",
+            arguments: candidateArguments
+        )
+        if let wrapped { return Self.decodeTrack(wrapped) }
+
+        // A one-track library should continue playing instead of becoming empty
+        // merely because that track is also the current one.
+        let fallback = try Row.fetchOne(
+            db,
+            sql: "SELECT t.* FROM \(fromSQL) WHERE \(whereSQL) ORDER BY t.id LIMIT 1",
+            arguments: arguments
+        )
+        return fallback.map(Self.decodeTrack)
+    }
+
     public func adjacentTrack(to id: Int64, direction: Int) throws -> Track? {
         try pool.read { db in
             let comparison = direction >= 0 ? ">" : "<"
@@ -2381,29 +2638,35 @@ public final class LibraryDatabase: @unchecked Sendable {
         }
     }
 
-    private static func metadataIssuePredicate(_ kind: MetadataIssueKind) -> String {
-        switch kind {
+    private static func metadataIssuePredicate(_ kind: MetadataIssueKind, field: MetadataField? = nil) -> String {
+        let metadataText = switch field {
+        case .title: "t.title"
+        case .artist: "t.artist"
+        case .album: "t.album"
+        case nil: "t.title || ' ' || t.artist || ' ' || t.album || ' ' || t.album_artist || ' ' || t.genre || ' ' || t.filename"
+        }
+        return switch kind {
         case .missingTitle: "trim(t.title) = ''"
         case .missingArtist: "trim(t.artist) = ''"
         case .missingAlbum: "trim(t.album) = ''"
         case .urlInMP3Metadata:
             """
             lower(t.format) = 'mp3' AND (
-                instr(lower(t.title || ' ' || t.artist || ' ' || t.album || ' ' || t.album_artist || ' ' || t.genre || ' ' || t.filename), 'http') > 0
-                OR instr(lower(t.title || ' ' || t.artist || ' ' || t.album || ' ' || t.album_artist || ' ' || t.genre || ' ' || t.filename), 'www.') > 0
+                instr(lower(\(metadataText)), 'http') > 0
+                OR instr(lower(\(metadataText)), 'www.') > 0
             )
             """
         case .suspectedMojibake:
             """
-            instr(t.title || ' ' || t.artist || ' ' || t.album || ' ' || t.album_artist || ' ' || t.genre || ' ' || t.filename, '�') > 0
-            OR instr(t.title || ' ' || t.artist || ' ' || t.album || ' ' || t.album_artist || ' ' || t.genre || ' ' || t.filename, 'Ã') > 0
-            OR instr(t.title || ' ' || t.artist || ' ' || t.album || ' ' || t.album_artist || ' ' || t.genre || ' ' || t.filename, 'Â') > 0
-            OR instr(t.title || ' ' || t.artist || ' ' || t.album || ' ' || t.album_artist || ' ' || t.genre || ' ' || t.filename, 'â€') > 0
-            OR instr(t.title || ' ' || t.artist || ' ' || t.album || ' ' || t.album_artist || ' ' || t.genre || ' ' || t.filename, 'ÔÌ') > 0
-            OR instr(t.title || ' ' || t.artist || ' ' || t.album || ' ' || t.album_artist || ' ' || t.genre || ' ' || t.filename, '¼') > 0
-            OR instr(t.title || ' ' || t.artist || ' ' || t.album || ' ' || t.album_artist || ' ' || t.genre || ' ' || t.filename, '縺') > 0
-            OR instr(t.title || ' ' || t.artist || ' ' || t.album || ' ' || t.album_artist || ' ' || t.genre || ' ' || t.filename, '繧') > 0
-            OR instr(t.title || ' ' || t.artist || ' ' || t.album || ' ' || t.album_artist || ' ' || t.genre || ' ' || t.filename, '譁') > 0
+            instr(\(metadataText), '�') > 0
+            OR instr(\(metadataText), 'Ã') > 0
+            OR instr(\(metadataText), 'Â') > 0
+            OR instr(\(metadataText), 'â€') > 0
+            OR instr(\(metadataText), 'ÔÌ') > 0
+            OR instr(\(metadataText), '¼') > 0
+            OR instr(\(metadataText), '縺') > 0
+            OR instr(\(metadataText), '繧') > 0
+            OR instr(\(metadataText), '譁') > 0
             """
         case .duplicateTracks:
             """

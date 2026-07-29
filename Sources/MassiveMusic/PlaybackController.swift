@@ -25,6 +25,7 @@ final class PlaybackController: ObservableObject {
     }
     @Published var repeatMode: RepeatMode = .off
     @Published var shuffleEnabled = false
+    @Published private(set) var isGlobalShuffleEnabled = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var unavailableTrackIDs: Set<Int64> = []
     @Published private(set) var upNextTracks: [Track] = []
@@ -36,6 +37,8 @@ final class PlaybackController: ObservableObject {
     @Published private(set) var sectionLoopEnd: Double?
     @Published private(set) var isSectionLoopEnabled = false
     @Published private(set) var activeSectionLoopSlot = 0
+    @Published private(set) var currentBPM: Double?
+    @Published private(set) var isAnalyzingBPM = false
 
     let queuePageSize = 100
     static let sectionLoopSlotCount = 3
@@ -60,6 +63,8 @@ final class PlaybackController: ObservableObject {
     private var sequenceContext: TrackPlaybackContext?
     private var sequenceCursor: Track?
     private let sectionLoopStorageKey = "playback.practice.sectionLoops.v1"
+    private let bpmStorageKey = "playback.practice.detectedBPM.v1"
+    private var bpmAnalysisTask: Task<Void, Never>?
 
     private struct StoredSectionLoop: Codable {
         let start: Double
@@ -108,12 +113,14 @@ final class PlaybackController: ObservableObject {
     }
 
     func play(_ track: Track) {
+        isGlobalShuffleEnabled = false
         sequenceContext = nil
         sequenceCursor = nil
         startPlayback(track)
     }
 
     func playFromList(_ track: Track, context: TrackPlaybackContext) {
+        isGlobalShuffleEnabled = false
         sequenceContext = context
         sequenceCursor = track
         startPlayback(track)
@@ -122,6 +129,9 @@ final class PlaybackController: ObservableObject {
     private func startPlayback(_ track: Track) {
         let token = UUID()
         loadToken = token
+        bpmAnalysisTask?.cancel()
+        currentBPM = nil
+        isAnalyzingBPM = false
         resetSectionLoopState()
         stopPitchPlayback()
         Task {
@@ -157,6 +167,8 @@ final class PlaybackController: ObservableObject {
                 player.replaceCurrentItem(with: item)
                 activePlaybackURL = url
                 currentTrack = track
+                currentBPM = storedBPM(for: track)
+                isAnalyzingBPM = false
                 elapsed = 0
                 duration = track.duration
                 restoreSectionLoopPreset(for: track, enableIfComplete: false)
@@ -224,6 +236,40 @@ final class PlaybackController: ObservableObject {
     }
 
     static let supportedSpeeds: [Double] = [0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95, 1.00]
+
+    func requestCurrentTrackBPM() {
+        guard let track = currentTrack, let url = activePlaybackURL else { return }
+        if let saved = storedBPM(for: track) {
+            currentBPM = saved
+            return
+        }
+        bpmAnalysisTask?.cancel()
+        isAnalyzingBPM = true
+        let trackID = track.id
+        bpmAnalysisTask = Task { [weak self] in
+            do {
+                let bpm = try await BPMDetector.detect(at: url)
+                guard !Task.isCancelled, let self, self.currentTrack?.id == trackID else { return }
+                self.currentBPM = bpm
+                self.isAnalyzingBPM = false
+                if let bpm { self.storeBPM(bpm, trackID: trackID) }
+            } catch {
+                guard !Task.isCancelled, let self, self.currentTrack?.id == trackID else { return }
+                self.currentBPM = nil
+                self.isAnalyzingBPM = false
+            }
+        }
+    }
+
+    private func storedBPM(for track: Track) -> Double? {
+        UserDefaults.standard.dictionary(forKey: bpmStorageKey)?[String(track.id)] as? Double
+    }
+
+    private func storeBPM(_ bpm: Double, trackID: Int64) {
+        var values = UserDefaults.standard.dictionary(forKey: bpmStorageKey) ?? [:]
+        values[String(trackID)] = bpm
+        UserDefaults.standard.set(values, forKey: bpmStorageKey)
+    }
 
     func setPlaybackSpeed(_ speed: Double) {
         guard Self.supportedSpeeds.contains(speed) else { return }
@@ -382,8 +428,33 @@ final class PlaybackController: ObservableObject {
     func dismissError() { errorMessage = nil }
 
     func toggleShuffle() {
+        if isGlobalShuffleEnabled {
+            isGlobalShuffleEnabled = false
+            shuffleEnabled = true
+            return
+        }
+        isGlobalShuffleEnabled = false
         shuffleEnabled.toggle()
         if shuffleEnabled { shuffleSeed = Int64.random(in: 1...Int64.max) }
+    }
+
+    func startGlobalShuffle() {
+        shuffleEnabled = true
+        isGlobalShuffleEnabled = true
+        sequenceContext = nil
+        sequenceCursor = nil
+        shuffleSeed = Int64.random(in: 1...Int64.max)
+        Task {
+            do {
+                guard let track = try await globalShuffleCandidate(excludingTrackID: currentTrack?.id) else {
+                    errorMessage = noGlobalShuffleTracksMessage()
+                    return
+                }
+                startPlayback(track)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
     }
 
     func seek(to seconds: Double) {
@@ -421,30 +492,36 @@ final class PlaybackController: ObservableObject {
     private func loadAdjacent(direction: Int) {
         guard let currentTrack else { return }
         let shouldShuffle = shuffleEnabled
+        let shouldUseGlobalShuffle = isGlobalShuffleEnabled
         let seed = shuffleSeed
         let context = sequenceContext
         let cursor = sequenceCursor ?? currentTrack
         let shouldWrap = repeatMode == .all
         Task {
             do {
-                let nextTrack = try await Task.detached(priority: .userInitiated) {
-                    if direction > 0, shouldShuffle {
-                        return try self.database.shuffleCandidates(
-                            afterID: currentTrack.id,
-                            seed: seed,
-                            limit: 1
-                        ).first ?? self.database.adjacentTrack(to: currentTrack.id, direction: direction)
-                    }
-                    if let context {
-                        return try self.database.adjacentTrack(
-                            in: context,
-                            from: cursor,
-                            direction: direction,
-                            wraps: shouldWrap
-                        )
-                    }
-                    return try self.database.adjacentTrack(to: currentTrack.id, direction: direction)
-                }.value
+                let nextTrack: Track?
+                if direction > 0, shouldUseGlobalShuffle {
+                    nextTrack = try await globalShuffleCandidate(excludingTrackID: currentTrack.id)
+                } else {
+                    nextTrack = try await Task.detached(priority: .userInitiated) {
+                        if direction > 0, shouldShuffle {
+                            return try self.database.shuffleCandidates(
+                                afterID: currentTrack.id,
+                                seed: seed,
+                                limit: 1
+                            ).first ?? self.database.adjacentTrack(to: currentTrack.id, direction: direction)
+                        }
+                        if let context {
+                            return try self.database.adjacentTrack(
+                                in: context,
+                                from: cursor,
+                                direction: direction,
+                                wraps: shouldWrap
+                            )
+                        }
+                        return try self.database.adjacentTrack(to: currentTrack.id, direction: direction)
+                    }.value
+                }
                 if let nextTrack {
                     if context != nil { sequenceCursor = nextTrack }
                     startPlayback(nextTrack)
@@ -454,6 +531,58 @@ final class PlaybackController: ObservableObject {
                 errorMessage = error.localizedDescription
             }
         }
+    }
+
+    private func globalShuffleCandidate(excludingTrackID: Int64?) async throws -> Track? {
+        let roots = try await Task.detached(priority: .userInitiated) {
+            try self.database.scanRoots()
+        }.value
+        let connectedRootIDs = roots.compactMap { root -> Int64? in
+            guard let scoped = try? SecurityScopedRoot.resolve(bookmark: root.bookmark),
+                  FileManager.default.fileExists(atPath: scoped.url.path) else { return nil }
+            return root.id
+        }
+        shuffleSeed = nextShuffleSeed(shuffleSeed)
+
+        if !connectedRootIDs.isEmpty {
+            let seed = shuffleSeed
+            return try await Task.detached(priority: .userInitiated) {
+                try self.database.randomTrack(
+                    rootIDs: connectedRootIDs,
+                    seed: seed,
+                    excludingTrackID: excludingTrackID
+                )
+            }.value
+        }
+
+        var excluded = excludingTrackID
+        while true {
+            let seed = shuffleSeed
+            let excludedTrackID = excluded
+            let database = database
+            guard let candidate = try await Task.detached(priority: .userInitiated, operation: {
+                try database.randomCachedTrack(seed: seed, excludingTrackID: excludedTrackID)
+            }).value else { return nil }
+            if try await offlineCache.cachedPlayableURL(for: candidate) != nil {
+                return candidate
+            }
+            try? await Task.detached(priority: .utility) {
+                try self.database.removeCachedTrack(trackID: candidate.id)
+            }.value
+            excluded = candidate.id
+            shuffleSeed = nextShuffleSeed(shuffleSeed)
+        }
+    }
+
+    private func nextShuffleSeed(_ seed: Int64) -> Int64 {
+        seed &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+    }
+
+    private func noGlobalShuffleTracksMessage() -> String {
+        let isEnglish = (try? database.setting(forKey: "app.language")) == "en"
+        return isEnglish
+            ? "No playable tracks are available in the connected library or local cache."
+            : "接続中のライブラリまたはローカルキャッシュに再生できる曲がありません。"
     }
 
     private func didFinishTrack() {

@@ -40,6 +40,62 @@ struct LibraryDatabaseTests {
         #expect(second.offset == 2)
     }
 
+    @Test func sidebarCountsIncludeEachBrowsableLibraryCategory() throws {
+        let context = try TestContext()
+        defer { try? FileManager.default.removeItem(at: context.directory) }
+        _ = try context.database.upsertTracks([
+            context.importedTrack(identity: "one", title: "One", artist: "Artist A", album: "Shared", genre: "Rock", filename: "one.mp3"),
+            context.importedTrack(identity: "two", title: "Two", artist: "Artist A", album: "Shared", genre: "Rock", filename: "two.mp3"),
+            context.importedTrack(identity: "three", title: "Three", artist: "Artist B", album: "Other", genre: "Jazz", filename: "three.mp3")
+        ], sessionID: 1)
+        try context.database.recordCachedTrack(trackID: 1, path: "/tmp/sidebar-count.mp3", fileSize: 1)
+
+        let counts = try context.database.librarySidebarCounts()
+
+        #expect(counts.tracks == 3)
+        #expect(counts.albums == 2)
+        #expect(counts.artists == 2)
+        #expect(counts.genres == 2)
+        #expect(counts.folders == 1)
+        #expect(counts.cached == 1)
+        #expect(counts.cachedBytes == 1)
+    }
+
+    @Test func sidebarCacheMetricsIncludeTotalStorageBytes() throws {
+        let context = try TestContext()
+        defer { try? FileManager.default.removeItem(at: context.directory) }
+        _ = try context.database.insertSyntheticTracks(count: 3)
+        try context.database.recordCachedTrack(trackID: 1, path: "/tmp/cache-one.mp3", fileSize: 12_345)
+        try context.database.recordCachedTrack(trackID: 3, path: "/tmp/cache-three.mp3", fileSize: 67_890)
+
+        let counts = try context.database.librarySidebarCounts()
+
+        #expect(counts.cached == 2)
+        #expect(counts.cachedBytes == 80_235)
+    }
+
+    @Test func automaticGenreCanReuseTaggedTrackFromSameAlbumAndArtist() throws {
+        let context = try TestContext()
+        defer { try? FileManager.default.removeItem(at: context.directory) }
+        _ = try context.database.upsertTracks([
+            context.importedTrack(
+                identity: "tagged", title: "One", artist: "Artist",
+                album: "Shared Album", albumArtist: "Artist", genre: "Funk", filename: "one.mp3"
+            ),
+            context.importedTrack(
+                identity: "missing", title: "Two", artist: "Artist",
+                album: "Shared Album", albumArtist: "Artist", filename: "two.mp3"
+            ),
+            context.importedTrack(
+                identity: "other", title: "Three", artist: "Artist",
+                album: "Other Album", albumArtist: "Artist", genre: "Rock", filename: "three.mp3"
+            )
+        ], sessionID: 1)
+
+        let missing = try #require(try context.database.tracksMissingGenre(afterID: 0, limit: 10).first)
+        #expect(try context.database.consensusGenreForAlbum(track: missing) == "Funk")
+    }
+
     @Test func albumArtworkUsesTheFirstEmbeddedCoverBeforeRemoteLookup() throws {
         let context = try TestContext()
         _ = try context.database.upsertTracks([
@@ -139,8 +195,9 @@ struct LibraryDatabaseTests {
             .deletingLastPathComponent()
         let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
 
-        #expect(source.contains("Section(isExpanded: .constant(true))"))
+        #expect(!source.contains("Section(isExpanded: .constant(true))"))
         #expect(source.contains("ForEach(model.visibleLibrarySections)"))
+        #expect(source.components(separatedBy: ".menuIndicator(.hidden)").count - 1 >= 4)
     }
 
     @Test func librarySidebarCanBeDragReorderedAndPersistsItsOrder() throws {
@@ -157,6 +214,34 @@ struct LibraryDatabaseTests {
         #expect(content.contains("model.text(\"並び替える\", \"Reorder Items\")"))
         #expect(model.contains("sidebar.libraryOrder"))
         #expect(model.contains("librarySectionOrder = order"))
+    }
+
+    @Test func librarySidebarUsesRequestedDefaultsOnlyWhenPreferencesAreAbsent() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+
+        #expect(model.contains("[.cache, .artists, .albums, .tracks, .genres, .favorites]"))
+        #expect(model.contains("[.recentlyAdded, .upNext, .folders]"))
+        #expect(model.contains("if let storedLibraryOrder"))
+        #expect(model.contains("if let storedLibraryVisibility"))
+    }
+
+    @Test func librarySearchKeepsStableFocusAndWidthWhileLoading() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+
+        #expect(content.contains("@FocusState private var isLibrarySearchFocused: Bool"))
+        #expect(content.contains("LibrarySearchField(model: model, isFocused: $isLibrarySearchFocused)"))
+        #expect(content.contains("@FocusState.Binding var isFocused: Bool"))
+        #expect(content.contains(".focused($isFocused)"))
+        let searchStart = try #require(content.range(of: "private struct LibrarySearchField"))
+        let searchEnd = try #require(content.range(of: "private struct TrackSortHeader", range: searchStart.upperBound..<content.endIndex))
+        let searchField = String(content[searchStart.lowerBound..<searchEnd.lowerBound])
+        #expect(searchField.contains(".frame(width: 360)"))
+        #expect(searchField.contains(".opacity(model.isSearchInProgress ? 1 : 0)"))
+        #expect(!searchField.contains("Text(model.text(\"検索中…\", \"Searching…\"))"))
     }
 
     @Test func libraryHeaderKeepsPersistentVisibilityControlsWhileToolsStaySimple() throws {
@@ -259,11 +344,28 @@ struct LibraryDatabaseTests {
         let inspectorEnd = try #require(source.range(of: "private struct CurrentTrackInfoEditorView: View", range: inspectorStart.upperBound..<source.endIndex))
         let inspector = String(source[inspectorStart.lowerBound..<inspectorEnd.lowerBound])
 
-        #expect(inspector.contains("Text(model.text(\"コード\", \"Chords\")).tag(4)"))
+        #expect(inspector.contains("Text(model.text(\"コード\", \"Chords\")).tag(5)"))
         #expect(inspector.contains("private var chordifySearchURL: URL?"))
         #expect(inspector.contains("https://chordify.net/search/"))
         #expect(inspector.contains("browserURL = chordifySearchURL"))
-        #expect(inspector.contains("if tab == 4 { tab = 0 }"))
+        #expect(inspector.contains("if tab == 5 { tab = 0 }"))
+    }
+
+    @Test func inspectorTabSearchLetsTheUserChooseGuitarOrBassOnYouTube() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let inspectorStart = try #require(source.range(of: "private struct NowPlayingInspector: View"))
+        let inspectorEnd = try #require(source.range(of: "private struct CurrentTrackInfoEditorView: View", range: inspectorStart.upperBound..<source.endIndex))
+        let inspector = String(source[inspectorStart.lowerBound..<inspectorEnd.lowerBound])
+
+        #expect(inspector.contains("Text(\"TAB\").tag(4)"))
+        #expect(inspector.contains("private var youtubeTabSearchURL: URL?"))
+        #expect(inspector.contains("URLComponents(string: \"https://www.youtube.com/results\")"))
+        #expect(inspector.contains("[track.title, track.artist, \"tab\", tabSearchInstrument]"))
+        #expect(inspector.contains("Text(\"guitar\").tag(\"guitar\")"))
+        #expect(inspector.contains("Text(\"bass\").tag(\"bass\")"))
+        #expect(inspector.contains("browserURL = youtubeTabSearchURL"))
     }
 
     @Test func trackSelectionDoesNotWaitForDoubleClickRecognition() throws {
@@ -323,6 +425,126 @@ struct LibraryDatabaseTests {
         #expect(source.contains(".disabled(!navigation.canGoForward)"))
     }
 
+    @Test func embeddedBrowserFitsWidePagesToTheInspectorWidth() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/InternalBrowserView.swift"))
+
+        #expect(source.contains("GeometryReader"))
+        #expect(source.contains("availableWidth: proxy.size.width"))
+        #expect(source.contains("document.documentElement?.scrollWidth"))
+        #expect(source.contains("webView.pageZoom"))
+        #expect(source.contains("fitPage(in: view, availableWidth: availableWidth)"))
+        #expect(source.contains("max(0.6, min(1, fittedZoom))"))
+    }
+
+    @Test func googleAuthenticationLeavesTheEmbeddedBrowserForTheSystemBrowser() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/InternalBrowserView.swift"))
+
+        #expect(source.contains("navigation.openInDefaultBrowser(fallback: url)"))
+        #expect(source.contains("shouldOpenGoogleAuthenticationExternally"))
+        #expect(source.contains("NSWorkspace.shared.open(destination)"))
+        #expect(source.contains("host == \"accounts.google.com\""))
+        #expect(source.contains("!shouldOpenGoogleAuthenticationExternally(url)"))
+    }
+
+    @Test func libraryTablesUseSubtleColumnDividersAndConsistentTextColor() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let albumStart = try #require(source.range(of: "private var albumSummaryTable: some View"))
+        let albumEnd = try #require(source.range(of: "private var albumSummaryGrid: some View", range: albumStart.upperBound..<source.endIndex))
+        let albumTable = String(source[albumStart.lowerBound..<albumEnd.lowerBound])
+
+        #expect(source.contains("private struct TableColumnDividerModifier: ViewModifier"))
+        #expect(source.components(separatedBy: ".tableColumnDivider()").count - 1 >= 6)
+        #expect(!albumTable.contains(".buttonStyle(.link)"))
+        #expect(albumTable.contains(".foregroundStyle(.primary)"))
+        #expect(source.contains("case .cache: return model.cachedTrackCount.formatted()"))
+        #expect(source.contains("case .tracks: return model.libraryTrackCount.formatted()"))
+    }
+
+    @Test func missingGenreScanOnlyReturnsAvailableUnclassifiedTracks() throws {
+        let context = try TestContext()
+        defer { try? FileManager.default.removeItem(at: context.directory) }
+        _ = try context.database.upsertTracks([
+            context.importedTrack(identity: "missing", title: "Missing", artist: "Artist", album: "Album", genre: "", filename: "missing.mp3"),
+            context.importedTrack(identity: "unknown", title: "Unknown", artist: "Artist", album: "Album", genre: "Unknown", filename: "unknown.mp3"),
+            context.importedTrack(identity: "known", title: "Known", artist: "Artist", album: "Album", genre: "Rock", filename: "known.mp3")
+        ], sessionID: 1)
+
+        let tracks = try context.database.tracksMissingGenre(afterID: 0, limit: 10)
+
+        #expect(tracks.map(\.title) == ["Missing", "Unknown"])
+        #expect(try context.database.missingGenreTrackCount() == 2)
+    }
+
+    @Test func genreScreenStartsHighConfidenceHybridScanAndShowsRegistrationCount() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+
+        #expect(content.contains("model.startAutomaticGenreScan()"))
+        #expect(content.contains("ジャンル検索を開始"))
+        #expect(content.contains("automaticGenreRegisteredCount"))
+        #expect(model.contains("guard suggestion.confidence >= 0.80"))
+        #expect(model.contains("tracksMissingGenre(afterID:"))
+        #expect(model.contains("automaticGenreRegisteredCount"))
+
+        let scanStart = try #require(model.range(of: "func startAutomaticGenreScan()"))
+        let scanEnd = try #require(model.range(of: "func cancelAutomaticGenreScan()", range: scanStart.upperBound..<model.endIndex))
+        let scan = String(model[scanStart.lowerBound..<scanEnd.lowerBound])
+        #expect(scan.contains("genreClassifier.classify("))
+        #expect(scan.contains("geminiGenreClassifier.classify("))
+        #expect(!scan.contains("LocalGenreClassifier()"))
+        #expect(scan.contains("automaticGenreScanProcessedCount += 1"))
+        #expect(scan.contains("automaticGenreScanFailedCount"))
+        #expect(scan.contains("automaticGenreScanBelowThresholdCount"))
+        #expect(scan.components(separatedBy: "automaticGenreScanBelowThresholdCount += 1").count - 1 == 1)
+        #expect(scan.contains("consecutiveProviderFailures >= 3"))
+        #expect(scan.contains("automaticGenreRetrySecondsRemaining = 10"))
+        #expect(scan.contains("try await Task.sleep(for: .seconds(1))"))
+        #expect(!scan.contains("shouldStop"))
+        #expect(content.contains("model.isScanningAutomaticGenres"))
+        #expect(content.contains("sidebarAutomaticGenreProgress"))
+        #expect(content.contains("automaticGenreRetrySecondsRemaining"))
+        #expect(model.contains("recordAutomaticGenreRegistration(suggestion.genre)"))
+        #expect(scan.contains("consensusGenreForAlbum(track: track)"))
+        #expect(scan.contains("musicMetadata.genreSuggestion("))
+        #expect(scan.range(of: "consensusGenreForAlbum(track: track)")!.lowerBound < scan.range(of: "genreClassifier.classify(")!.lowerBound)
+        #expect(content.contains("ライブラリ内一致→ローカル判定→MusicBrainz→外部AI"))
+        #expect(content.contains("automaticGenreMusicBrainzRegisteredCount"))
+        #expect(model.contains("enum GenreDescriptionCatalog"))
+        #expect(content.contains("GenreDescriptionCatalog.shortDescription"))
+        #expect(content.contains("GenreDescriptionCatalog.detailDescription"))
+    }
+
+    @Test func displaySettingsOfferSixPersistentPreviewThemes() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+        let app = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/MassiveMusicApp.swift"))
+
+        for theme in ["codexDark", "graphiteDark", "midnightDark", "paperLight", "warmLight", "mistLight"] {
+            #expect(model.contains("case \(theme)"))
+        }
+        #expect(model.contains("struct AppearancePalette"))
+        #expect(model.contains("legacyAppearance"))
+        #expect(content.contains("AppearanceThemePicker"))
+        #expect(content.contains("model.appearance.palette.sidebar"))
+        #expect(content.contains("model.appearance.palette.inspector"))
+        #expect(content.contains("model.savePresentationSettings()"))
+        #expect(model.contains("case .codexDark: text(\"ダーク\", \"Dark\")"))
+        #expect(app.contains("NSApplication.shared.appearance = appearance"))
+        #expect(app.contains("window.appearance = appearance"))
+        #expect(app.contains("struct WindowAppearanceSynchronizer"))
+        #expect(content.contains("WindowAppearanceSynchronizer(mode: model.appearance)"))
+    }
+
     @Test func playlistCustomizationPersistsWithoutCustomizableManagementActions() throws {
         let repository = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -365,10 +587,21 @@ struct LibraryDatabaseTests {
         #expect(sidebar.contains("sidebarBackgroundStatus"))
         #expect(sidebar.contains("if model.isBulkAutoFilling"))
         #expect(sidebar.contains("if model.isID3Migrating"))
+        #expect(sidebar.contains("if model.isScanningAutomaticGenres"))
+        #expect(sidebar.contains("sidebarAutomaticGenreProgress"))
         #expect(!library.contains("if model.isBulkAutoFilling"))
         #expect(!library.contains("if model.isID3Migrating"))
         #expect(source.contains("private var sidebarBackgroundStatus: some View"))
         #expect(source.contains("private func sidebarProgressStatus"))
+    }
+
+    @Test func musicBrainzSidebarProgressNamesAlbumTrackOrderAnalysis() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+
+        #expect(model.contains("アルバム曲順を解析中"))
+        #expect(model.contains("Analyzing album track order"))
     }
 
     @Test func inspectorDividerUsesStableGlobalDragCoordinates() throws {
@@ -475,7 +708,7 @@ struct LibraryDatabaseTests {
         let playerControls = try #require(source.range(of: "InspectorPlayerControls(player: player, model: model, isMiniPlayer: $isMiniPlayer)", range: inspectorStart.upperBound..<source.endIndex))
         let inspectorContent = try #require(source.range(of: "Group {", range: playerControls.upperBound..<source.endIndex))
         #expect(playerControls.lowerBound < inspectorContent.lowerBound)
-        #expect(source.contains(".font(.system(size: 34))"))
+        #expect(source.contains(".font(.system(size: isCompact ? 27 : 34))"))
         #expect(source.contains("Color.accentColor.opacity(0.18)"))
         let controlsStart = try #require(source.range(of: "private struct InspectorPlayerControls: View"))
         let controlsSource = String(source[controlsStart.lowerBound...])
@@ -489,8 +722,8 @@ struct LibraryDatabaseTests {
         #expect(volumePopover.lowerBound < volumeSlider.lowerBound)
         #expect(controlsSource.contains("private var volumeSymbol: String"))
         #expect(controlsSource.contains("private var miniPlayerButton: some View"))
-        #expect(controlsSource.contains("Button { isMiniPlayer = true }"))
-        #expect(controlsSource.contains("Label(model.text(\"ミニ\", \"Mini\"), systemImage: \"pip\")"))
+        #expect(controlsSource.contains("Button { isMiniPlayer.toggle() }"))
+        #expect(controlsSource.contains("systemImage: isCompact ? \"arrow.up.left.and.arrow.down.right\" : \"pip\""))
         #expect(controlsSource.contains(".labelStyle(.iconOnly)"))
         #expect(controlsSource.contains(".frame(width: 30, height: 28)"))
         #expect(!controlsSource.contains(".padding(.trailing, 46)"))
@@ -515,10 +748,12 @@ struct LibraryDatabaseTests {
 
         #expect(controlsSource.contains("PlayerArtwork("))
         #expect(controlsSource.contains("artworkURL: model.enrichedInfo?.artworkURL"))
-        #expect(controlsSource.contains("size: 72"))
+        #expect(controlsSource.contains("size: isCompact ? 44 : 72"))
         #expect(controlsSource.contains("HStack(alignment: .top, spacing: 12)"))
         #expect(!informationSource.contains("PlayerArtwork("))
         #expect(!informationSource.contains("size: 210"))
+        #expect(!informationSource.contains("Text(player.currentTrack?.title"))
+        #expect(!informationSource.contains("Text(player.currentTrack?.artist"))
     }
 
     @Test func inspectorPlayerExposesOneTrackAndAlbumOrPlaylistRepeat() throws {
@@ -580,8 +815,8 @@ struct LibraryDatabaseTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
         let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
-        let miniPlayerStart = try #require(source.range(of: "struct MiniPlayerView: View"))
-        let miniPlayerSource = String(source[miniPlayerStart.lowerBound...])
+        let sharedStart = try #require(source.range(of: "private struct UnifiedPlayerControls: View"))
+        let miniPlayerSource = String(source[sharedStart.lowerBound...])
 
         #expect(miniPlayerSource.contains("PlayerArtwork("))
         #expect(miniPlayerSource.contains("artworkURL: model.enrichedInfo?.artworkURL"))
@@ -597,16 +832,15 @@ struct LibraryDatabaseTests {
             .deletingLastPathComponent()
         let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
         let app = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/MassiveMusicApp.swift"))
-        let miniPlayerStart = try #require(content.range(of: "struct MiniPlayerView: View"))
-        let miniPlayerSource = String(content[miniPlayerStart.lowerBound...])
+        let controlsStart = try #require(content.range(of: "private struct UnifiedPlayerControls: View"))
+        let miniPlayerSource = String(content[controlsStart.lowerBound...])
 
-        #expect(miniPlayerSource.contains("size: 44"))
-        #expect(miniPlayerSource.contains("Text(format(player.elapsed))"))
-        #expect(miniPlayerSource.contains("Text(format(player.duration))"))
-        #expect(miniPlayerSource.contains(".padding(.top, 4)"))
+        #expect(miniPlayerSource.contains("size: isCompact ? 44 : 72"))
+        #expect(miniPlayerSource.contains("timeLabel(player.elapsed)"))
+        #expect(miniPlayerSource.contains("timeLabel(player.duration)"))
         #expect(miniPlayerSource.contains(".frame(width: 390, height: 132)"))
         #expect(app.contains("NSSize(width: 390, height: 132)"))
-        #expect(!miniPlayerSource.contains(".padding(14)"))
+        #expect(miniPlayerSource.contains("isCompact ? 12 : 14"))
     }
 
     @Test func miniPlayerDisablesNativeWindowResizingUntilExpanded() throws {
@@ -624,6 +858,176 @@ struct LibraryDatabaseTests {
         #expect(source.contains("window.contentMaxSize = size"))
         #expect(source.contains("window.standardWindowButton(.zoomButton)?.isEnabled = false"))
         #expect(source.contains("window.standardWindowButton(.zoomButton)?.isEnabled = true"))
+    }
+
+    @Test func miniPlayerRestoresTheExactExpandedWindowFrameCapturedBeforeSwitching() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/MassiveMusicApp.swift"))
+
+        #expect(source.contains("@State private var expandedFrame: NSRect?"))
+        #expect(source.contains("private var miniPlayerBinding: Binding<Bool>"))
+        #expect(source.contains("expandedFrame = window.frame"))
+        #expect(source.contains("isMiniPlayer = mini"))
+        let capture = try #require(source.range(of: "expandedFrame = window.frame"))
+        let switchMode = try #require(source.range(of: "isMiniPlayer = mini", range: capture.upperBound..<source.endIndex))
+        #expect(capture.lowerBound < switchMode.lowerBound)
+        #expect(source.contains("window.setFrame(restoredFrame, display: true, animate: false)"))
+        #expect(!source.contains("@State private var expandedSize"))
+    }
+
+    @Test func inspectorAndMiniPlayerShareOneControlSurfaceWithAdjacentPlaybackModes() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let sharedStart = try #require(source.range(of: "private struct UnifiedPlayerControls: View"))
+        let sharedSource = String(source[sharedStart.lowerBound...])
+
+        #expect(source.components(separatedBy: "UnifiedPlayerControls(").count - 1 == 2)
+        #expect(sharedSource.contains("HStack(spacing: 2)"))
+        let shuffle = try #require(sharedSource.range(of: "shuffleButton"))
+        let repeatMode = try #require(sharedSource.range(of: "repeatButton", range: shuffle.upperBound..<sharedSource.endIndex))
+        #expect(shuffle.lowerBound < repeatMode.lowerBound)
+        #expect(sharedSource.contains("Image(systemName: \"shuffle\")"))
+        #expect(sharedSource.contains("Image(systemName: repeatModeSymbol)"))
+    }
+
+    @Test func playerMenusHideDisclosureIndicatorsAndOfferWholeLibraryShuffle() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let playback = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/PlaybackController.swift"))
+        let controlsStart = try #require(content.range(of: "private struct UnifiedPlayerControls: View"))
+        let controls = String(content[controlsStart.lowerBound...])
+
+        #expect(controls.contains("ライブラリ全体をランダム再生"))
+        #expect(controls.contains("Shuffle Entire Library"))
+        #expect(controls.contains("Button(action: player.startGlobalShuffle)"))
+        #expect(controls.components(separatedBy: ".menuIndicator(.hidden)").count - 1 >= 2)
+        #expect(playback.contains("func startGlobalShuffle()"))
+        #expect(playback.contains("if isGlobalShuffleEnabled"))
+        #expect(playback.contains("database.randomTrack("))
+        #expect(playback.contains("rootIDs: connectedRootIDs"))
+        #expect(playback.contains("database.randomCachedTrack("))
+    }
+
+    @Test func wholeLibraryRandomSelectorsStayBoundedToConnectedRootsOrCache() throws {
+        let context = try TestContext()
+        defer { try? FileManager.default.removeItem(at: context.directory) }
+        _ = try context.database.insertSyntheticTracks(count: 5)
+        try context.database.recordCachedTrack(trackID: 4, path: "/tmp/random-cache.mp3", fileSize: 4_000)
+
+        let rootTrack = try #require(try context.database.randomTrack(rootIDs: [1], seed: 42))
+        let cachedTrack = try #require(try context.database.randomCachedTrack(seed: 42))
+
+        #expect((1...5).contains(rootTrack.id))
+        #expect(try context.database.randomTrack(rootIDs: [999], seed: 42) == nil)
+        #expect(cachedTrack.id == 4)
+    }
+
+    @Test func cacheHeaderShowsCountAndFormattedStorageSize() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+
+        #expect(content.contains("formattedFileSize(model.cachedStorageBytes)"))
+        #expect(content.contains("ByteCountFormatter.string"))
+        #expect(model.contains("@Published private(set) var cachedStorageBytes: Int64 = 0"))
+        #expect(model.contains("cachedStorageBytes = library.cachedBytes"))
+    }
+
+    @Test func normalWindowFramePersistsAcrossLaunchesWithoutSavingMiniPlayerSize() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/MassiveMusicApp.swift"))
+
+        #expect(source.contains("playerWindowFrameStorageKey"))
+        #expect(source.contains("NSStringFromRect"))
+        #expect(source.contains("NSRectFromString"))
+        #expect(source.contains("guard !isMiniPlayer"))
+        #expect(source.contains("saveExpandedFrame(window.frame)"))
+        #expect(source.contains("fit(window: window)"))
+    }
+
+    @Test func shuffleAdvancesOnlyOnceThroughTheRandomCandidatePath() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/PlaybackController.swift"))
+        let start = try #require(source.range(of: "private func loadAdjacent(direction: Int)"))
+        let end = try #require(source.range(of: "private func didFinishTrack()", range: start.upperBound..<source.endIndex))
+        let implementation = String(source[start.lowerBound..<end.lowerBound])
+
+        #expect(implementation.contains("if direction > 0, shouldShuffle"))
+        #expect(implementation.contains("shuffleCandidates("))
+        #expect(implementation.components(separatedBy: "startPlayback(nextTrack)").count - 1 == 1)
+    }
+
+    @Test func metadataDiagnosticCardsUseCompactSpacing() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let start = try #require(source.range(of: "private var metadataDiagnosticsView: some View"))
+        let end = try #require(source.range(of: "private var duplicateSelectionToolbar", range: start.upperBound..<source.endIndex))
+        let diagnostics = String(source[start.lowerBound..<end.lowerBound])
+
+        #expect(diagnostics.contains("HStack(spacing: 6)"))
+        #expect(diagnostics.contains(".frame(minWidth: 132, alignment: .leading)"))
+        #expect(diagnostics.contains(".padding(.horizontal, 9)"))
+        #expect(diagnostics.contains(".padding(.vertical, 7)"))
+        #expect(diagnostics.contains(".padding(8)"))
+    }
+
+    @Test func registeredLyricsRemainEditableFromTheLyricsTab() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let start = try #require(source.range(of: "private var lyrics: some View"))
+        let end = try #require(source.range(of: "private var discovery: some View", range: start.upperBound..<source.endIndex))
+        let lyrics = String(source[start.lowerBound..<end.lowerBound])
+
+        #expect(lyrics.contains("if player.currentTrack != nil"))
+        #expect(!lyrics.contains("if model.enrichedInfo?.lyrics?.plainLyrics == nil, player.currentTrack != nil"))
+        #expect(lyrics.contains("model.text(\"歌詞を編集…\", \"Edit Lyrics…\")"))
+        #expect(source.contains("model.text(isEditingExistingLyrics ? \"歌詞を修正\" : \"歌詞を手動で登録\""))
+    }
+
+    @Test func lyricsAutoScrollUsesStableLineIDsForSyncedAndPlainLyrics() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+
+        #expect(source.contains("model.enrichedInfo?.lyrics?.syncedLyrics"))
+        #expect(source.contains("private var activeLyricLineIndex: Int"))
+        #expect(source.contains("proxy.scrollTo(index, anchor: .center)"))
+        #expect(source.contains("player.elapsed / player.duration"))
+        #expect(source.contains("parseSyncedLyricLine"))
+    }
+
+    @Test func practiceTabAutomaticallyDetectsAndPersistsBPMOnDemand() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let playback = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/PlaybackController.swift"))
+        let detector = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/BPMDetector.swift"))
+
+        #expect(content.contains("player.requestCurrentTrackBPM()"))
+        #expect(content.contains("Image(systemName: \"metronome\")"))
+        #expect(playback.contains("@Published private(set) var currentBPM: Double?"))
+        #expect(playback.contains("playback.practice.detectedBPM.v1"))
+        #expect(detector.contains("embeddedID3BPM"))
+        #expect(detector.contains("estimateAudioBPM"))
+        #expect(detector.contains("maximumFrames = AVAudioFramePosition(format.sampleRate * 180)"))
     }
 
     @Test func trackContextMenuShowsPlaylistChoicesWithoutANestedSubmenu() throws {
@@ -664,7 +1068,9 @@ struct LibraryDatabaseTests {
 
         #expect(source.contains("private var cacheHeaderControls: some View"))
         #expect(source.contains("private var nonCacheHeaderControls: some View"))
-        #expect(source.contains("private var headerControls: some View {\n        ViewThatFits(in: .horizontal)"))
+        #expect(source.contains("private var headerControls: some View {\n        HStack(spacing: 12)"))
+        #expect(source.contains("ViewThatFits(in: .horizontal)"))
+        #expect(source.contains("LibrarySearchField(model: model, isFocused: $isLibrarySearchFocused)"))
         #expect(source.contains(".id(trackTableContextID)"))
         #expect(source.contains("private var trackTableContextID: String"))
     }
@@ -805,6 +1211,33 @@ struct LibraryDatabaseTests {
         #expect(model.contains("closeDetail()"))
         #expect(content.contains("model.selectedIndexToken = token"))
         #expect(!content.contains("@State private var selectedIndexToken"))
+    }
+
+    @Test func backNavigationRestoresMetadataDiagnosticsTabPageAndScrollPosition() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let variationSearchStart = try #require(model.range(of: "    func searchVariationValue"))
+        let variationSearchEnd = try #require(model.range(of: "\n    func selectPlaylist", range: variationSearchStart.upperBound..<model.endIndex))
+        let variationSearch = String(model[variationSearchStart.lowerBound..<variationSearchEnd.lowerBound])
+
+        #expect(model.contains("let diagnosticKind: MetadataIssueKind"))
+        #expect(model.contains("let variationFieldFilter: MetadataField?"))
+        #expect(model.contains("let metadataIssueFieldFilter: MetadataField?"))
+        #expect(model.contains("let exactMetadataFilter: ExactMetadataFilter?"))
+        #expect(model.contains("let trackScrollPosition: Int64?"))
+        #expect(model.contains("let variationScrollPosition: Int64?"))
+        #expect(model.contains("@Published var trackScrollPosition: Int64?"))
+        #expect(model.contains("@Published var variationScrollPosition: Int64?"))
+        #expect(variationSearch.contains("captureBrowseReturnState()"))
+        #expect(!variationSearch.contains("changeSection(.tracks"))
+        #expect(model.contains("var isInDetail: Bool {"))
+        #expect(model.contains("|| !browseReturnStack.isEmpty"))
+        #expect(content.contains(".scrollPosition(id: $model.trackScrollPosition, anchor: .top)"))
+        #expect(content.contains(".scrollPosition(id: $model.variationScrollPosition, anchor: .top)"))
+        #expect(model.contains("needsBrowseScrollRestoration = state.trackScrollPosition != nil"))
+        #expect(content.contains("restorePendingBrowseScrollPositionIfNeeded()"))
     }
 
     @Test func backgroundMetadataUpdatesNeverCloseTheOpenAlbumDetail() throws {
@@ -1067,7 +1500,10 @@ struct LibraryDatabaseTests {
         let editor = String(content[start.lowerBound..<end.lowerBound])
 
         #expect(editor.contains("GroupBox(model.text(\"変更する曲情報\""))
-        #expect(editor.contains("isCompilation: changeCompilation ? isCompilation : nil"))
+        #expect(editor.contains("Button(model.text(\"登録\", \"Apply\")"))
+        #expect(editor.contains("model.updateMetadata(for: tracks, changes:"))
+        #expect(!editor.contains(".toggleStyle(.checkbox)"))
+        #expect(!editor.contains("チェックした項目だけ"))
         #expect(!editor.contains("batchField(model.text(\"タイトル\""))
         #expect(!editor.contains("model.text(\"トラック番号\""))
         #expect(!editor.contains("一覧順に連番"))
@@ -1077,6 +1513,22 @@ struct LibraryDatabaseTests {
         #expect(content.contains("ColumnResizeHandle(width: $albumViewArtistWidth"))
         #expect(content.contains("ColumnResizeHandle(width: $albumViewSongsWidth"))
         #expect(model.contains("guard section == requestedSection, selectedAlbum == nil, selectedArtist?.name == artist.name"))
+    }
+
+    @Test func appliedAIGenreRefreshesTheCurrentTrackEditorAndPlayer() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+        let editorStart = try #require(content.range(of: "private struct CurrentTrackInfoEditorView"))
+        let editorEnd = try #require(content.range(of: "private struct TrackMetadataEditor", range: editorStart.upperBound..<content.endIndex))
+        let editor = String(content[editorStart.lowerBound..<editorEnd.lowerBound])
+
+        #expect(model.contains("@Published private(set) var lastMetadataEditedTrack: Track?"))
+        #expect(model.contains("lastMetadataEditedTrack = track.applying(edit)"))
+        #expect(editor.contains(".onChange(of: model.lastMetadataEditedTrack)"))
+        #expect(editor.contains("loadTrackData(from: updatedTrack)"))
+        #expect(editor.contains("player.updateCurrentTrack("))
     }
 
     @Test func nestedAlbumNavigationRejectsLateArtistAndSearchUpdates() throws {
@@ -1565,7 +2017,9 @@ struct LibraryDatabaseTests {
         let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
         #expect(content.contains("searchVariationValue(candidate.valueA, field: candidate.field)"))
         #expect(content.contains("searchVariationValue(candidate.valueB, field: candidate.field)"))
-        #expect(model.contains("changeSection(.tracks, exactFilter: ExactMetadataFilter(field: field, value: value))"))
+        #expect(model.contains("captureBrowseReturnState()"))
+        #expect(model.contains("section = .tracks"))
+        #expect(model.contains("exactMetadataFilter = ExactMetadataFilter(field: field, value: value)"))
     }
 
     @Test func storageSummaryAggregatesBytesAndAbsoluteRootsWithoutLoadingTracks() throws {
@@ -1703,6 +2157,34 @@ struct LibraryDatabaseTests {
         #expect(summaries.first(where: { $0.kind == .suspectedMojibake })?.count == 1)
         #expect(try context.database.pageMetadataIssues(kind: .urlInMP3Metadata).tracks.first?.filename == "url.mp3")
         #expect(try context.database.pageMetadataIssues(kind: .suspectedMojibake).tracks.first?.filename == "garbled.mp3")
+    }
+
+    @Test func metadataIssuePagesCanBeFilteredByTitleAlbumOrArtist() throws {
+        let context = try TestContext()
+        _ = try context.database.upsertTracks([
+            context.importedTrack(identity: "url-title", title: "https://example.invalid/title", artist: "Artist", album: "Album", filename: "url-title.mp3"),
+            context.importedTrack(identity: "url-artist", title: "Song", artist: "www.example.invalid", album: "Album", filename: "url-artist.mp3"),
+            context.importedTrack(identity: "url-album", title: "Song", artist: "Artist", album: "http://example.invalid/album", filename: "url-album.mp3"),
+            context.importedTrack(identity: "mojibake-title", title: "Bad Ã Title", artist: "Artist", album: "Album", filename: "mojibake-title.mp3"),
+            context.importedTrack(identity: "mojibake-artist", title: "Song", artist: "Bad Â Artist", album: "Album", filename: "mojibake-artist.mp3"),
+            context.importedTrack(identity: "mojibake-album", title: "Song", artist: "Artist", album: "Bad 縺 Album", filename: "mojibake-album.mp3")
+        ], sessionID: 1)
+
+        let urlTitles = try context.database.pageMetadataIssues(kind: .urlInMP3Metadata, field: .title)
+        let urlArtists = try context.database.pageMetadataIssues(kind: .urlInMP3Metadata, field: .artist)
+        let urlAlbums = try context.database.pageMetadataIssues(kind: .urlInMP3Metadata, field: .album)
+        let mojibakeTitles = try context.database.pageMetadataIssues(kind: .suspectedMojibake, field: .title)
+        let mojibakeArtists = try context.database.pageMetadataIssues(kind: .suspectedMojibake, field: .artist)
+        let mojibakeAlbums = try context.database.pageMetadataIssues(kind: .suspectedMojibake, field: .album)
+
+        #expect(urlTitles.tracks.map(\.filename) == ["url-title.mp3"])
+        #expect(urlArtists.tracks.map(\.filename) == ["url-artist.mp3"])
+        #expect(urlAlbums.tracks.map(\.filename) == ["url-album.mp3"])
+        #expect(mojibakeTitles.tracks.map(\.filename) == ["mojibake-title.mp3"])
+        #expect(mojibakeArtists.tracks.map(\.filename) == ["mojibake-artist.mp3"])
+        #expect(mojibakeAlbums.tracks.map(\.filename) == ["mojibake-album.mp3"])
+        #expect(urlTitles.totalCount == 1)
+        #expect(mojibakeAlbums.totalCount == 1)
     }
 
     @Test func duplicateMetadataDiagnosticsUseBoundedGroupAggregation() throws {
@@ -1902,9 +2384,90 @@ struct LibraryDatabaseTests {
         #expect(MetadataNormalizer.editDistance("prince", "prinve") == 1)
         try await MetadataDiagnosticsAnalyzer(database: context.database).analyze()
         let candidates = try context.database.pageMetadataVariations(limit: 20).candidates
+        let artistPage = try context.database.pageMetadataVariations(field: .artist, limit: 20)
+        let artistCount = try context.database.metadataVariationCount(field: .artist)
 
         #expect(candidates.contains(where: { $0.reason == .normalization }))
         #expect(candidates.contains(where: { $0.reason == .likelyTypo && $0.field == .artist }))
+        #expect(!artistPage.candidates.isEmpty)
+        #expect(artistPage.candidates.allSatisfy { $0.field == .artist })
+        #expect(artistPage.totalCount == artistCount)
+    }
+
+    @Test func metadataEditRemovesResolvedVariationCandidateAndRefreshesCounts() async throws {
+        let context = try TestContext()
+        _ = try context.database.upsertTracks([
+            context.importedTrack(identity: "canonical", title: "Song A", artist: "Prince", filename: "a.mp3"),
+            context.importedTrack(identity: "variant", title: "Song B", artist: "Ｐｒｉｎｃｅ", filename: "b.mp3")
+        ], sessionID: 1)
+        try await MetadataDiagnosticsAnalyzer(database: context.database).analyze()
+        #expect(try context.database.metadataVariationCount(field: .artist) == 1)
+
+        let variantID = try #require(try context.database.trackID(forIdentityKey: "variant"))
+        let variant = try #require(try context.database.track(id: variantID))
+        var edit = TrackMetadataEdit(track: variant)
+        edit.artist = "Prince"
+        try context.database.updateTrackMetadata(
+            id: variant.id, edit: edit, fileSize: variant.fileSize, modifiedAt: .now
+        )
+
+        #expect(try context.database.metadataVariationCount(field: .artist) == 0)
+        #expect(try context.database.pageMetadataVariations(field: .artist).candidates.isEmpty)
+    }
+
+    @Test func variationReturnUsesANeighborWhenTheEditedCandidateDisappears() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+
+        #expect(model.contains("let variationScrollFallbackIDs: [Int64]"))
+        #expect(model.contains("func resolvedVariationScrollPositionForRestoration() -> Int64?"))
+        #expect(content.contains("model.resolvedVariationScrollPositionForRestoration()"))
+    }
+
+    @Test func inspectorDividerStaysDraggableOverWideAlbumTrackTables() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+
+        #expect(content.contains(".frame(minWidth: 420, maxWidth: .infinity)"))
+        #expect(content.contains(".clipped()"))
+        #expect(content.contains(".highPriorityGesture("))
+        #expect(content.contains(".zIndex(10)"))
+    }
+
+    @Test func variationCandidatesCanBeFilteredByTitleAlbumOrArtist() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+
+        #expect(content.contains("Picker(model.text(\"表示対象\", \"Show\")"))
+        #expect(content.contains("Text(model.text(\"すべて\", \"All\")).tag(MetadataField?.none)"))
+        #expect(content.contains("Text(model.text(\"曲名\", \"Title\")).tag(MetadataField?.some(.title))"))
+        #expect(content.contains("Text(model.text(\"アルバム名\", \"Album\")).tag(MetadataField?.some(.album))"))
+        #expect(content.contains("Text(model.text(\"アーティスト名\", \"Artist\")).tag(MetadataField?.some(.artist))"))
+        #expect(model.contains("@Published var variationFieldFilter: MetadataField?"))
+        #expect(model.contains("func setVariationFieldFilter(_ field: MetadataField?)"))
+        #expect(model.contains("pageMetadataVariations("))
+        #expect(model.contains("field: requestedVariationFieldFilter"))
+    }
+
+    @Test func urlAndMojibakeDiagnosticsExposeMetadataFieldTabs() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let content = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"))
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
+
+        #expect(content.contains("[.urlInMP3Metadata, .suspectedMojibake].contains(model.diagnosticKind)"))
+        #expect(content.contains("get: { model.metadataIssueFieldFilter }"))
+        #expect(content.contains("set: { model.setMetadataIssueFieldFilter($0) }"))
+        #expect(model.contains("@Published var metadataIssueFieldFilter: MetadataField?"))
+        #expect(model.contains("func setMetadataIssueFieldFilter(_ field: MetadataField?)"))
+        #expect(model.contains("let requestedFieldFilter = [.urlInMP3Metadata, .suspectedMojibake]"))
+        #expect(model.contains("field: requestedFieldFilter"))
+        #expect(model.contains("if requestedFieldFilter == nil"))
     }
 
     @Test func failedTransactionRollsBack() throws {

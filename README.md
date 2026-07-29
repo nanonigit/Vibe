@@ -22,6 +22,8 @@ Vibe is a macOS music player for managing large local music collections across y
 - Browse by track, album, artist, genre, folder, favorites, or recently added
 - Save column order, visibility, and width
 - Restore your scroll position when returning to the artist list
+- Keep keyboard focus during incremental search, with a full-size search field from the first keystroke
+- Start with a concise library sidebar while preserving every saved visibility and ordering choice
 
 ### External SSDs and offline playback
 
@@ -35,13 +37,15 @@ Vibe is a macOS music player for managing large local music collections across y
 ### Playback and guitar practice
 
 - Keep playback controls available at the top of the inspector
-- Use shuffle, repeat-one, and album or playlist repeat
+- Use shuffle, repeat-one, and album or playlist repeat; shuffle the connected library or the playable cache when storage is offline
 - Choose playback speeds from 60% to 95% in 5% steps, or play at 100%
 - Shift pitch down a semitone, play at the original pitch, or shift up a semitone without changing speed
 - Save up to three A–B repeat loops per track
 - Restore practice settings and loops after relaunching the app
+- Read embedded BPM or estimate it locally for the Practice tab, then retain the result per track
+- Search YouTube for guitar or bass TAB videos using the current track and artist
 - Open Chordify in the Chords tab and navigate back with the built-in browser
-- Switch to a fixed-size mini player
+- Switch to a fixed-size mini player with the same control language as the inspector player
 
 ### Track information and discovery
 
@@ -49,7 +53,7 @@ Vibe is a macOS music player for managing large local music collections across y
 - Browse trending music, YouTube, and music news when nothing is playing
 - Open YouTube and external articles in the built-in browser; media stops when you return to track information
 - Prefer embedded artwork and fall back to external artwork when needed
-- Cache lyrics and auto-scroll synchronized lyrics
+- Cache, add, and edit lyrics; auto-scroll synchronized lyrics during playback
 
 ### Playlists and library controls
 
@@ -72,11 +76,21 @@ Vibe is a macOS music player for managing large local music collections across y
 
 ### AI-assisted genre suggestions
 
-- Fall back through available classification options in this order: OpenAI, Gemini, then built-in rules
-- Automatically classify only untagged tracks with at least 80% confidence
+- Resolve untagged genres through trusted library consensus, high-confidence local rules, MusicBrainz, and finally a configured external AI provider
+- Automatically register only results with at least 80% confidence and never upload audio for classification
 - Keep existing genres unchanged during automatic classification
+- Show the active source, live per-genre counts, registered/below-threshold/failed totals, and a retry countdown for temporary provider failures
+- Cache MusicBrainz lookups during a scan and treat missing external metadata as a normal result instead of an error
+- Explain common genre characteristics in the genre list and detail screen
 - Store API keys in Vibe's protected in-app database instead of adding them to Keychain
 - Restore only the key registration status at launch without reading the key itself
+
+### Appearance and workspace
+
+- Choose from three dark and three light themes with live previews
+- Keep native controls, text, tables, and sidebars readable in every theme
+- Restore the previous normal-window size and screen position on the next launch
+- Show cache track count and storage size, plus named background-task progress, at a glance
 
 ## Layout
 
@@ -99,7 +113,22 @@ Background analysis and ID3 migration progress appear at the bottom of the sideb
 
 ## Install
 
-Download `Vibe-v0.15.0-macos-arm64.zip` from [GitHub Releases](https://github.com/nanonigit/Vibe/releases), extract it, and move `Vibe.app` wherever you prefer.
+### Homebrew
+
+```bash
+brew install --cask nanonigit/vibe/vibe
+```
+
+To upgrade an existing Homebrew installation:
+
+```bash
+brew update
+brew upgrade --cask vibe
+```
+
+### Direct download
+
+Download `Vibe-v0.16.0-macos-arm64.zip` from [GitHub Releases](https://github.com/nanonigit/Vibe/releases), extract it, and move `Vibe.app` wherever you prefer.
 
 The current build is not notarized. If macOS blocks the first launch, Control-click Vibe in Finder, choose **Open**, review the warning, and confirm that you want to launch it.
 
