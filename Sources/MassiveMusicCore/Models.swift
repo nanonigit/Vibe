@@ -523,7 +523,7 @@ public struct TrackMetadataEdit: Hashable, Codable, Sendable {
         normalized.artist = MetadataTextNormalizer.trimLeadingAndTrailingSpaces(artist)
         normalized.album = MetadataTextNormalizer.trimLeadingAndTrailingSpaces(album)
         normalized.albumArtist = MetadataTextNormalizer.trimLeadingAndTrailingSpaces(albumArtist)
-        normalized.genre = MetadataTextNormalizer.trimLeadingAndTrailingSpaces(genre)
+        normalized.genre = GenreNormalizer.normalize(genre)
         return normalized
     }
 
@@ -636,6 +636,182 @@ public enum MetadataTextNormalizer {
         }
         appendKana()
         return result
+    }
+}
+
+public enum GenreNormalizer {
+    private static let exactJapaneseMap: [String: String] = [
+        "ロック": "Rock",
+        "ポップス": "Pop",
+        "ポップ": "Pop",
+        "J-POP": "J-Pop",
+        "JPOP": "J-Pop",
+        "J POP": "J-Pop",
+        "Jポップ": "J-Pop",
+        "ジェイポップ": "J-Pop",
+        "K-POP": "K-Pop",
+        "KPOP": "K-Pop",
+        "K POP": "K-Pop",
+        "ジャズ": "Jazz",
+        "クラシック": "Classical",
+        "交響曲": "Classical",
+        "協奏曲": "Classical",
+        "アニメ": "Anime",
+        "アニソン": "Anime",
+        "アニメソング": "Anime",
+        "ヒップホップ": "Hip Hop",
+        "ラップ": "Hip Hop",
+        "オルタナティヴ": "Alternative Rock",
+        "オルタナティブ": "Alternative Rock",
+        "オルタナティヴ・ロック": "Alternative Rock",
+        "オルタナティブ・ロック": "Alternative Rock",
+        "オルタナティヴロック": "Alternative Rock",
+        "オルタナティブロック": "Alternative Rock",
+        "ヘヴィメタル": "Heavy Metal",
+        "ヘビーメタル": "Heavy Metal",
+        "メタル": "Metal",
+        "ハードロック": "Hard Rock",
+        "パンク": "Punk",
+        "パンクロック": "Punk Rock",
+        "フォーク": "Folk",
+        "フォークソング": "Folk",
+        "ブルース": "Blues",
+        "レゲエ": "Reggae",
+        "テクノ": "Techno",
+        "ハウス": "House",
+        "フュージョン": "Fusion",
+        "演歌": "Enka",
+        "歌謡曲": "Kayokyoku",
+        "シティポップ": "City Pop",
+        "シティ・ポップ": "City Pop",
+        "童謡": "Children's Music",
+        "キッズ": "Children's Music",
+        "ゲーム": "Video Game Music",
+        "ゲームミュージック": "Video Game Music",
+        "ゲーム音楽": "Video Game Music",
+        "サウンドトラック": "Soundtrack",
+        "サントラ": "Soundtrack",
+        "劇伴": "Soundtrack",
+        "ボーカロイド": "Vocaloid",
+        "ボカロ": "Vocaloid",
+        "洋楽": "Western Pop",
+        "邦楽": "J-Pop",
+        "イージーリスニング": "Easy Listening",
+        "環境音楽": "Ambient",
+        "アンビエント": "Ambient",
+        "吹奏楽": "Brass Band",
+        "ブラスバンド": "Brass Band",
+        "合唱": "Choral",
+        "民謡": "Traditional Folk",
+        "伝統音楽": "Traditional",
+        "ソウル": "Soul",
+        "ソウルミュージック": "Soul",
+        "ファンク": "Funk",
+        "ディスコ": "Disco",
+        "エレクトロニック": "Electronic",
+        "電子音楽": "Electronic",
+        "ダンス": "Dance",
+        "ダンスミュージック": "Dance",
+        "ゴスペル": "Gospel",
+        "カントリー": "Country",
+        "ボサノバ": "Bossa Nova",
+        "ボサノヴァ": "Bossa Nova",
+        "サンバ": "Samba",
+        "フラメンコ": "Flamenco",
+        "ラテン": "Latin",
+        "インディー": "Indie",
+        "インディーズ": "Indie",
+        "プログレ": "Progressive Rock",
+        "プログレッシブ・ロック": "Progressive Rock",
+        "サイケデリック": "Psychedelic",
+        "ユーロビート": "Eurobeat",
+        "ニューエイジ": "New Age",
+        "ワールドミュージック": "World Music",
+        "スカ": "Ska",
+        "ダブ": "Dub"
+    ]
+
+    private static let acronyms: Set<String> = [
+        "R&B", "EDM", "IDM", "EBM", "AOR", "OST", "DJ", "CD", "UK", "US", "BPM", "LO-FI", "HI-FI"
+    ]
+
+    public static func normalize(_ genre: String) -> String {
+        let trimmed = MetadataTextNormalizer.trimLeadingAndTrailingSpaces(genre)
+        guard !trimmed.isEmpty else { return "" }
+
+        if let mapped = exactJapaneseMap[trimmed] {
+            return mapped
+        }
+
+        var cleaned = trimmed
+            .replacingOccurrences(of: "・", with: " ")
+            .replacingOccurrences(of: "／", with: "/")
+
+        if let mapped = exactJapaneseMap[cleaned] {
+            return mapped
+        }
+
+        let hasJapanese = cleaned.unicodeScalars.contains { scalar in
+            switch scalar.value {
+            case 0x3040...0x309F, 0x30A0...0x30FF, 0x4E00...0x9FAF: return true
+            default: return false
+            }
+        }
+
+        if hasJapanese {
+            for (jp, en) in exactJapaneseMap {
+                if cleaned.contains(jp) {
+                    cleaned = cleaned.replacingOccurrences(of: jp, with: en)
+                }
+            }
+        }
+
+        return toTitleCase(cleaned)
+    }
+
+    public static func toTitleCase(_ string: String) -> String {
+        let words = string.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
+        guard !words.isEmpty else { return "" }
+
+        let formattedWords = words.map { word -> String in
+            if word.contains("/") {
+                let parts = word.components(separatedBy: "/")
+                return parts.map { formatSingleWord($0) }.joined(separator: "/")
+            }
+            return formatSingleWord(word)
+        }
+
+        var result = formattedWords.joined(separator: " ")
+
+        result = result
+            .replacingOccurrences(of: "J Pop", with: "J-Pop", options: .caseInsensitive)
+            .replacingOccurrences(of: "J-pop", with: "J-Pop")
+            .replacingOccurrences(of: "K Pop", with: "K-Pop", options: .caseInsensitive)
+            .replacingOccurrences(of: "K-pop", with: "K-Pop")
+            .replacingOccurrences(of: "J Rock", with: "J-Rock", options: .caseInsensitive)
+            .replacingOccurrences(of: "J-rock", with: "J-Rock")
+            .replacingOccurrences(of: "R & B", with: "R&B", options: .caseInsensitive)
+            .replacingOccurrences(of: "R&b", with: "R&B")
+            .replacingOccurrences(of: "R And B", with: "R&B", options: .caseInsensitive)
+            .replacingOccurrences(of: "Hip-hop", with: "Hip-Hop")
+            .replacingOccurrences(of: "Afro-cuban", with: "Afro-Cuban")
+
+        return result
+    }
+
+    private static func formatSingleWord(_ word: String) -> String {
+        let upper = word.uppercased()
+        if acronyms.contains(upper) {
+            return upper
+        }
+
+        if word.contains("-") {
+            let subparts = word.components(separatedBy: "-")
+            return subparts.map { formatSingleWord($0) }.joined(separator: "-")
+        }
+
+        guard let first = word.first else { return "" }
+        return first.uppercased() + word.dropFirst().lowercased()
     }
 }
 

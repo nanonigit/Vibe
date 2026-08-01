@@ -356,6 +356,9 @@ final class LibraryViewModel: ObservableObject {
     @Published var trimMetadataWhitespace = false
     @Published var isTrimmingWhitespace = false
     @Published var whitespaceTrimmingProgress = ""
+    @Published var autoNormalizeGenresToEnglish = false
+    @Published var isNormalizingGenres = false
+    @Published var genreNormalizationProgress = ""
     @Published var autoMigrateID3v22ToV23 = true
     @Published var autoRegisterHighConfidenceGenres = false
     @Published var isID3Migrating = false
@@ -441,6 +444,7 @@ final class LibraryViewModel: ObservableObject {
     private var leadingTitleSpaceCleanupTask: Task<Void, Never>?
     private var widthNormalizationTask: Task<Void, Never>?
     private var whitespaceTrimmingTask: Task<Void, Never>?
+    private var genreNormalizationTask: Task<Void, Never>?
     private var bulkAutoFillTask: Task<Void, Never>?
     private var id3MigrationTask: Task<Void, Never>?
     private var automaticGenreScanTask: Task<Void, Never>?
@@ -480,6 +484,7 @@ final class LibraryViewModel: ObservableObject {
         musicBrainzAutoFillSummary = (try? database.musicBrainzAutoFillSummary()) ?? .empty
         normalizeMetadataCharacterWidths = (try? database.setting(forKey: "metadata.normalizeCharacterWidths")) == "true"
         trimMetadataWhitespace = (try? database.setting(forKey: "metadata.trimWhitespace")) == "true"
+        autoNormalizeGenresToEnglish = (try? database.setting(forKey: "genre.autoNormalizeToEnglish")) == "true"
         autoMigrateID3v22ToV23 = (try? database.setting(forKey: "metadata.autoMigrateID3v22ToV23")) != "false"
         autoRegisterHighConfidenceGenres = (try? database.setting(forKey: "genre.autoRegisterHighConfidence")) == "true"
         if let stored = try? database.setting(forKey: "activityLog.maxRetentionLimit"),
@@ -2548,6 +2553,109 @@ final class LibraryViewModel: ObservableObject {
                     let errorMsg = text(
                         "先頭・末尾の空白自動削除で\(failed)曲を保存できませんでした。最初のエラー: \(firstError.localizedDescription)",
                         "Could not save \(failed) songs during whitespace trimming. First error: \(firstError.localizedDescription)"
+                    )
+                    await MainActor.run { self.errorMessage = errorMsg }
+                }
+            } catch is CancellationError {
+            } catch {
+                let errStr = error.localizedDescription
+                await MainActor.run { self.errorMessage = errStr }
+            }
+            await MainActor.run {
+                self.startGenreNormalizationAndMerging()
+            }
+        }
+    }
+
+    func saveGenreNormalizationSettings() {
+        try? database.setSetting(autoNormalizeGenresToEnglish ? "true" : "false", forKey: "genre.autoNormalizeToEnglish")
+        if autoNormalizeGenresToEnglish {
+            startGenreNormalizationAndMerging()
+        } else {
+            genreNormalizationTask?.cancel()
+            genreNormalizationTask = nil
+            isNormalizingGenres = false
+            genreNormalizationProgress = ""
+        }
+    }
+
+    func startGenreNormalizationAndMerging(forceResetCursor: Bool = false) {
+        guard forceResetCursor || autoNormalizeGenresToEnglish else { return }
+        guard genreNormalizationTask == nil else { return }
+        guard allScanRootsAreConnected() else { return }
+
+        if forceResetCursor {
+            try? database.setSetting("0", forKey: "genre.normalizationCursor")
+        }
+
+        genreNormalizationTask = Task(priority: .utility) { [weak self] in
+            guard let self else { return }
+            await MainActor.run {
+                self.isNormalizingGenres = true
+                self.genreNormalizationProgress = self.text("ジャンルを英語標準表記に整理中…", "Standardizing genres to English…")
+            }
+            defer {
+                Task { @MainActor [weak self] in
+                    self?.isNormalizingGenres = false
+                    self?.genreNormalizationProgress = ""
+                    self?.genreNormalizationTask = nil
+                }
+            }
+            var afterID = Int64((try? database.setting(forKey: "genre.normalizationCursor")) ?? "0") ?? 0
+            var processedCount = 0
+            var updatedCount = 0
+            var failed = 0
+            var firstError: Error?
+            do {
+                while !Task.isCancelled, forceResetCursor || autoNormalizeGenresToEnglish {
+                    let requestedAfterID = afterID
+                    let page = try await Task.detached(priority: .utility) {
+                        try self.database.tracksForWidthNormalization(afterID: requestedAfterID, limit: 200)
+                    }.value
+                    guard !page.isEmpty else { break }
+                    for track in page {
+                        try Task.checkCancellation()
+                        afterID = track.id
+                        processedCount += 1
+                        guard !track.genre.isEmpty else { continue }
+                        let normalizedGenre = GenreNormalizer.normalize(track.genre)
+                        if normalizedGenre != track.genre {
+                            var edit = TrackMetadataEdit(track: track)
+                            edit.genre = normalizedGenre
+                            do {
+                                do {
+                                    try await trackFiles.updateMetadata(track: track, edit: edit)
+                                } catch let error as MassiveMusicError
+                                    where track.format.lowercased() == "mp3" && error.isRepairableID3Damage {
+                                    try await trackFiles.updateMetadata(
+                                        track: track, edit: edit, repairingCorruptID3: true
+                                    )
+                                }
+                                updatedCount += 1
+                            } catch {
+                                failed += 1
+                                if firstError == nil { firstError = error }
+                            }
+                        }
+                    }
+                    await MainActor.run {
+                        self.genreNormalizationProgress = self.text(
+                            "ジャンルを英語標準表記に整理中… (\(processedCount)曲確認・\(updatedCount)曲更新)",
+                            "Standardizing genres… (\(processedCount) checked, \(updatedCount) updated)"
+                        )
+                    }
+                    try database.setSetting(
+                        String(afterID), forKey: "genre.normalizationCursor"
+                    )
+                }
+                await MainActor.run {
+                    self.loadCurrentPage(reset: false)
+                    self.refreshMetadataDiagnostics()
+                }
+                if let firstError {
+                    let errorMsg = text(
+                        "ジャンル標準化で\(failed)曲を保存できませんでした。最初のエラー: \(firstError.localizedDescription)",
+                        "Could not save \(failed) songs during genre standardization. First error: \(firstError.localizedDescription)"
                     )
                     await MainActor.run { self.errorMessage = errorMsg }
                 }

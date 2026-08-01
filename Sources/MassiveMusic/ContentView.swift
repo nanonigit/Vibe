@@ -618,7 +618,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private var sidebarBackgroundStatus: some View {
-        if model.driveMessage != nil || model.isBulkAutoFilling || model.isID3Migrating || model.isScanningAutomaticGenres || model.isTrimmingWhitespace {
+        if model.driveMessage != nil || model.isBulkAutoFilling || model.isID3Migrating || model.isScanningAutomaticGenres || model.isTrimmingWhitespace || model.isNormalizingGenres {
             VStack(spacing: 0) {
                 if let message = model.driveMessage {
                     Label(message, systemImage: "externaldrive.badge.exclamationmark")
@@ -635,6 +635,9 @@ struct ContentView: View {
                 }
                 if model.isTrimmingWhitespace {
                     sidebarProgressStatus(model.whitespaceTrimmingProgress)
+                }
+                if model.isNormalizingGenres {
+                    sidebarProgressStatus(model.genreNormalizationProgress)
                 }
                 if model.isScanningAutomaticGenres {
                     sidebarAutomaticGenreProgress
@@ -4655,6 +4658,30 @@ private struct LibrarySettingsView: View {
                             }
                             .buttonStyle(.borderedProminent)
                         }
+                    }
+                    .padding(.top, 2)
+                    Divider()
+                    Toggle(
+                        model.text(
+                            "ジャンル名を英語・標準表記へ自動マージ",
+                            "Automatically standardize & merge genre names to English"
+                        ),
+                        isOn: $model.autoNormalizeGenresToEnglish
+                    )
+                    .onChange(of: model.autoNormalizeGenresToEnglish) { _, _ in
+                        model.saveGenreNormalizationSettings()
+                    }
+                    Text(model.text(
+                        "大文字・小文字の表記揺れ（acid house → Acid House）、点やハイフン（オルタナティヴ・ロック → Alternative Rock）や日本語ジャンル名を自動的に英語標準タイトルケース表記へ統一・統合します。",
+                        "Standardizes casing (acid house → Acid House), punctuation, and Japanese genres (e.g. オルタナティヴ・ロック → Alternative Rock) to standard English Title Case."
+                    ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    HStack {
+                        Button(model.text("ジャンルをマージ・再整理", "Merge & Re-organize Genres")) {
+                            model.startGenreNormalizationAndMerging(forceResetCursor: true)
+                        }
+                        .disabled(model.isNormalizingGenres)
                     }
                     .padding(.top, 2)
                     Divider()
