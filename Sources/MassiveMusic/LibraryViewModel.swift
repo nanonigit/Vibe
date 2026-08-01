@@ -2307,8 +2307,23 @@ final class LibraryViewModel: ObservableObject {
                     state: .running, total: tracks.count, processed: index,
                     succeeded: succeeded, failed: failed, currentFilename: track.filename
                 )
+                let edit = changes.applying(to: track, offset: index)
+                let sourceFileIsAvailable = await trackFiles.sourceFileIsAvailable(for: track)
+                if !sourceFileIsAvailable {
+                    do {
+                        try await queueMetadataEditForLater(track: track, edit: edit, closeRenamedAlbumDetail: false)
+                        succeeded += 1
+                    } catch {
+                        failed += 1
+                        if firstError == nil { firstError = error }
+                    }
+                    batchMetadataProgress = BatchMetadataProgress(
+                        state: .running, total: tracks.count, processed: index + 1,
+                        succeeded: succeeded, failed: failed, currentFilename: track.filename
+                    )
+                    continue
+                }
                 do {
-                    let edit = changes.applying(to: track, offset: index)
                     do {
                         try await runFileOperationWithAuthorizationRetry(for: track) {
                             try await self.trackFiles.updateMetadata(track: track, edit: edit, authorizedRoot: $0)
@@ -2324,6 +2339,9 @@ final class LibraryViewModel: ObservableObject {
                                 track: track, edit: edit, authorizedRoot: $0
                             )
                         }
+                    } catch {
+                        // File write failed (e.g. drive unmounted / offline) - queue for later
+                        try await queueMetadataEditForLater(track: track, edit: edit, closeRenamedAlbumDetail: false)
                     }
                     succeeded += 1
                 } catch is CancellationError {

@@ -454,12 +454,12 @@ public final class LibraryDatabase: @unchecked Sendable {
             let previous = try Row.fetchOne(db, sql: "SELECT * FROM tracks WHERE id = ?", arguments: [id])
             try db.execute(
                 sql: """
-                    UPDATE tracks SET title = ?, artist = ?, album = ?, album_artist = ?, genre = ?, is_compilation = ?,
+                    UPDATE tracks SET title = ?, artist = ?, album = ?, album_artist = ?, genre = ?, year = ?, is_compilation = ?,
                         disc_number = ?, track_number = ?, file_size = ?, modified_at = ?,
                         has_artwork = CASE WHEN ? THEN 1 ELSE has_artwork END
                     WHERE id = ?
                     """,
-                arguments: [edit.title, edit.artist, edit.album, edit.albumArtist, edit.genre, edit.isCompilation,
+                arguments: [edit.title, edit.artist, edit.album, edit.albumArtist, edit.genre, edit.year, edit.isCompilation,
                             edit.discNumber, edit.trackNumber, fileSize, modifiedAt.timeIntervalSince1970,
                             edit.artworkData != nil, id]
             )
