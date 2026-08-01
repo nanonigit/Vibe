@@ -2182,16 +2182,6 @@ public final class LibraryDatabase: @unchecked Sendable {
                         SELECT ?, id, ROW_NUMBER() OVER (ORDER BY track_number, title) - 1, ?
                         FROM tracks WHERE album = ?
                     """, arguments: [playlistID, Date().timeIntervalSince1970, name])
-                    continue
-                }
-                
-                let genreCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks WHERE genre LIKE ? OR title LIKE ? OR album LIKE ? OR artist LIKE ?", arguments: ["%\(name)%", "%\(name)%", "%\(name)%", "%\(name)%"]) ?? 0
-                if genreCount > 0 {
-                    try db.execute(sql: """
-                        INSERT OR IGNORE INTO playlist_items(playlist_id, track_id, position, created_at)
-                        SELECT ?, id, ROW_NUMBER() OVER (ORDER BY track_number, title) - 1, ?
-                        FROM tracks WHERE genre LIKE ? OR title LIKE ? OR album LIKE ? OR artist LIKE ?
-                    """, arguments: [playlistID, Date().timeIntervalSince1970, "%\(name)%", "%\(name)%", "%\(name)%", "%\(name)%"])
                 }
             }
         }
