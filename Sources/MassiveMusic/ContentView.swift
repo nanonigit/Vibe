@@ -4228,16 +4228,40 @@ private struct BatchTrackMetadataEditor: View {
     @State private var artworkImage: NSImage?
     @State private var artworkPasteError: String?
 
+    private let initialArtist: String
+    private let initialAlbum: String
+    private let initialAlbumArtist: String
+    private let initialGenre: String
+    private let initialYear: String
+    private let initialIsCompilation: Bool
+    private let initialDiscNumber: String
+
     init(model: LibraryViewModel, tracks: [Track]) {
         self.model = model
         self.tracks = tracks
-        _artist = State(initialValue: Self.commonValue(tracks.map(\.artist)))
-        _album = State(initialValue: Self.commonValue(tracks.map(\.album)))
-        _albumArtist = State(initialValue: Self.commonValue(tracks.map(\.albumArtist)))
-        _genre = State(initialValue: Self.commonValue(tracks.map(\.genre)))
-        _year = State(initialValue: Self.commonValue(tracks.map(\.year)))
-        _isCompilation = State(initialValue: tracks.allSatisfy(\.isCompilation))
-        _discNumber = State(initialValue: Self.commonNumber(tracks.map(\.discNumber)))
+        let initArtist = Self.commonValue(tracks.map(\.artist))
+        let initAlbum = Self.commonValue(tracks.map(\.album))
+        let initAlbumArtist = Self.commonValue(tracks.map(\.albumArtist))
+        let initGenre = Self.commonValue(tracks.map(\.genre))
+        let initYear = Self.commonValue(tracks.map(\.year))
+        let initComp = tracks.allSatisfy(\.isCompilation)
+        let initDisc = Self.commonNumber(tracks.map(\.discNumber))
+
+        initialArtist = initArtist
+        initialAlbum = initAlbum
+        initialAlbumArtist = initAlbumArtist
+        initialGenre = initGenre
+        initialYear = initYear
+        initialIsCompilation = initComp
+        initialDiscNumber = initDisc
+
+        _artist = State(initialValue: initArtist)
+        _album = State(initialValue: initAlbum)
+        _albumArtist = State(initialValue: initAlbumArtist)
+        _genre = State(initialValue: initGenre)
+        _year = State(initialValue: initYear)
+        _isCompilation = State(initialValue: initComp)
+        _discNumber = State(initialValue: initDisc)
     }
 
     var body: some View {
@@ -4246,8 +4270,8 @@ private struct BatchTrackMetadataEditor: View {
                 Text(model.text("曲情報を一括編集", "Bulk Edit Song Info"))
                     .font(.title2.bold())
                 Text(model.text(
-                    "変更する項目を入力し、その行の登録ボタンを押してください。選択した\(tracks.count)曲へ反映します。",
-                    "Enter a value and use that row's Apply button to update the \(tracks.count) selected songs."
+                    "変更したい項目を入力し、「一括保存」ボタンを押すことで、選択した\(tracks.count)曲にまとめて反映されます。（行ごとの「登録」で個別変更も可能です）",
+                    "Enter values to change and click 'Save All' to update all \(tracks.count) selected songs. (Or use individual row buttons)."
                 ))
                 .foregroundStyle(.secondary)
             }
@@ -4354,8 +4378,8 @@ private struct BatchTrackMetadataEditor: View {
                         warningText(model.text("番号には0以上の整数を入力してください。", "Enter a whole number of zero or greater."))
                     }
                     Text(model.text(
-                        "登録ボタンを押した行だけを変更します。コンピレーションを有効にしても、曲ごとのアーティスト名は変わりません。",
-                        "Only the row whose Apply button you press is changed. Enabling Compilation does not alter each song's artist."
+                        "「一括保存」を押すと変更した全ての項目が選択曲に保存されます。コンピレーションを有効にしても、曲ごとのアーティスト名は変わりません。",
+                        "Clicking 'Save All' applies all modified fields. Enabling Compilation does not alter each song's artist."
                     ))
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -4420,6 +4444,36 @@ private struct BatchTrackMetadataEditor: View {
         model.updateMetadata(for: tracks, changes: changes)
     }
 
+    private func applyAll() {
+        var changes = BatchMetadataChanges()
+        if artist != initialArtist { changes.artist = artist }
+        if album != initialAlbum { changes.album = album }
+        if albumArtist != initialAlbumArtist { changes.albumArtist = albumArtist }
+        if genre != initialGenre { changes.genre = genre }
+        if year != initialYear { changes.year = year }
+        if isCompilation != initialIsCompilation { changes.isCompilation = isCompilation }
+        if discNumber != initialDiscNumber && isValidNumberInput(discNumber) {
+            changes.discNumber = parsedNumber(discNumber)
+            changes.changesDiscNumber = true
+        }
+        if let artworkData {
+            changes.artworkData = artworkData
+        }
+        guard !changes.isEmpty else { return }
+        model.updateMetadata(for: tracks, changes: changes)
+    }
+
+    private var hasAnyPendingChange: Bool {
+        artist != initialArtist ||
+        album != initialAlbum ||
+        albumArtist != initialAlbumArtist ||
+        genre != initialGenre ||
+        year != initialYear ||
+        isCompilation != initialIsCompilation ||
+        (discNumber != initialDiscNumber && isValidNumberInput(discNumber)) ||
+        artworkData != nil
+    }
+
     private func warningText(_ text: String) -> some View {
         Label(text, systemImage: "exclamationmark.triangle.fill")
             .font(.caption)
@@ -4452,9 +4506,15 @@ private struct BatchTrackMetadataEditor: View {
             }
         } else {
             HStack {
-                Spacer()
                 Button(model.text("閉じる", "Close")) { dismiss() }
                     .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button(model.text("一括保存", "Save All")) {
+                    applyAll()
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(!hasAnyPendingChange || !isValidNumberInput(discNumber))
             }
         }
     }
@@ -4653,6 +4713,23 @@ private struct LibrarySettingsView: View {
                     Text(model.text(
                         "半角カナを全角カナへ、全角英数字・記号を半角へ変換して音源ファイルへ保存します。通常のひらがな、アクセント付き文字、文字間の空白は変更しません。処理は小分けで実行され、中断後も続きから再開します。",
                         "Converts half-width kana to full-width kana and full-width ASCII letters, digits, and punctuation to half-width, then saves the tags to the audio file. Hiragana, accented letters, and spaces between characters are preserved. Processing is resumable and runs in small batches."
+                    ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    Divider()
+                    Toggle(
+                        model.text(
+                            "先頭・末尾の空白を自動で削除",
+                            "Automatically trim leading and trailing whitespace"
+                        ),
+                        isOn: $model.trimMetadataWhitespace
+                    )
+                    .onChange(of: model.trimMetadataWhitespace) { _, _ in
+                        model.saveWhitespaceTrimmingSettings()
+                    }
+                    Text(model.text(
+                        "曲名、アーティスト、アルバム名などの先頭や末尾にある余計な空白（半角スペース・全角スペース）を自動的に検出して削除・保存します。単語間のスペースは変更されません。",
+                        "Automatically detects and removes leading and trailing spaces (half-width & full-width) from titles, artists, and album names. Spaces between words remain untouched."
                     ))
                     .font(.caption)
                     .foregroundStyle(.secondary)

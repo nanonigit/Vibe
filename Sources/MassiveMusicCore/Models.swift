@@ -517,6 +517,16 @@ public struct TrackMetadataEdit: Hashable, Codable, Sendable {
         return normalized
     }
 
+    public func normalizingLeadingAndTrailingWhitespace() -> TrackMetadataEdit {
+        var normalized = self
+        normalized.title = MetadataTextNormalizer.trimLeadingAndTrailingSpaces(title)
+        normalized.artist = MetadataTextNormalizer.trimLeadingAndTrailingSpaces(artist)
+        normalized.album = MetadataTextNormalizer.trimLeadingAndTrailingSpaces(album)
+        normalized.albumArtist = MetadataTextNormalizer.trimLeadingAndTrailingSpaces(albumArtist)
+        normalized.genre = MetadataTextNormalizer.trimLeadingAndTrailingSpaces(genre)
+        return normalized
+    }
+
     /// Normalizes only character-width variants. Broad compatibility
     /// normalization is intentionally avoided so Roman numerals, circled
     /// numbers, ligatures, and intentional spacing remain untouched.

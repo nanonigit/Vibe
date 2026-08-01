@@ -353,6 +353,7 @@ final class LibraryViewModel: ObservableObject {
     @Published private(set) var musicBrainzAutoFillSummary = MusicBrainzAutoFillSummary.empty
     @Published private(set) var musicBrainzAutoFillPendingCount = 0
     @Published var normalizeMetadataCharacterWidths = false
+    @Published var trimMetadataWhitespace = false
     @Published var autoMigrateID3v22ToV23 = true
     @Published var autoRegisterHighConfidenceGenres = false
     @Published var isID3Migrating = false
@@ -437,6 +438,7 @@ final class LibraryViewModel: ObservableObject {
     private var batchMetadataTask: Task<Void, Never>?
     private var leadingTitleSpaceCleanupTask: Task<Void, Never>?
     private var widthNormalizationTask: Task<Void, Never>?
+    private var whitespaceTrimmingTask: Task<Void, Never>?
     private var bulkAutoFillTask: Task<Void, Never>?
     private var id3MigrationTask: Task<Void, Never>?
     private var automaticGenreScanTask: Task<Void, Never>?
@@ -475,6 +477,7 @@ final class LibraryViewModel: ObservableObject {
         autoFillMusicBrainzTrackNumbers = (try? database.setting(forKey: "musicbrainz.autoFillTrackNumbers")) != "false"
         musicBrainzAutoFillSummary = (try? database.musicBrainzAutoFillSummary()) ?? .empty
         normalizeMetadataCharacterWidths = (try? database.setting(forKey: "metadata.normalizeCharacterWidths")) == "true"
+        trimMetadataWhitespace = (try? database.setting(forKey: "metadata.trimWhitespace")) == "true"
         autoMigrateID3v22ToV23 = (try? database.setting(forKey: "metadata.autoMigrateID3v22ToV23")) != "false"
         autoRegisterHighConfidenceGenres = (try? database.setting(forKey: "genre.autoRegisterHighConfidence")) == "true"
         if let stored = try? database.setting(forKey: "activityLog.maxRetentionLimit"),
@@ -2473,6 +2476,62 @@ final class LibraryViewModel: ObservableObject {
                 errorMessage = error.localizedDescription
             }
             widthNormalizationTask = nil
+            startWhitespaceTrimming()
+        }
+    }
+
+    private func startWhitespaceTrimming() {
+        guard trimMetadataWhitespace, whitespaceTrimmingTask == nil else { return }
+        guard allScanRootsAreConnected() else { return }
+        whitespaceTrimmingTask = Task(priority: .utility) { [weak self] in
+            guard let self else { return }
+            var afterID = Int64((try? database.setting(forKey: "metadata.whitespaceTrimmingCursor")) ?? "0") ?? 0
+            var failed = 0
+            var firstError: Error?
+            do {
+                while !Task.isCancelled, trimMetadataWhitespace {
+                    let requestedAfterID = afterID
+                    let page = try await Task.detached(priority: .utility) {
+                        try self.database.tracksForWidthNormalization(afterID: requestedAfterID, limit: 200)
+                    }.value
+                    guard !page.isEmpty else { break }
+                    for track in page {
+                        try Task.checkCancellation()
+                        afterID = track.id
+                        let edit = TrackMetadataEdit(track: track).normalizingLeadingAndTrailingWhitespace()
+                        if edit.hasTextChanges(comparedWith: track) {
+                            do {
+                                do {
+                                    try await trackFiles.updateMetadata(track: track, edit: edit)
+                                } catch let error as MassiveMusicError
+                                    where track.format.lowercased() == "mp3" && error.isRepairableID3Damage {
+                                    try await trackFiles.updateMetadata(
+                                        track: track, edit: edit, repairingCorruptID3: true
+                                    )
+                                }
+                            } catch {
+                                failed += 1
+                                if firstError == nil { firstError = error }
+                            }
+                        }
+                    }
+                    try database.setSetting(
+                        String(afterID), forKey: "metadata.whitespaceTrimmingCursor"
+                    )
+                }
+                loadCurrentPage(reset: false)
+                refreshMetadataDiagnostics()
+                if let firstError {
+                    errorMessage = text(
+                        "先頭・末尾の空白自動削除で\(failed)曲を保存できませんでした。最初のエラー: \(firstError.localizedDescription)",
+                        "Could not save \(failed) songs during whitespace trimming. First error: \(firstError.localizedDescription)"
+                    )
+                }
+            } catch is CancellationError {
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            whitespaceTrimmingTask = nil
         }
     }
 
@@ -3279,6 +3338,20 @@ final class LibraryViewModel: ObservableObject {
                 startWidthNormalization()
             } else {
                 widthNormalizationTask?.cancel()
+            }
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    func saveWhitespaceTrimmingSettings() {
+        do {
+            try database.setSetting(
+                trimMetadataWhitespace ? "true" : "false",
+                forKey: "metadata.trimWhitespace"
+            )
+            if trimMetadataWhitespace {
+                startWhitespaceTrimming()
+            } else {
+                whitespaceTrimmingTask?.cancel()
             }
         } catch { errorMessage = error.localizedDescription }
     }
