@@ -2162,6 +2162,41 @@ public final class LibraryDatabase: @unchecked Sendable {
         }
     }
 
+    public func reconcilePlaylistsIfNeeded() throws {
+        try pool.write { db in
+            let emptyPlaylists = try Row.fetchAll(db, sql: """
+                SELECT p.id, p.name FROM playlists p
+                LEFT JOIN playlist_items i ON i.playlist_id = p.id
+                GROUP BY p.id
+                HAVING COUNT(i.id) = 0
+            """)
+            
+            for row in emptyPlaylists {
+                let playlistID: Int64 = row["id"]
+                let name: String = row["name"]
+                
+                let albumCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks WHERE album = ?", arguments: [name]) ?? 0
+                if albumCount > 0 {
+                    try db.execute(sql: """
+                        INSERT OR IGNORE INTO playlist_items(playlist_id, track_id, position, created_at)
+                        SELECT ?, id, ROW_NUMBER() OVER (ORDER BY track_number, title) - 1, ?
+                        FROM tracks WHERE album = ?
+                    """, arguments: [playlistID, Date().timeIntervalSince1970, name])
+                    continue
+                }
+                
+                let genreCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks WHERE genre LIKE ? OR title LIKE ? OR album LIKE ? OR artist LIKE ?", arguments: ["%\(name)%", "%\(name)%", "%\(name)%", "%\(name)%"]) ?? 0
+                if genreCount > 0 {
+                    try db.execute(sql: """
+                        INSERT OR IGNORE INTO playlist_items(playlist_id, track_id, position, created_at)
+                        SELECT ?, id, ROW_NUMBER() OVER (ORDER BY track_number, title) - 1, ?
+                        FROM tracks WHERE genre LIKE ? OR title LIKE ? OR album LIKE ? OR artist LIKE ?
+                    """, arguments: [playlistID, Date().timeIntervalSince1970, "%\(name)%", "%\(name)%", "%\(name)%", "%\(name)%"])
+                }
+            }
+        }
+    }
+
     public func createPlaylist(name: String) throws -> Int64 {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw MassiveMusicError.invalidPlaylistName }

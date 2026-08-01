@@ -3917,7 +3917,10 @@ final class LibraryViewModel: ObservableObject {
     private func refreshPlaylists() {
         Task {
             do {
-                let fetched = try await Task.detached { try self.database.playlists() }.value
+                let fetched = try await Task.detached {
+                    try self.database.reconcilePlaylistsIfNeeded()
+                    return try self.database.playlists()
+                }.value
                 playlists = orderedPlaylists(fetched)
             } catch { errorMessage = error.localizedDescription }
         }
