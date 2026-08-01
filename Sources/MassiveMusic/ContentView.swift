@@ -618,7 +618,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private var sidebarBackgroundStatus: some View {
-        if model.driveMessage != nil || model.isBulkAutoFilling || model.isID3Migrating || model.isScanningAutomaticGenres {
+        if model.driveMessage != nil || model.isBulkAutoFilling || model.isID3Migrating || model.isScanningAutomaticGenres || model.isTrimmingWhitespace {
             VStack(spacing: 0) {
                 if let message = model.driveMessage {
                     Label(message, systemImage: "externaldrive.badge.exclamationmark")
@@ -632,6 +632,9 @@ struct ContentView: View {
                 }
                 if model.isID3Migrating {
                     sidebarProgressStatus(model.id3MigrationProgress)
+                }
+                if model.isTrimmingWhitespace {
+                    sidebarProgressStatus(model.whitespaceTrimmingProgress)
                 }
                 if model.isScanningAutomaticGenres {
                     sidebarAutomaticGenreProgress
@@ -4270,8 +4273,8 @@ private struct BatchTrackMetadataEditor: View {
                 Text(model.text("曲情報を一括編集", "Bulk Edit Song Info"))
                     .font(.title2.bold())
                 Text(model.text(
-                    "変更したい項目を入力し、「一括保存」ボタンを押すことで、選択した\(tracks.count)曲にまとめて反映されます。（行ごとの「登録」で個別変更も可能です）",
-                    "Enter values to change and click 'Save All' to update all \(tracks.count) selected songs. (Or use individual row buttons)."
+                    "変更したい項目を入力し、下の「保存」ボタンを押してください。選択した\(tracks.count)曲にまとめて反映されます。",
+                    "Enter values to change and click 'Save' to update all \(tracks.count) selected songs."
                 ))
                 .foregroundStyle(.secondary)
             }
@@ -4282,40 +4285,18 @@ private struct BatchTrackMetadataEditor: View {
                 VStack(alignment: .leading, spacing: 14) {
                     GroupBox(model.text("変更する曲情報", "Song Information to Change")) {
                         VStack(spacing: 10) {
-                            batchField(model.text("アーティスト", "Artist"), value: $artist) {
-                                apply(BatchMetadataChanges(artist: artist))
-                            }
-                            batchField(model.text("アルバム", "Album"), value: $album) {
-                                apply(BatchMetadataChanges(album: album))
-                            }
-                            batchField(model.text("アルバムアーティスト", "Album Artist"), value: $albumArtist) {
-                                apply(BatchMetadataChanges(albumArtist: albumArtist))
-                            }
-                            batchField(model.text("ジャンル", "Genre"), value: $genre) {
-                                apply(BatchMetadataChanges(genre: genre))
-                            }
-                            batchField(model.text("リリース年", "Release Year"), value: $year) {
-                                apply(BatchMetadataChanges(year: year))
-                            }
-                            batchNumberField(
-                                model.text("ディスク番号", "Disc Number"),
-                                value: $discNumber,
-                                action: {
-                                    apply(BatchMetadataChanges(
-                                        discNumber: parsedNumber(discNumber),
-                                        changesDiscNumber: true
-                                    ))
-                                }
-                            )
+                            batchField(model.text("アーティスト", "Artist"), value: $artist)
+                            batchField(model.text("アルバム", "Album"), value: $album)
+                            batchField(model.text("アルバムアーティスト", "Album Artist"), value: $albumArtist)
+                            batchField(model.text("ジャンル", "Genre"), value: $genre)
+                            batchField(model.text("リリース年", "Release Year"), value: $year)
+                            batchNumberField(model.text("ディスク番号", "Disc Number"), value: $discNumber)
                             HStack(spacing: 12) {
                                 Text(model.text("コンピレーション", "Compilation"))
                                     .frame(width: 145, alignment: .leading)
                                 Toggle(model.text("コンピレーションアルバム", "Compilation Album"), isOn: $isCompilation)
                                     .toggleStyle(.switch)
                                 Spacer()
-                                applyButton(disabled: unsupportedCompilationCount > 0) {
-                                    apply(BatchMetadataChanges(isCompilation: isCompilation))
-                                }
                             }
                         }
                         .padding(.top, 4)
@@ -4344,11 +4325,6 @@ private struct BatchTrackMetadataEditor: View {
                             .disabled(isRunning)
                         }
                         Spacer()
-                        applyButton(
-                            disabled: artworkData == nil || unsupportedArtworkCount > 0
-                        ) {
-                            apply(BatchMetadataChanges(artworkData: artworkData))
-                        }
                     }
                     .padding(.top, 4)
                     Text(model.text(
@@ -4378,8 +4354,8 @@ private struct BatchTrackMetadataEditor: View {
                         warningText(model.text("番号には0以上の整数を入力してください。", "Enter a whole number of zero or greater."))
                     }
                     Text(model.text(
-                        "「一括保存」を押すと変更した全ての項目が選択曲に保存されます。コンピレーションを有効にしても、曲ごとのアーティスト名は変わりません。",
-                        "Clicking 'Save All' applies all modified fields. Enabling Compilation does not alter each song's artist."
+                        "「保存」を押すと、入力・変更したすべての項目が選択曲に保存されます。コンピレーションを有効にしても、曲ごとのアーティスト名は変わりません。",
+                        "Clicking 'Save' applies all modified fields. Enabling Compilation does not alter each song's artist."
                     ))
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -4405,39 +4381,27 @@ private struct BatchTrackMetadataEditor: View {
     @ViewBuilder
     private func batchField(
         _ title: String,
-        value: Binding<String>,
-        action: @escaping () -> Void
+        value: Binding<String>
     ) -> some View {
         HStack(spacing: 12) {
             Text(title).frame(width: 145, alignment: .leading)
             TextField("", text: value)
-            applyButton(action: action)
+                .textFieldStyle(.roundedBorder)
         }
     }
 
     @ViewBuilder
     private func batchNumberField(
         _ title: String,
-        value: Binding<String>,
-        action: @escaping () -> Void
+        value: Binding<String>
     ) -> some View {
         HStack(spacing: 12) {
             Text(title).frame(width: 145, alignment: .leading)
             TextField("", text: value)
+                .textFieldStyle(.roundedBorder)
                 .frame(width: 90)
             Spacer()
-            applyButton(disabled: !isValidNumberInput(value.wrappedValue), action: action)
         }
-    }
-
-    private func applyButton(
-        disabled: Bool = false,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(model.text("登録", "Apply"), action: action)
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-            .disabled(disabled || isRunning || isFinished)
     }
 
     private func apply(_ changes: BatchMetadataChanges) {
@@ -4509,7 +4473,7 @@ private struct BatchTrackMetadataEditor: View {
                 Button(model.text("閉じる", "Close")) { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Spacer()
-                Button(model.text("一括保存", "Save All")) {
+                Button(model.text("保存", "Save")) {
                     applyAll()
                 }
                 .buttonStyle(.borderedProminent)

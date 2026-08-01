@@ -599,6 +599,17 @@ public extension Track {
 }
 
 public enum MetadataTextNormalizer {
+    public static func trimLeadingAndTrailingSpaces(_ value: String) -> String {
+        var s = value[...]
+        while let first = s.first, first == " " || first == "　" || first.isNewline {
+            s.removeFirst()
+        }
+        while let last = s.last, last == " " || last == "　" || last.isNewline {
+            s.removeLast()
+        }
+        return String(s)
+    }
+
     public static func normalizedWidths(_ value: String) -> String {
         var result = ""
         var halfwidthKana = String.UnicodeScalarView()

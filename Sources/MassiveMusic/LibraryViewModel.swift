@@ -354,6 +354,8 @@ final class LibraryViewModel: ObservableObject {
     @Published private(set) var musicBrainzAutoFillPendingCount = 0
     @Published var normalizeMetadataCharacterWidths = false
     @Published var trimMetadataWhitespace = false
+    @Published var isTrimmingWhitespace = false
+    @Published var whitespaceTrimmingProgress = ""
     @Published var autoMigrateID3v22ToV23 = true
     @Published var autoRegisterHighConfidenceGenres = false
     @Published var isID3Migrating = false
@@ -2485,7 +2487,19 @@ final class LibraryViewModel: ObservableObject {
         guard allScanRootsAreConnected() else { return }
         whitespaceTrimmingTask = Task(priority: .utility) { [weak self] in
             guard let self else { return }
+            await MainActor.run {
+                self.isTrimmingWhitespace = true
+                self.whitespaceTrimmingProgress = self.text("先頭・末尾の空白を整理中…", "Trimming whitespace…")
+            }
+            defer {
+                Task { @MainActor [weak self] in
+                    self?.isTrimmingWhitespace = false
+                    self?.whitespaceTrimmingProgress = ""
+                    self?.whitespaceTrimmingTask = nil
+                }
+            }
             var afterID = Int64((try? database.setting(forKey: "metadata.whitespaceTrimmingCursor")) ?? "0") ?? 0
+            var processedCount = 0
             var failed = 0
             var firstError: Error?
             do {
@@ -2498,6 +2512,7 @@ final class LibraryViewModel: ObservableObject {
                     for track in page {
                         try Task.checkCancellation()
                         afterID = track.id
+                        processedCount += 1
                         let edit = TrackMetadataEdit(track: track).normalizingLeadingAndTrailingWhitespace()
                         if edit.hasTextChanges(comparedWith: track) {
                             do {
@@ -2515,23 +2530,32 @@ final class LibraryViewModel: ObservableObject {
                             }
                         }
                     }
+                    await MainActor.run {
+                        self.whitespaceTrimmingProgress = self.text(
+                            "先頭・末尾の空白を整理中… (\(processedCount)曲確認)",
+                            "Trimming whitespace… (\(processedCount) songs checked)"
+                        )
+                    }
                     try database.setSetting(
                         String(afterID), forKey: "metadata.whitespaceTrimmingCursor"
                     )
                 }
-                loadCurrentPage(reset: false)
-                refreshMetadataDiagnostics()
+                await MainActor.run {
+                    self.loadCurrentPage(reset: false)
+                    self.refreshMetadataDiagnostics()
+                }
                 if let firstError {
-                    errorMessage = text(
+                    let errorMsg = text(
                         "先頭・末尾の空白自動削除で\(failed)曲を保存できませんでした。最初のエラー: \(firstError.localizedDescription)",
                         "Could not save \(failed) songs during whitespace trimming. First error: \(firstError.localizedDescription)"
                     )
+                    await MainActor.run { self.errorMessage = errorMsg }
                 }
             } catch is CancellationError {
             } catch {
-                errorMessage = error.localizedDescription
+                let errStr = error.localizedDescription
+                await MainActor.run { self.errorMessage = errStr }
             }
-            whitespaceTrimmingTask = nil
         }
     }
 
