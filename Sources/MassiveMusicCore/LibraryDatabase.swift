@@ -1523,6 +1523,7 @@ public final class LibraryDatabase: @unchecked Sendable {
 
     public func facetPage(
         section: LibrarySection,
+        query: String? = nil,
         offset: Int = 0,
         limit: Int = defaultPageSize
     ) throws -> FacetPage {
@@ -1537,24 +1538,38 @@ public final class LibraryDatabase: @unchecked Sendable {
         }
         let safeOffset = max(0, offset)
         return try pool.read { db in
+            var filters = ["is_available = 1", "\(expression) <> ''"]
+            var filterArgs: StatementArguments = []
+            let trimmed = query?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !trimmed.isEmpty {
+                let escaped = trimmed
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "%", with: "\\%")
+                    .replacingOccurrences(of: "_", with: "\\_")
+                filters.append("\(expression) LIKE ? ESCAPE '\\' COLLATE NOCASE")
+                filterArgs += ["%\(escaped)%"]
+            }
+            let filterSQL = filters.joined(separator: " AND ")
             let total = try Int.fetchOne(db, sql: """
                 SELECT COUNT(*) FROM (
                     SELECT 1 FROM tracks
-                    WHERE is_available = 1 AND \(expression) <> ''
+                    WHERE \(filterSQL)
                     GROUP BY \(expression) COLLATE NOCASE
                 )
-                """) ?? 0
+                """, arguments: filterArgs) ?? 0
+            var pageArgs = filterArgs
+            pageArgs += [limit, safeOffset]
             let rows = try Row.fetchAll(
                 db,
                 sql: """
                     SELECT \(expression) AS name, COUNT(*) AS count
                     FROM tracks
-                    WHERE is_available = 1 AND \(expression) <> ''
+                    WHERE \(filterSQL)
                     GROUP BY \(expression)
                     ORDER BY name COLLATE NOCASE
                     LIMIT ? OFFSET ?
                     """,
-                arguments: [limit, safeOffset]
+                arguments: pageArgs
             )
             return FacetPage(
                 facets: rows.map { Facet(name: $0["name"], count: $0["count"]) },
@@ -1566,6 +1581,7 @@ public final class LibraryDatabase: @unchecked Sendable {
     public func pageAlbums(
         artistFilter: String? = nil,
         genreFilter: String? = nil,
+        search: String? = nil,
         sort: AlbumSort = .name,
         direction: SortDirection = .ascending,
         offset: Int = 0,
@@ -1584,6 +1600,15 @@ public final class LibraryDatabase: @unchecked Sendable {
             if let genreFilter {
                 filters.append("genre = ? COLLATE NOCASE")
                 filterArgs += [genreFilter]
+            }
+            let trimmedSearch = search?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !trimmedSearch.isEmpty {
+                let escaped = trimmedSearch
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "%", with: "\\%")
+                    .replacingOccurrences(of: "_", with: "\\_")
+                filters.append("(album LIKE ? ESCAPE '\\' COLLATE NOCASE OR artist LIKE ? ESCAPE '\\' COLLATE NOCASE OR album_artist LIKE ? ESCAPE '\\' COLLATE NOCASE)")
+                filterArgs += ["%\(escaped)%", "%\(escaped)%", "%\(escaped)%"]
             }
             let filterSQL = filters.map { " AND \($0)" }.joined()
             let total = try Int.fetchOne(db, sql: """
@@ -1825,7 +1850,8 @@ public final class LibraryDatabase: @unchecked Sendable {
     public func offsetForAlbum(
         startingAt value: String,
         artistFilter: String? = nil,
-        genreFilter: String? = nil
+        genreFilter: String? = nil,
+        search: String? = nil
     ) throws -> Int {
         try pool.read { db in
             let expression = "COALESCE(NULLIF(album_artist, ''), artist)"
@@ -1838,6 +1864,15 @@ public final class LibraryDatabase: @unchecked Sendable {
             if let genreFilter {
                 predicates.append("genre = ? COLLATE NOCASE")
                 arguments += [genreFilter]
+            }
+            let trimmedSearch = search?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !trimmedSearch.isEmpty {
+                let escaped = trimmedSearch
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "%", with: "\\%")
+                    .replacingOccurrences(of: "_", with: "\\_")
+                predicates.append("(album LIKE ? ESCAPE '\\' COLLATE NOCASE OR artist LIKE ? ESCAPE '\\' COLLATE NOCASE OR album_artist LIKE ? ESCAPE '\\' COLLATE NOCASE)")
+                arguments += ["%\(escaped)%", "%\(escaped)%", "%\(escaped)%"]
             }
             return try Int.fetchOne(db, sql: """
                 SELECT COUNT(*) FROM (

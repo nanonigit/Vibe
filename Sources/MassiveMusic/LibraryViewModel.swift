@@ -601,9 +601,6 @@ final class LibraryViewModel: ObservableObject {
             try? await Task.sleep(for: .milliseconds(280))
             guard !Task.isCancelled else { return }
             self?.isSearchPending = false
-            if self?.section != .cache && self?.section != .activityLog && self?.section != .recentlyAdded {
-                self?.section = .tracks
-            }
             self?.selectedPlaylistID = nil
             self?.selectedAlbum = nil
             self?.selectedArtist = nil
@@ -1561,7 +1558,8 @@ final class LibraryViewModel: ObservableObject {
                         return try self.database.offsetForAlbum(
                             startingAt: value,
                             artistFilter: artist?.name,
-                            genreFilter: genre
+                            genreFilter: genre,
+                            search: requestedSearch
                         )
                     case .artists:
                         return try self.database.offsetForArtist(
@@ -1769,6 +1767,7 @@ final class LibraryViewModel: ObservableObject {
                 } else if requestedSection == .albums {
                     let page = try await Task.detached(priority: .userInitiated) {
                         try self.database.pageAlbums(
+                            search: requestedQuery,
                             sort: requestedAlbumSort,
                             direction: requestedAlbumDirection,
                             offset: requestedOffset,
@@ -1840,7 +1839,7 @@ final class LibraryViewModel: ObservableObject {
                 } else if [.genres, .folders].contains(requestedSection) {
                     let page = try await Task.detached(priority: .userInitiated) {
                         try self.database.facetPage(
-                            section: requestedSection, offset: requestedOffset, limit: self.pageSize
+                            section: requestedSection, query: requestedQuery, offset: requestedOffset, limit: self.pageSize
                         )
                     }.value
                     facets = page.facets
