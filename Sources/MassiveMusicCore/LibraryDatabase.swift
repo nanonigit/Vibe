@@ -1315,6 +1315,56 @@ public final class LibraryDatabase: @unchecked Sendable {
         }
     }
 
+    public func allCachedTrackIDs() throws -> Set<Int64> {
+        try pool.read { db in
+            Set(try Int64.fetchAll(db, sql: "SELECT track_id FROM local_cache"))
+        }
+    }
+
+    public func trackExists(id: Int64) throws -> Bool {
+        try pool.read { db in
+            (try Int.fetchOne(db, sql: "SELECT 1 FROM tracks WHERE id = ?", arguments: [id])) != nil
+        }
+    }
+
+    public func findTrackIDMatching(fileSize: Int64, format: String, title: String? = nil, artist: String? = nil) throws -> Int64? {
+        try pool.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: "SELECT id, title, artist FROM tracks WHERE file_size = ?",
+                arguments: [fileSize]
+            )
+            if rows.count == 1 {
+                return rows[0]["id"]
+            }
+            if let title, !title.isEmpty {
+                if let match = rows.first(where: { row in
+                    let rowTitle: String = row["title"] ?? ""
+                    return rowTitle.localizedCaseInsensitiveCompare(title) == .orderedSame
+                }) {
+                    return match["id"]
+                }
+                if let artist, !artist.isEmpty {
+                    if let id = try Int64.fetchOne(
+                        db,
+                        sql: "SELECT id FROM tracks WHERE title = ? COLLATE NOCASE AND artist = ? COLLATE NOCASE",
+                        arguments: [title, artist]
+                    ) {
+                        return id
+                    }
+                }
+                if let id = try Int64.fetchOne(
+                    db,
+                    sql: "SELECT id FROM tracks WHERE title = ? COLLATE NOCASE",
+                    arguments: [title]
+                ) {
+                    return id
+                }
+            }
+            return rows.first?["id"]
+        }
+    }
+
     public func pageCachedTracks(
         query: String = "",
         sort: TrackSort = .title,

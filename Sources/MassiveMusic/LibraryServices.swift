@@ -419,6 +419,67 @@ actor OfflineCacheManager {
         try evictIfNeeded()
     }
 
+    func reconcileCacheWithDisk() async throws {
+        guard let files = try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.fileSizeKey]) else {
+            return
+        }
+        
+        let validExtensions: Set<String> = ["mp3", "m4a", "flac", "wav", "aac", "aiff", "ogg", "alac", "opus"]
+        var diskFiles: [(url: URL, filename: String, size: Int64)] = []
+        for fileURL in files {
+            let ext = fileURL.pathExtension.lowercased()
+            guard validExtensions.contains(ext) else { continue }
+            let size = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+            diskFiles.append((fileURL, fileURL.lastPathComponent, size))
+        }
+        
+        for diskItem in diskFiles {
+            let stem = (diskItem.filename as NSString).deletingPathExtension
+            let ext = (diskItem.filename as NSString).pathExtension.lowercased()
+            
+            if let trackID = Int64(stem), (try? database.trackExists(id: trackID)) == true {
+                let currentPath = diskItem.url.path
+                let existingPath = try? database.cachedPath(trackID: trackID)
+                if existingPath != currentPath {
+                    try? database.recordCachedTrack(trackID: trackID, path: currentPath, fileSize: diskItem.size)
+                }
+            } else {
+                let meta = await AudioMetadataReader.read(url: diskItem.url)
+                let title = meta.title.isEmpty ? nil : meta.title
+                let artist = meta.artist.isEmpty ? nil : meta.artist
+                
+                if let targetTrackID = try? database.findTrackIDMatching(
+                    fileSize: diskItem.size,
+                    format: ext,
+                    title: title,
+                    artist: artist
+                ) {
+                    let targetURL = directory.appending(path: "\(targetTrackID).\(ext)")
+                    var finalURL = diskItem.url
+                    if diskItem.url.path != targetURL.path {
+                        if !fileManager.fileExists(atPath: targetURL.path) {
+                            try? fileManager.moveItem(at: diskItem.url, to: targetURL)
+                            finalURL = targetURL
+                        } else {
+                            try? fileManager.removeItem(at: diskItem.url)
+                            finalURL = targetURL
+                        }
+                    }
+                    try? database.recordCachedTrack(trackID: targetTrackID, path: finalURL.path, fileSize: diskItem.size)
+                }
+            }
+        }
+        
+        let registeredTrackIDs = (try? database.allCachedTrackIDs()) ?? []
+        for trackID in registeredTrackIDs {
+            if let path = try? database.cachedPath(trackID: trackID) {
+                if !fileManager.fileExists(atPath: path) {
+                    try? database.removeCachedTrack(trackID: trackID)
+                }
+            }
+        }
+    }
+
     private func evictIfNeeded() throws {
         let limit = max(0, Int(try database.setting(forKey: "cache.trackLimit") ?? "24") ?? 24)
         for (trackID, path) in try database.cachedTracksBeyondLimit(limit) {

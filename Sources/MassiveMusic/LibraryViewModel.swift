@@ -698,6 +698,12 @@ final class LibraryViewModel: ObservableObject {
             isLoading = false
             return
         }
+        if newSection == .cache {
+            Task {
+                try? await offlineCache.reconcileCacheWithDisk()
+                refreshSidebarCounts()
+            }
+        }
         loadCurrentPage(reset: true)
     }
 
@@ -1812,6 +1818,7 @@ final class LibraryViewModel: ObservableObject {
                     try Task.checkCancellation()
                     apply(page: page)
                 } else if requestedSection == .cache {
+                    try? await offlineCache.reconcileCacheWithDisk()
                     let page = try await Task.detached(priority: .userInitiated) {
                         try self.database.pageCachedTracks(
                             query: requestedQuery, sort: requestedSort, direction: requestedDirection,
@@ -1864,7 +1871,10 @@ final class LibraryViewModel: ObservableObject {
                 try Task.checkCancellation()
                 let visibleTrackIDs = tracks.map(\.id)
                 cachedTrackIDs = try await Task.detached(priority: .utility) {
-                    try self.database.cachedTrackIDs(in: visibleTrackIDs)
+                    if requestedSection == .cache {
+                        if let all = try? self.database.allCachedTrackIDs() { return all }
+                    }
+                    return try self.database.cachedTrackIDs(in: visibleTrackIDs)
                 }.value
                 await refreshVisibleTrackAvailability()
                 if let requestedStorageScope {
@@ -3947,6 +3957,7 @@ final class LibraryViewModel: ObservableObject {
 
     private func refreshSidebarCounts() {
         Task {
+            try? await self.offlineCache.reconcileCacheWithDisk()
             let counts = await Task.detached {
                 (
                     (try? self.database.favoriteTrackCount()) ?? 0,
