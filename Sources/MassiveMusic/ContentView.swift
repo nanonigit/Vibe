@@ -4630,6 +4630,33 @@ private struct LibrarySettingsView: View {
                     ))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    HStack {
+                        if model.isScanningAutomaticGenres {
+                            Button(model.text("ジャンル検索を停止", "Stop Genre Scan")) {
+                                model.cancelAutomaticGenreScan()
+                            }
+                            .buttonStyle(.bordered)
+                            Spacer()
+                            Text(
+                                model.automaticGenreScanTotalCount > 0
+                                ? model.text(
+                                    "解析中 (\(model.automaticGenreScanProcessedCount)/\(model.automaticGenreScanTotalCount))",
+                                    "Scanning (\(model.automaticGenreScanProcessedCount)/\(model.automaticGenreScanTotalCount))"
+                                )
+                                : model.text("準備中…", "Preparing…")
+                            )
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                        } else {
+                            Button {
+                                model.startAutomaticGenreScan()
+                            } label: {
+                                Label(model.text("ジャンル検索を開始", "Start Genre Scan"), systemImage: "play.fill")
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+                    }
+                    .padding(.top, 2)
                     Divider()
                     Toggle(
                         model.text(
