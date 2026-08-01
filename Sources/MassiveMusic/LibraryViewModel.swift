@@ -938,6 +938,7 @@ final class LibraryViewModel: ObservableObject {
         selectedArtist = nil
         selectedGenre = nil
         selectedPlaylistID = id
+        refreshPlaylists()
         loadCurrentPage(reset: true)
     }
 
@@ -3979,6 +3980,7 @@ final class LibraryViewModel: ObservableObject {
                 cachedTrackCount = library.cached
                 cachedStorageBytes = library.cachedBytes
             }
+            refreshPlaylists()
         }
     }
 
