@@ -474,7 +474,7 @@ public enum AudioMetadataWriter {
         let data = try Data(contentsOf: url, options: .mappedIfSafe)
         let parsed = try parseID3(data)
         let names = ["TIT2": "title", "TPE1": "artist", "TALB": "album", "TPE2": "album artist",
-                     "TCON": "genre", "TRCK": "track number", "TPOS": "disc number", "TCMP": "compilation"]
+                     "TCON": "genre", "TYER": "year", "TDRC": "year", "TRCK": "track number", "TPOS": "disc number", "TCMP": "compilation"]
         var result: [String: Any] = [:]
         for frame in parsed.frames {
             guard let key = names[frame.id], let value = decodeID3Text(frame.payload) else { continue }

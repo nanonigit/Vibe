@@ -385,6 +385,7 @@ public struct Track: Identifiable, Hashable, Sendable {
     public let album: String
     public let albumArtist: String
     public let genre: String
+    public let year: String
     public let isCompilation: Bool
     public let discNumber: Int?
     public let trackNumber: Int?
@@ -408,6 +409,7 @@ public struct Track: Identifiable, Hashable, Sendable {
         album: String = "",
         albumArtist: String = "",
         genre: String = "",
+        year: String = "",
         isCompilation: Bool = false,
         discNumber: Int? = nil,
         trackNumber: Int? = nil,
@@ -430,6 +432,7 @@ public struct Track: Identifiable, Hashable, Sendable {
         self.album = album
         self.albumArtist = albumArtist
         self.genre = genre
+        self.year = year
         self.isCompilation = isCompilation
         self.discNumber = discNumber
         self.trackNumber = trackNumber
@@ -839,6 +842,7 @@ public struct BatchMetadataChanges: Equatable, Sendable {
     public var album: String?
     public var albumArtist: String?
     public var genre: String?
+    public var year: String?
     public var isCompilation: Bool?
     public var discNumber: Int?
     public var changesDiscNumber: Bool
@@ -853,6 +857,7 @@ public struct BatchMetadataChanges: Equatable, Sendable {
         album: String? = nil,
         albumArtist: String? = nil,
         genre: String? = nil,
+        year: String? = nil,
         isCompilation: Bool? = nil,
         discNumber: Int? = nil,
         changesDiscNumber: Bool = false,
@@ -866,6 +871,7 @@ public struct BatchMetadataChanges: Equatable, Sendable {
         self.album = album
         self.albumArtist = albumArtist
         self.genre = genre
+        self.year = year
         self.isCompilation = isCompilation
         self.discNumber = discNumber
         self.changesDiscNumber = changesDiscNumber
@@ -876,7 +882,7 @@ public struct BatchMetadataChanges: Equatable, Sendable {
     }
 
     public var isEmpty: Bool {
-        title == nil && artist == nil && album == nil && albumArtist == nil && genre == nil && isCompilation == nil &&
+        title == nil && artist == nil && album == nil && albumArtist == nil && genre == nil && year == nil && isCompilation == nil &&
             !changesDiscNumber && !changesTrackNumber && artworkData == nil
     }
 
@@ -887,6 +893,7 @@ public struct BatchMetadataChanges: Equatable, Sendable {
         if let album { edit.album = album }
         if let albumArtist { edit.albumArtist = albumArtist }
         if let genre { edit.genre = genre }
+        if let year { edit.year = year }
         if let isCompilation { edit.isCompilation = isCompilation }
         if changesDiscNumber { edit.discNumber = discNumber }
         if changesTrackNumber {
@@ -964,14 +971,23 @@ public struct Facet: Identifiable, Hashable, Sendable {
 }
 
 public struct AlbumSummary: Identifiable, Hashable, Sendable {
+    public let id: String
     public let name: String
     public let artist: String
+    public let year: String
     public let trackCount: Int
-    public var id: String { "\(name)\u{1F}\(artist)" }
 
-    public init(name: String, artist: String, trackCount: Int) {
+    public init(
+        id: String = UUID().uuidString,
+        name: String,
+        artist: String,
+        year: String = "",
+        trackCount: Int
+    ) {
+        self.id = id
         self.name = name
         self.artist = artist
+        self.year = year
         self.trackCount = trackCount
     }
 }

@@ -7,6 +7,7 @@ public struct AudioMetadata: Sendable {
     public var album: String
     public var albumArtist: String
     public var genre: String
+    public var year: String
     public var isCompilation: Bool
     public var discNumber: Int?
     public var trackNumber: Int?
@@ -24,6 +25,7 @@ public enum AudioMetadataReader {
             album: "",
             albumArtist: "",
             genre: "",
+            year: "",
             isCompilation: false,
             discNumber: nil,
             trackNumber: nil,
@@ -55,6 +57,8 @@ public enum AudioMetadataReader {
                 if let value = try? await item.load(.stringValue) { result.albumArtist = value }
             case AVMetadataKey.commonKeyType.rawValue:
                 if let value = try? await item.load(.stringValue) { result.genre = value }
+            case AVMetadataKey.commonKeyCreationDate.rawValue:
+                if let value = try? await item.load(.stringValue) { result.year = value }
             case AVMetadataKey.commonKeyArtwork.rawValue:
                 if (try? await item.load(.dataValue)) != nil { result.hasArtwork = true }
             default:
@@ -67,6 +71,7 @@ public enum AudioMetadataReader {
             result.discNumber = Self.integerValue(info["disc number"]) ?? result.discNumber
             result.trackNumber = Self.integerValue(info["track number"]) ?? result.trackNumber
             if let value = info["album artist"] as? String { result.albumArtist = value }
+            if let value = info["year"] as? String { result.year = value }
         }
         return result
     }

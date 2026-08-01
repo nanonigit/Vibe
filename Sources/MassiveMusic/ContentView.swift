@@ -847,7 +847,11 @@ struct ContentView: View {
                             .truncationMode(.tail)
                     }
                     .buttonStyle(.link)
-                    Text(model.text("\(model.totalCount.formatted())曲", "\(model.totalCount.formatted()) songs"))
+                    if !album.year.isEmpty {
+                        Text("• \(album.year)")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Text("• " + model.text("\(model.totalCount.formatted())曲", "\(model.totalCount.formatted()) songs"))
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: true, vertical: false)
                 }
@@ -1543,7 +1547,7 @@ struct ContentView: View {
                                 .frame(maxWidth: .infinity)
                             Text(album.name).font(.headline).lineLimit(2)
                             Text(model.displayArtist(album.artist)).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-                            Text(model.text("\(album.trackCount)曲", "\(album.trackCount) songs")).font(.caption).foregroundStyle(.tertiary)
+                            Text(album.year.isEmpty ? model.text("\(album.trackCount)曲", "\(album.trackCount) songs") : "\(album.year) • " + model.text("\(album.trackCount)曲", "\(album.trackCount) songs")).font(.caption).foregroundStyle(.tertiary)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
@@ -3363,6 +3367,7 @@ private struct CurrentTrackInfoEditorView: View {
     @State private var album: String = ""
     @State private var albumArtist: String = ""
     @State private var genre: String = ""
+    @State private var year: String = ""
     @State private var discNumber: String = ""
     @State private var trackNumber: String = ""
 
@@ -3400,6 +3405,11 @@ private struct CurrentTrackInfoEditorView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(model.text("ジャンル", "Genre")).font(.caption).foregroundStyle(.secondary)
                         TextField(model.text("ジャンル", "Genre"), text: $genre)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(model.text("リリース年", "Release Year")).font(.caption).foregroundStyle(.secondary)
+                        TextField(model.text("リリース年 (例: 2024)", "Release Year (e.g. 2024)"), text: $year)
                             .textFieldStyle(.roundedBorder)
                     }
                     
@@ -3569,6 +3579,7 @@ private struct CurrentTrackInfoEditorView: View {
         album != track.album ||
         albumArtist != track.albumArtist ||
         genre != track.genre ||
+        year != track.year ||
         discNumber != (track.discNumber.map(String.init) ?? "") ||
         trackNumber != (track.trackNumber.map(String.init) ?? "")
     }
@@ -3586,6 +3597,7 @@ private struct CurrentTrackInfoEditorView: View {
         album = source.album
         albumArtist = source.albumArtist
         genre = source.genre
+        year = source.year
         discNumber = source.discNumber.map(String.init) ?? ""
         trackNumber = source.trackNumber.map(String.init) ?? ""
         saveError = nil
@@ -3603,6 +3615,7 @@ private struct CurrentTrackInfoEditorView: View {
         let editAlbum = album
         let editAlbumArtist = albumArtist
         let editGenre = genre
+        let editYear = year
         let editDisc = Int(discNumber)
         let editTrackNum = Int(trackNumber)
         
@@ -3612,6 +3625,7 @@ private struct CurrentTrackInfoEditorView: View {
         edit.album = editAlbum
         edit.albumArtist = editAlbumArtist
         edit.genre = editGenre
+        edit.year = editYear
         edit.discNumber = editDisc
         edit.trackNumber = editTrackNum
         
@@ -4207,6 +4221,7 @@ private struct BatchTrackMetadataEditor: View {
     @State private var album: String
     @State private var albumArtist: String
     @State private var genre: String
+    @State private var year: String
     @State private var isCompilation: Bool
     @State private var discNumber: String
     @State private var artworkData: Data?
@@ -4220,6 +4235,7 @@ private struct BatchTrackMetadataEditor: View {
         _album = State(initialValue: Self.commonValue(tracks.map(\.album)))
         _albumArtist = State(initialValue: Self.commonValue(tracks.map(\.albumArtist)))
         _genre = State(initialValue: Self.commonValue(tracks.map(\.genre)))
+        _year = State(initialValue: Self.commonValue(tracks.map(\.year)))
         _isCompilation = State(initialValue: tracks.allSatisfy(\.isCompilation))
         _discNumber = State(initialValue: Self.commonNumber(tracks.map(\.discNumber)))
     }
@@ -4253,6 +4269,9 @@ private struct BatchTrackMetadataEditor: View {
                             }
                             batchField(model.text("ジャンル", "Genre"), value: $genre) {
                                 apply(BatchMetadataChanges(genre: genre))
+                            }
+                            batchField(model.text("リリース年", "Release Year"), value: $year) {
+                                apply(BatchMetadataChanges(year: year))
                             }
                             batchNumberField(
                                 model.text("ディスク番号", "Disc Number"),
@@ -5222,6 +5241,7 @@ private struct UnifiedPlayerControls: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(player.isPlaying ? model.text("一時停止", "Pause") : model.text("再生", "Play"))
+                    .keyboardShortcut(.space, modifiers: [])
                     Button(action: player.next) {
                         Image(systemName: "forward.fill")
                     }

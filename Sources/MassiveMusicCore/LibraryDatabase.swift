@@ -133,6 +133,13 @@ public final class LibraryDatabase: @unchecked Sendable {
                 arguments: [10, Date().timeIntervalSince1970]
             )
         }
+        migrator.registerMigration("v11_year_tag") { db in
+            try db.execute(sql: Schema.yearTag)
+            try db.execute(
+                sql: "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                arguments: [11, Date().timeIntervalSince1970]
+            )
+        }
         return migrator
     }
 
@@ -1633,7 +1640,7 @@ public final class LibraryDatabase: @unchecked Sendable {
             }
 
             let rows = try Row.fetchAll(db, sql: """
-                SELECT album AS name, \(expression) AS artist, COUNT(*) AS track_count
+                SELECT album AS name, \(expression) AS artist, MIN(NULLIF(year, '')) AS year, COUNT(*) AS track_count
                 FROM tracks
                 WHERE is_available = 1 AND album <> ''\(filterSQL)
                 GROUP BY album COLLATE NOCASE, \(expression) COLLATE NOCASE
@@ -1641,7 +1648,7 @@ public final class LibraryDatabase: @unchecked Sendable {
                 LIMIT ? OFFSET ?
                 """, arguments: args)
             return AlbumSummaryPage(
-                albums: rows.map { AlbumSummary(name: $0["name"], artist: $0["artist"], trackCount: $0["track_count"]) },
+                albums: rows.map { AlbumSummary(name: $0["name"], artist: $0["artist"], year: $0["year"] ?? "", trackCount: $0["track_count"]) },
                 offset: safeOffset, limit: limit, totalCount: total
             )
         }
@@ -2891,6 +2898,7 @@ public final class LibraryDatabase: @unchecked Sendable {
             id: row["id"], rootID: row["root_id"], relativePath: row["relative_path"],
             filename: row["filename"], title: row["title"], artist: row["artist"],
             album: row["album"], albumArtist: row["album_artist"], genre: row["genre"],
+            year: row.hasColumn("year") ? (row["year"] ?? "") : "",
             isCompilation: row.hasColumn("is_compilation") ? row["is_compilation"] : false,
             discNumber: row["disc_number"], trackNumber: row["track_number"],
             duration: row["duration"], fileSize: row["file_size"],
@@ -2953,7 +2961,7 @@ public final class LibraryDatabase: @unchecked Sendable {
             sql: SQL.upsertTrack,
             arguments: [
                 track.rootID, item.identityKey, item.fileResourceID, track.relativePath, track.filename,
-                track.title, track.artist, track.album, track.albumArtist, track.genre, track.isCompilation,
+                track.title, track.artist, track.album, track.albumArtist, track.genre, track.year, track.isCompilation,
                 track.discNumber, track.trackNumber, track.duration, track.fileSize,
                 track.modifiedAt.timeIntervalSince1970, track.format, track.bitrate,
                 track.hasArtwork, track.isAvailable, track.addedAt.timeIntervalSince1970, sessionID
@@ -3082,9 +3090,9 @@ private enum SQL {
     static let upsertTrack = """
         INSERT INTO tracks(
             root_id, identity_key, file_resource_id, relative_path, filename, title, artist, album,
-            album_artist, genre, is_compilation, disc_number, track_number, duration, file_size, modified_at, format,
+            album_artist, genre, year, is_compilation, disc_number, track_number, duration, file_size, modified_at, format,
             bitrate, has_artwork, is_available, added_at, last_seen_session_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(identity_key) DO UPDATE SET
             root_id = excluded.root_id,
             file_resource_id = excluded.file_resource_id,
@@ -3095,6 +3103,7 @@ private enum SQL {
             album = excluded.album,
             album_artist = excluded.album_artist,
             genre = excluded.genre,
+            year = excluded.year,
             is_compilation = excluded.is_compilation,
             disc_number = excluded.disc_number,
             track_number = excluded.track_number,
@@ -3139,6 +3148,9 @@ private enum Schema {
     static let compilationTag = """
         ALTER TABLE tracks ADD COLUMN is_compilation INTEGER NOT NULL DEFAULT 0;
         CREATE INDEX tracks_compilation_idx ON tracks(is_compilation, album COLLATE NOCASE, id);
+        """
+    static let yearTag = """
+        ALTER TABLE tracks ADD COLUMN year TEXT NOT NULL DEFAULT '';
         """
     static let libraryActivityLog = """
         CREATE TABLE library_activity_log(

@@ -18,6 +18,22 @@ struct MassiveMusicApp: App {
                 }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
             }
+            CommandMenu(environment.model?.text("再生", "Controls") ?? "Controls") {
+                Button(action: { environment.player?.togglePlayPause() }) {
+                    Text(environment.player?.isPlaying == true ? (environment.model?.text("一時停止", "Pause") ?? "Pause") : (environment.model?.text("再生", "Play") ?? "Play"))
+                }
+                .keyboardShortcut(.space, modifiers: [])
+
+                Button(action: { environment.player?.next() }) {
+                    Text(environment.model?.text("次の曲", "Next Track") ?? "Next Track")
+                }
+                .keyboardShortcut(.rightArrow, modifiers: .command)
+
+                Button(action: { environment.player?.previous() }) {
+                    Text(environment.model?.text("前の曲", "Previous Track") ?? "Previous Track")
+                }
+                .keyboardShortcut(.leftArrow, modifiers: .command)
+            }
         }
     }
 }

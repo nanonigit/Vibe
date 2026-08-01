@@ -175,6 +175,7 @@ public actor LibraryScanner {
                         album: metadata.album,
                         albumArtist: metadata.albumArtist,
                         genre: metadata.genre,
+                        year: metadata.year,
                         isCompilation: metadata.isCompilation,
                         discNumber: metadata.discNumber,
                         trackNumber: metadata.trackNumber,
