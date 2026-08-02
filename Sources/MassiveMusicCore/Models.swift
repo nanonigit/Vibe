@@ -449,6 +449,13 @@ public struct Track: Identifiable, Hashable, Sendable {
         self.addedAt = addedAt
         self.isFavorite = isFavorite
     }
+
+    /// Matches the artist key used by album grouping in the library database.
+    public var albumNavigationArtist: String {
+        let normalizedAlbumArtist = albumArtist.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !normalizedAlbumArtist.isEmpty { return normalizedAlbumArtist }
+        return artist.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 }
 
 public struct TrackMetadataEdit: Hashable, Codable, Sendable {

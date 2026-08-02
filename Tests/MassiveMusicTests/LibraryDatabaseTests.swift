@@ -1601,7 +1601,7 @@ struct LibraryDatabaseTests {
 
     @Test func migrationEnablesExpectedSchemaAndWAL() throws {
         let context = try TestContext()
-        #expect(try context.database.schemaVersion() == 10)
+        #expect(try context.database.schemaVersion() == 11)
         #expect(try context.database.journalMode().lowercased() == "wal")
     }
 
@@ -1631,7 +1631,7 @@ struct LibraryDatabaseTests {
         let editor = String(content[start.lowerBound..<end.lowerBound])
 
         #expect(editor.contains("GroupBox(model.text(\"変更する曲情報\""))
-        #expect(editor.contains("Button(model.text(\"登録\", \"Apply\")"))
+        #expect(editor.contains("Button(model.text(\"保存\", \"Save\")"))
         #expect(editor.contains("model.updateMetadata(for: tracks, changes:"))
         #expect(!editor.contains(".toggleStyle(.checkbox)"))
         #expect(!editor.contains("チェックした項目だけ"))
@@ -2160,9 +2160,42 @@ struct LibraryDatabaseTests {
         #expect(content.contains("@AppStorage(\"columns.artistView.genre.visible\")"))
         #expect(content.contains("case .year:"))
         #expect(content.contains("artist.genre"))
-        #expect(controls.contains("model.openAlbum(for: track)"))
-        #expect(controls.contains("model.openArtist(named: track.artist)"))
-        #expect(model.contains("func openAlbum(for track: Track)"))
+        #expect(controls.contains("model.openAlbumFromPlayer(for: track)"))
+        #expect(controls.contains("model.openArtistFromPlayer(named: track.artist)"))
+        #expect(model.contains("func openAlbumFromPlayer(for track: Track)"))
+        #expect(model.contains("func openArtistFromPlayer(named name: String)"))
+        #expect(model.contains("section = .albums"))
+        #expect(model.contains("section = .artists"))
+    }
+
+    @Test func playerAlbumNavigationPrefersAlbumArtistAndTrimsMetadata() {
+        let track = Track(
+            rootID: 1,
+            relativePath: "song.mp3",
+            filename: "song.mp3",
+            title: "Song",
+            artist: " Track Artist ",
+            album: " Album ",
+            albumArtist: " Album Artist ",
+            fileSize: 1,
+            modifiedAt: Date(),
+            format: "MP3"
+        )
+        let fallback = Track(
+            rootID: 1,
+            relativePath: "fallback.mp3",
+            filename: "fallback.mp3",
+            title: "Fallback",
+            artist: " Track Artist ",
+            album: " Album ",
+            albumArtist: "  ",
+            fileSize: 1,
+            modifiedAt: Date(),
+            format: "MP3"
+        )
+
+        #expect(track.albumNavigationArtist == "Album Artist")
+        #expect(fallback.albumNavigationArtist == "Track Artist")
     }
 
     @Test func metadataVariationLinkUsesExactFieldAndValue() throws {

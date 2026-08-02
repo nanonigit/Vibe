@@ -61,7 +61,7 @@ flowchart LR
 ### Playback and guitar practice
 
 - Keep playback controls available at the top of the inspector
-- Jump to the current album from its artwork or title, or to the artist page from the artist name
+- Jump to the current album from its artwork or title, or to the artist page from the artist name; album links prefer album-artist metadata and preserve the surrounding browse context
 - Use shuffle, repeat-one, and album or playlist repeat; shuffle the connected library or the playable cache when storage is offline
 - Choose playback speeds from 60% to 95% in 5% steps, or play at 100%
 - Shift pitch down a semitone, play at the original pitch, or shift up a semitone without changing speed

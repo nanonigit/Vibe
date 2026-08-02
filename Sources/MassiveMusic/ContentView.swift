@@ -85,6 +85,10 @@ private struct CacheTrackLimitControl: View {
                 .monospacedDigit()
                 .frame(width: 48)
                 .controlSize(.small)
+            Stepper(value: $value, in: limits) { EmptyView() }
+                .labelsHidden()
+                .controlSize(.small)
+                .fixedSize()
             Text(unit).font(.caption).foregroundStyle(.secondary)
         }
         .onChange(of: value) { _, newValue in
@@ -5587,7 +5591,7 @@ private struct UnifiedPlayerControls: View {
     private func playerArtwork(size: CGFloat) -> some View {
         Button {
             guard let track = player.currentTrack else { return }
-            model.openAlbum(for: track)
+            model.openAlbumFromPlayer(for: track)
         } label: {
             PlayerArtwork(
                 artworkURL: model.enrichedInfo?.artworkURL,
@@ -5606,11 +5610,12 @@ private struct UnifiedPlayerControls: View {
         VStack(alignment: .leading, spacing: 2) {
             Button {
                 guard let track = player.currentTrack else { return }
-                model.openAlbum(for: track)
+                model.openAlbumFromPlayer(for: track)
             } label: {
                 Text(player.currentTrack?.title ?? model.text("再生していません", "Not Playing"))
                     .font(.headline)
                     .lineLimit(1)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(player.currentTrack?.album.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false)
@@ -5618,12 +5623,13 @@ private struct UnifiedPlayerControls: View {
 
             Button {
                 guard let track = player.currentTrack else { return }
-                model.openArtist(named: track.artist)
+                model.openArtistFromPlayer(named: track.artist)
             } label: {
                 Text(player.currentTrack?.artist ?? model.text("曲を選択してください", "Select a song"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(player.currentTrack?.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false)

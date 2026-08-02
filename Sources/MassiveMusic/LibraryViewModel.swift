@@ -1057,10 +1057,28 @@ final class LibraryViewModel: ObservableObject {
         loadCurrentPage(reset: true)
     }
 
-    func openAlbum(for track: Track) {
+    func openAlbumFromPlayer(for track: Track) {
         let album = track.album.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !album.isEmpty else { return }
-        openAlbum(AlbumSummary(name: album, artist: track.artist, year: track.year, trackCount: 0))
+        cancelPendingSearchNavigation()
+        captureBrowseReturnState()
+        usesDirectOffsetPaging = false
+        selectedIndexToken = nil
+        section = .albums
+        searchText = ""
+        selectedPlaylistID = nil
+        selectedGenre = nil
+        selectedArtist = nil
+        exactMetadataFilter = nil
+        selectedAlbum = AlbumSummary(
+            name: album,
+            artist: track.albumNavigationArtist,
+            year: track.year.trimmingCharacters(in: .whitespacesAndNewlines),
+            trackCount: 0
+        )
+        sort = .album
+        sortDirection = .ascending
+        loadCurrentPage(reset: true)
     }
 
     func openGenre(_ genre: String) {
@@ -1102,6 +1120,29 @@ final class LibraryViewModel: ObservableObject {
 
     func openArtist(named name: String) {
         openArtist(ArtistSummary(name: name, albumCount: 0, trackCount: 0))
+    }
+
+    func openArtistFromPlayer(named name: String) {
+        let artistName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !artistName.isEmpty else { return }
+        cancelPendingSearchNavigation()
+        captureBrowseReturnState()
+        usesDirectOffsetPaging = false
+        selectedIndexToken = nil
+        section = .artists
+        searchText = ""
+        selectedPlaylistID = nil
+        selectedGenre = nil
+        selectedAlbum = nil
+        exactMetadataFilter = nil
+        selectedArtist = ArtistSummary(name: artistName, albumCount: 0, trackCount: 0)
+        loadCurrentPage(reset: true)
+        Task {
+            if let exact = try? await Task.detached(operation: { try self.database.artistSummary(named: artistName) }).value {
+                guard section == .artists, selectedAlbum == nil, selectedArtist?.name == artistName else { return }
+                selectedArtist = exact
+            }
+        }
     }
 
     func closeDetail() {
