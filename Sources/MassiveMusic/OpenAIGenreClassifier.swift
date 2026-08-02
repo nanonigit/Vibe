@@ -134,6 +134,44 @@ actor OpenAIGenreClassifier {
         return GenreSuggestion(genre: genre, confidence: min(1, max(0, confidence)), rationale: rationale, source: .openAI)
     }
 
+    func fetchYear(track: Track, apiKey: String, model: String) async throws -> String? {
+        var request = URLRequest(url: URL(string: "https://api.openai.com/v1/responses")!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let metadata = "Album: \(track.album)\nArtist: \(track.artist)\nTitle: \(track.title)"
+        let schema: [String: Any] = [
+            "type": "object",
+            "properties": [
+                "year": ["type": "string", "description": "4-digit release year like 1998 or 2024"]
+            ],
+            "required": ["year"],
+            "additionalProperties": false
+        ]
+        let body: [String: Any] = [
+            "model": model,
+            "messages": [
+                ["role": "system", "content": "Return only the original 4-digit release year (YYYY) for the album and artist."],
+                ["role": "user", "content": metadata]
+            ],
+            "response_format": ["type": "json_schema", "json_schema": ["name": "year_response", "strict": true, "schema": schema]]
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 25
+        let (data, response) = try await URLSession(configuration: configuration).data(for: request)
+        try Self.validateResponse(data: data, response: response, provider: "OpenAI")
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let output = root["output"] as? [[String: Any]],
+              let text = output.lazy.compactMap({ item in (item["content"] as? [[String: Any]])?.compactMap { $0["text"] as? String }.first }).first,
+              let payload = text.data(using: .utf8),
+              let result = try JSONSerialization.jsonObject(with: payload) as? [String: Any],
+              let yearStr = result["year"] as? String else { return nil }
+        let trimmed = yearStr.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.count == 4, Int(trimmed) != nil { return trimmed }
+        return nil
+    }
+
     private static func validateResponse(data: Data, response: URLResponse, provider: String) throws {
         guard let http = response as? HTTPURLResponse else { throw OpenAIIntegrationError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else {

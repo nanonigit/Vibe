@@ -192,11 +192,7 @@ public final class LibraryDatabase: @unchecked Sendable {
                     )) AS albums,
                     (SELECT COUNT(DISTINCT artist COLLATE NOCASE) FROM tracks
                         WHERE is_available = 1 AND artist <> '') AS artists,
-                    (SELECT COUNT(*) FROM (
-                        SELECT 1 FROM tracks
-                        WHERE is_available = 1 AND genre <> ''
-                        GROUP BY genre COLLATE NOCASE
-                    )) AS genres,
+                    0 AS genres,
                     (SELECT COUNT(*) FROM (
                         SELECT 1 FROM tracks
                         WHERE is_available = 1 AND relative_path <> ''
@@ -209,11 +205,17 @@ public final class LibraryDatabase: @unchecked Sendable {
                     (SELECT COUNT(*) FROM local_cache) AS cached,
                     (SELECT COALESCE(SUM(file_size), 0) FROM local_cache) AS cached_bytes
                 """)
+            let rawGenres = try String.fetchAll(db, sql: """
+                SELECT genre FROM tracks
+                WHERE is_available = 1 AND trim(genre) <> ''
+                GROUP BY genre COLLATE NOCASE
+                """)
+            let canonicalGenreCount = Set(rawGenres.map(GenreNormalizer.normalize)).count
             return (
                 tracks: row?["tracks"] ?? 0,
                 albums: row?["albums"] ?? 0,
                 artists: row?["artists"] ?? 0,
-                genres: row?["genres"] ?? 0,
+                genres: canonicalGenreCount,
                 folders: row?["folders"] ?? 0,
                 cached: row?["cached"] ?? 0,
                 cachedBytes: row?["cached_bytes"] ?? 0
@@ -361,6 +363,24 @@ public final class LibraryDatabase: @unchecked Sendable {
         }
     }
 
+    /// Returns all tracks (regardless of availability) for genre normalization.
+    /// Works even when the SSD is disconnected since it reads from the local DB cache.
+    public func tracksForGenreNormalization(afterID: Int64, limit: Int = defaultPageSize) throws -> [Track] {
+        guard (1...1_000).contains(limit) else { throw MassiveMusicError.invalidPageSize }
+        return try pool.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT * FROM tracks WHERE id > ?
+                      AND trim(genre) != '' AND genre != '未判定' AND lower(trim(genre)) != 'unknown'
+                    ORDER BY id LIMIT ?
+                    """,
+                arguments: [afterID, limit]
+            )
+            return rows.map(Self.decodeTrack)
+        }
+    }
+
     public func mp3TracksForID3Migration(afterID: Int64, limit: Int = defaultPageSize) throws -> [Track] {
         guard (1...1_000).contains(limit) else { throw MassiveMusicError.invalidPageSize }
         return try pool.read { db in
@@ -416,6 +436,8 @@ public final class LibraryDatabase: @unchecked Sendable {
         fileSize: Int64,
         modifiedAt: Date
     ) throws {
+        var normalizedEdit = edit
+        normalizedEdit.genre = GenreNormalizer.normalize(edit.genre)
         try pool.write { db in
             let previous = try Row.fetchOne(db, sql: "SELECT * FROM tracks WHERE id = ?", arguments: [id])
             try db.execute(
@@ -425,9 +447,10 @@ public final class LibraryDatabase: @unchecked Sendable {
                         has_artwork = CASE WHEN ? THEN 1 ELSE has_artwork END
                     WHERE id = ?
                     """,
-                arguments: [edit.title, edit.artist, edit.album, edit.albumArtist, edit.genre, edit.isCompilation,
-                            edit.discNumber, edit.trackNumber, fileSize, modifiedAt.timeIntervalSince1970,
-                            edit.artworkData != nil, id]
+                arguments: [normalizedEdit.title, normalizedEdit.artist, normalizedEdit.album, normalizedEdit.albumArtist,
+                            normalizedEdit.genre, normalizedEdit.isCompilation, normalizedEdit.discNumber,
+                            normalizedEdit.trackNumber, fileSize, modifiedAt.timeIntervalSince1970,
+                            normalizedEdit.artworkData != nil, id]
             )
             if let updated = try Row.fetchOne(db, sql: "SELECT * FROM tracks WHERE id = ?", arguments: [id]) {
                 try Self.refreshMetadataVariationCandidates(db: db, previous: previous, updated: updated)
@@ -448,7 +471,9 @@ public final class LibraryDatabase: @unchecked Sendable {
         fileSize: Int64,
         modifiedAt: Date
     ) throws {
-        let payload = try JSONEncoder().encode(edit)
+        var normalizedEdit = edit
+        normalizedEdit.genre = GenreNormalizer.normalize(edit.genre)
+        let payload = try JSONEncoder().encode(normalizedEdit)
         let payloadJSON = String(decoding: payload, as: UTF8.self)
         try pool.write { db in
             let previous = try Row.fetchOne(db, sql: "SELECT * FROM tracks WHERE id = ?", arguments: [id])
@@ -459,9 +484,10 @@ public final class LibraryDatabase: @unchecked Sendable {
                         has_artwork = CASE WHEN ? THEN 1 ELSE has_artwork END
                     WHERE id = ?
                     """,
-                arguments: [edit.title, edit.artist, edit.album, edit.albumArtist, edit.genre, edit.year, edit.isCompilation,
-                            edit.discNumber, edit.trackNumber, fileSize, modifiedAt.timeIntervalSince1970,
-                            edit.artworkData != nil, id]
+                arguments: [normalizedEdit.title, normalizedEdit.artist, normalizedEdit.album, normalizedEdit.albumArtist,
+                            normalizedEdit.genre, normalizedEdit.year, normalizedEdit.isCompilation,
+                            normalizedEdit.discNumber, normalizedEdit.trackNumber, fileSize, modifiedAt.timeIntervalSince1970,
+                            normalizedEdit.artworkData != nil, id]
             )
             try db.execute(
                 sql: """
@@ -521,7 +547,7 @@ public final class LibraryDatabase: @unchecked Sendable {
     /// This keeps playback responsive and avoids prompting for an external drive
     /// merely because a song started playing.
     public func updateTrackGenre(id: Int64, genre: String) throws {
-        let normalized = genre.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = GenreNormalizer.normalize(genre)
         guard !normalized.isEmpty else { return }
         try pool.write { db in
             let previous = try Row.fetchOne(db, sql: "SELECT * FROM tracks WHERE id = ?", arguments: [id])
@@ -533,6 +559,48 @@ public final class LibraryDatabase: @unchecked Sendable {
                     try Self.pruneActivityLog(db: db)
                 }
             }
+        }
+    }
+
+    public func updateTrackYear(id: Int64, year: String) throws {
+        let normalized = year.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return }
+        try pool.write { db in
+            let previous = try Row.fetchOne(db, sql: "SELECT * FROM tracks WHERE id = ?", arguments: [id])
+            try db.execute(sql: "UPDATE tracks SET year = ? WHERE id = ?", arguments: [normalized, id])
+            if let updated = try Row.fetchOne(db, sql: "SELECT * FROM tracks WHERE id = ?", arguments: [id]) {
+                let changes = Self.activityChanges(from: previous, to: updated)
+                if !changes.isEmpty {
+                    try Self.insertActivity(db: db, kind: .metadataChanged, trackRow: updated, changes: changes)
+                    try Self.pruneActivityLog(db: db)
+                }
+            }
+        }
+    }
+
+    public func missingYearTrackCount() throws -> Int {
+        try pool.read { db in
+            try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM tracks
+                WHERE is_available = 1
+                  AND (trim(year) = '' OR year = '0' OR year IS NULL)
+                """) ?? 0
+        }
+    }
+
+    public func tracksMissingYear(
+        afterID: Int64,
+        limit: Int = defaultPageSize
+    ) throws -> [Track] {
+        guard (1...1_000).contains(limit) else { throw MassiveMusicError.invalidPageSize }
+        return try pool.read { db in
+            try Row.fetchAll(db, sql: """
+                SELECT * FROM tracks
+                WHERE id > ? AND is_available = 1
+                  AND (trim(year) = '' OR year = '0' OR year IS NULL)
+                ORDER BY id ASC
+                LIMIT ?
+                """, arguments: [afterID, limit]).map(Self.decodeTrack)
         }
     }
 
@@ -574,7 +642,7 @@ public final class LibraryDatabase: @unchecked Sendable {
         guard !creditedArtist.isEmpty else { return nil }
 
         return try pool.read { db in
-            try String.fetchOne(db, sql: """
+            let rawGenre = try String.fetchOne(db, sql: """
                 SELECT genre
                 FROM tracks
                 WHERE id <> ?
@@ -588,6 +656,7 @@ public final class LibraryDatabase: @unchecked Sendable {
                 ORDER BY COUNT(*) DESC, genre COLLATE NOCASE ASC
                 LIMIT 1
                 """, arguments: [track.id, album, creditedArtist])
+            return rawGenre.map(GenreNormalizer.normalize)
         }
     }
 
@@ -1535,11 +1604,18 @@ public final class LibraryDatabase: @unchecked Sendable {
         limit: Int = defaultPageSize
     ) throws -> FacetPage {
         guard (1...1_000).contains(limit) else { throw MassiveMusicError.invalidPageSize }
+        if section == .genres {
+            return try pool.read { db in
+                try Self.canonicalGenreFacetPage(
+                    db: db, query: query, offset: offset, limit: limit
+                )
+            }
+        }
         let expression: String
         switch section {
         case .albums: expression = "album"
         case .artists: expression = "artist"
-        case .genres: expression = "genre"
+        case .genres: preconditionFailure("Handled above")
         case .folders: expression = "CASE WHEN instr(relative_path, '/') > 0 THEN substr(relative_path, 1, instr(relative_path, '/') - 1) ELSE '/' END"
         default: return FacetPage(facets: [], offset: 0, limit: limit, totalCount: 0)
         }
@@ -1605,8 +1681,9 @@ public final class LibraryDatabase: @unchecked Sendable {
                 filterArgs += [artistFilter, artistFilter]
             }
             if let genreFilter {
-                filters.append("genre = ? COLLATE NOCASE")
-                filterArgs += [genreFilter]
+                let genre = try Self.genrePredicate(db: db, column: "genre", canonicalGenre: genreFilter)
+                filters.append(genre.sql)
+                filterArgs += genre.arguments
             }
             let trimmedSearch = search?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if !trimmedSearch.isEmpty {
@@ -1635,6 +1712,8 @@ public final class LibraryDatabase: @unchecked Sendable {
                 orderClause = "name COLLATE NOCASE \(sortDir), artist COLLATE NOCASE \(sortDir)"
             case .artist:
                 orderClause = "artist COLLATE NOCASE \(sortDir), name COLLATE NOCASE \(sortDir)"
+            case .year:
+                orderClause = "CASE WHEN year IS NULL OR year = '' THEN 1 ELSE 0 END, year \(sortDir), name COLLATE NOCASE ASC"
             case .trackCount:
                 orderClause = "track_count \(sortDir), name COLLATE NOCASE \(sortDir)"
             }
@@ -1668,8 +1747,9 @@ public final class LibraryDatabase: @unchecked Sendable {
             var filters = ["is_available = 1"]
             var filterArgs: StatementArguments = []
             if let genreFilter {
-                filters.append("genre = ? COLLATE NOCASE")
-                filterArgs += [genreFilter]
+                let genre = try Self.genrePredicate(db: db, column: "genre", canonicalGenre: genreFilter)
+                filters.append(genre.sql)
+                filterArgs += genre.arguments
             }
             let trimmedSearch = search?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if !trimmedSearch.isEmpty {
@@ -1681,7 +1761,7 @@ public final class LibraryDatabase: @unchecked Sendable {
                 filterArgs += ["%\(escaped)%"]
             }
             let filterSQL = filters.joined(separator: " AND ")
-            let sortExpression = "CASE WHEN lower(artist) LIKE 'the %' THEN substr(artist, 5) ELSE artist END"
+            let sortExpression = "CASE WHEN lower(name) LIKE 'the %' THEN substr(name, 5) ELSE name END"
             let total = try Int.fetchOne(
                 db,
                 sql: "SELECT COUNT(DISTINCT artist COLLATE NOCASE) FROM tracks WHERE \(filterSQL)",
@@ -1694,7 +1774,9 @@ public final class LibraryDatabase: @unchecked Sendable {
             let orderClause: String
             switch sort {
             case .name:
-                orderClause = "\(sortExpression) COLLATE NOCASE \(sortDir), artist COLLATE NOCASE \(sortDir)"
+                orderClause = "\(sortExpression) COLLATE NOCASE \(sortDir), name COLLATE NOCASE \(sortDir)"
+            case .genre:
+                orderClause = "CASE WHEN genre = '' THEN 1 ELSE 0 END, genre COLLATE NOCASE \(sortDir), \(sortExpression) COLLATE NOCASE ASC"
             case .albumCount:
                 orderClause = "album_count \(sortDir), \(sortExpression) COLLATE NOCASE \(sortDir)"
             case .trackCount:
@@ -1702,15 +1784,40 @@ public final class LibraryDatabase: @unchecked Sendable {
             }
 
             let rows = try Row.fetchAll(db, sql: """
-                SELECT artist AS name, COUNT(DISTINCT NULLIF(album, '')) AS album_count, COUNT(*) AS track_count
-                FROM tracks
-                WHERE \(filterSQL)
-                GROUP BY artist COLLATE NOCASE
+                WITH filtered_tracks AS (
+                    SELECT artist, album, genre
+                    FROM tracks
+                    WHERE \(filterSQL)
+                ), artist_rollup AS (
+                    SELECT artist AS name,
+                           COUNT(DISTINCT NULLIF(album, '')) AS album_count,
+                           COUNT(*) AS track_count
+                    FROM filtered_tracks
+                    GROUP BY artist COLLATE NOCASE
+                ), ranked_genres AS (
+                    SELECT artist,
+                           genre,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY artist COLLATE NOCASE
+                               ORDER BY COUNT(*) DESC, genre COLLATE NOCASE ASC
+                           ) AS genre_rank
+                    FROM filtered_tracks
+                    WHERE trim(genre) <> ''
+                    GROUP BY artist COLLATE NOCASE, genre COLLATE NOCASE
+                )
+                SELECT artist_rollup.name,
+                       COALESCE(ranked_genres.genre, '') AS genre,
+                       artist_rollup.album_count,
+                       artist_rollup.track_count
+                FROM artist_rollup
+                LEFT JOIN ranked_genres
+                  ON ranked_genres.artist = artist_rollup.name COLLATE NOCASE
+                 AND ranked_genres.genre_rank = 1
                 ORDER BY \(orderClause)
                 LIMIT ? OFFSET ?
                 """, arguments: pageArguments)
             return ArtistSummaryPage(
-                artists: rows.map { ArtistSummary(name: $0["name"], albumCount: $0["album_count"], trackCount: $0["track_count"]) },
+                artists: rows.map { ArtistSummary(name: $0["name"], genre: $0["genre"], albumCount: $0["album_count"], trackCount: $0["track_count"]) },
                 offset: safeOffset, limit: limit, totalCount: total
             )
         }
@@ -1719,11 +1826,23 @@ public final class LibraryDatabase: @unchecked Sendable {
     public func artistSummary(named name: String) throws -> ArtistSummary? {
         try pool.read { db in
             guard let row = try Row.fetchOne(db, sql: """
-                SELECT artist AS name, COUNT(DISTINCT NULLIF(album, '')) AS album_count, COUNT(*) AS track_count
+                SELECT artist AS name,
+                       COALESCE((
+                           SELECT genre
+                           FROM tracks AS genre_tracks
+                           WHERE genre_tracks.is_available = 1
+                             AND genre_tracks.artist = tracks.artist COLLATE NOCASE
+                             AND trim(genre_tracks.genre) <> ''
+                           GROUP BY genre COLLATE NOCASE
+                           ORDER BY COUNT(*) DESC, genre COLLATE NOCASE ASC
+                           LIMIT 1
+                       ), '') AS genre,
+                       COUNT(DISTINCT NULLIF(album, '')) AS album_count,
+                       COUNT(*) AS track_count
                 FROM tracks WHERE is_available = 1 AND artist = ? COLLATE NOCASE
                 GROUP BY artist COLLATE NOCASE
                 """, arguments: [name]) else { return nil }
-            return ArtistSummary(name: row["name"], albumCount: row["album_count"], trackCount: row["track_count"])
+            return ArtistSummary(name: row["name"], genre: row["genre"], albumCount: row["album_count"], trackCount: row["track_count"])
         }
     }
 
@@ -1744,8 +1863,9 @@ public final class LibraryDatabase: @unchecked Sendable {
                 arguments += [artistFilter]
             }
             if let genreFilter {
-                predicates.append("t.genre = ? COLLATE NOCASE")
-                arguments += [genreFilter]
+                let genre = try Self.genrePredicate(db: db, column: "t.genre", canonicalGenre: genreFilter)
+                predicates.append(genre.sql)
+                arguments += genre.arguments
             }
             let whereSQL = predicates.joined(separator: " AND ")
             let totalBytes = try Int64.fetchOne(
@@ -1807,16 +1927,20 @@ public final class LibraryDatabase: @unchecked Sendable {
         guard (1...1_000).contains(limit) else { throw MassiveMusicError.invalidPageSize }
         let safeOffset = max(0, offset)
         return try pool.read { db in
+            let genrePredicate = try Self.genrePredicate(db: db, column: "genre", canonicalGenre: genre)
             let total = try Int.fetchOne(
                 db,
-                sql: "SELECT COUNT(*) FROM tracks WHERE is_available = 1 AND genre = ? COLLATE NOCASE",
-                arguments: [genre]
+                sql: "SELECT COUNT(*) FROM tracks WHERE is_available = 1 AND \(genrePredicate.sql)",
+                arguments: genrePredicate.arguments
             ) ?? 0
+            let trackGenrePredicate = try Self.genrePredicate(db: db, column: "t.genre", canonicalGenre: genre)
+            var pageArguments = trackGenrePredicate.arguments
+            pageArguments += [limit, safeOffset]
             let rows = try Row.fetchAll(db, sql: """
                 SELECT t.* FROM tracks t
-                WHERE t.is_available = 1 AND t.genre = ? COLLATE NOCASE
+                WHERE t.is_available = 1 AND \(trackGenrePredicate.sql)
                 ORDER BY \(Self.orderSQL(sort, direction: direction)) LIMIT ? OFFSET ?
-                """, arguments: [genre, limit, safeOffset])
+                """, arguments: pageArguments)
             return TrackPage(tracks: rows.map(Self.decodeTrack), offset: safeOffset, limit: limit, totalCount: total)
         }
     }
@@ -1842,8 +1966,9 @@ public final class LibraryDatabase: @unchecked Sendable {
                 arguments += [artistFilter]
             }
             if let genreFilter {
-                predicates.append("t.genre = ? COLLATE NOCASE")
-                arguments += [genreFilter]
+                let genre = try Self.genrePredicate(db: db, column: "t.genre", canonicalGenre: genreFilter)
+                predicates.append(genre.sql)
+                arguments += genre.arguments
             }
             predicates.append("t.title < ? COLLATE NOCASE")
             arguments += [value]
@@ -1869,8 +1994,9 @@ public final class LibraryDatabase: @unchecked Sendable {
                 arguments += [artistFilter]
             }
             if let genreFilter {
-                predicates.append("genre = ? COLLATE NOCASE")
-                arguments += [genreFilter]
+                let genre = try Self.genrePredicate(db: db, column: "genre", canonicalGenre: genreFilter)
+                predicates.append(genre.sql)
+                arguments += genre.arguments
             }
             let trimmedSearch = search?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if !trimmedSearch.isEmpty {
@@ -1905,8 +2031,9 @@ public final class LibraryDatabase: @unchecked Sendable {
             ]
             var arguments: StatementArguments = [value]
             if let genreFilter {
-                predicates.append("genre = ? COLLATE NOCASE")
-                arguments += [genreFilter]
+                let genre = try Self.genrePredicate(db: db, column: "genre", canonicalGenre: genreFilter)
+                predicates.append(genre.sql)
+                arguments += genre.arguments
             }
             let trimmedSearch = search?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if !trimmedSearch.isEmpty {
@@ -2564,8 +2691,9 @@ public final class LibraryDatabase: @unchecked Sendable {
                 predicates += ["t.is_available = 1", "t.artist = ? COLLATE NOCASE"]
                 arguments += [name]
             case let .genre(name):
-                predicates += ["t.is_available = 1", "t.genre = ? COLLATE NOCASE"]
-                arguments += [name]
+                let genre = try Self.genrePredicate(db: db, column: "t.genre", canonicalGenre: name)
+                predicates += ["t.is_available = 1", genre.sql]
+                arguments += genre.arguments
             case .favorites:
                 predicates.append("t.is_favorite = 1")
             case let .cache(query):
@@ -2650,7 +2778,7 @@ public final class LibraryDatabase: @unchecked Sendable {
                         arguments: [
                             rootID, identity, nil, "Synthetic/\(index / 1_000)/track-\(index).mp3",
                             "track-\(index).mp3", "Synthetic Track \(index)", artist, album, artist,
-                            genre, false, 1, (index % 20) + 1, Double(120 + index % 300), 4_000_000,
+                            genre, "", false, 1, (index % 20) + 1, Double(120 + index % 300), 4_000_000,
                             1_700_000_000 + Double(index), "mp3", 320_000, index % 3 == 0, true,
                             1_700_000_000 + Double(index), 0
                         ]
@@ -2740,12 +2868,75 @@ public final class LibraryDatabase: @unchecked Sendable {
         return Double(components.seconds) + Double(components.attoseconds) / 1e18
     }
 
+    /// Resolves a canonical genre against the small set of distinct genre labels,
+    /// then lets SQLite use its regular genre index for the track query. This keeps
+    /// punctuation/language aliases together without running Swift normalization
+    /// across every row in a large library.
+    private static func genrePredicate(
+        db: Database,
+        column: String,
+        canonicalGenre: String
+    ) throws -> (sql: String, arguments: StatementArguments) {
+        let canonical = GenreNormalizer.normalize(canonicalGenre)
+        let rawGenres = try String.fetchAll(db, sql: """
+            SELECT genre FROM tracks
+            WHERE trim(genre) <> ''
+            GROUP BY genre COLLATE NOCASE
+            """)
+        var aliases = rawGenres.filter { GenreNormalizer.normalize($0) == canonical }
+        if aliases.isEmpty { aliases = [canonical] }
+
+        let placeholders = Array(repeating: "?", count: aliases.count).joined(separator: ", ")
+        var arguments: StatementArguments = []
+        for alias in aliases { arguments += [alias] }
+        return ("\(column) COLLATE NOCASE IN (\(placeholders))", arguments)
+    }
+
+    /// Genre cardinality is small compared with track cardinality, so merge raw
+    /// labels in Swift after SQLite has reduced the library to one row per label.
+    private static func canonicalGenreFacetPage(
+        db: Database,
+        query: String?,
+        offset: Int,
+        limit: Int
+    ) throws -> FacetPage {
+        let rows = try Row.fetchAll(db, sql: """
+            SELECT genre AS name, COUNT(*) AS count
+            FROM tracks
+            WHERE is_available = 1 AND trim(genre) <> ''
+            GROUP BY genre COLLATE NOCASE
+            """)
+        var counts: [String: Int] = [:]
+        for row in rows {
+            let rawName: String = row["name"]
+            let count: Int = row["count"]
+            let canonical = GenreNormalizer.normalize(rawName)
+            guard !canonical.isEmpty else { continue }
+            counts[canonical, default: 0] += count
+        }
+
+        let trimmedQuery = query?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let sorted = counts
+            .filter { trimmedQuery.isEmpty || $0.key.localizedCaseInsensitiveContains(trimmedQuery) }
+            .map { Facet(name: $0.key, count: $0.value) }
+            .sorted { lhs, rhs in lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending }
+        let safeOffset = min(max(0, offset), sorted.count)
+        let end = min(safeOffset + limit, sorted.count)
+        return FacetPage(
+            facets: Array(sorted[safeOffset..<end]),
+            offset: safeOffset,
+            limit: limit,
+            totalCount: sorted.count
+        )
+    }
+
     private static func orderSQL(_ sort: TrackSort, direction: SortDirection) -> String {
         let order = direction == .ascending ? "ASC" : "DESC"
         return switch sort {
         case .title: "t.title COLLATE NOCASE \(order), t.id \(order)"
         case .artist: "t.artist COLLATE NOCASE \(order), t.album COLLATE NOCASE \(order), t.disc_number \(order), t.track_number \(order), t.id \(order)"
         case .album: "t.album COLLATE NOCASE \(order), t.disc_number \(order), t.track_number \(order), t.id \(order)"
+        case .year: "t.year COLLATE NOCASE \(order), t.title COLLATE NOCASE \(order), t.id \(order)"
         case .discNumber: "COALESCE(t.disc_number, -1) \(order), COALESCE(t.track_number, -1) \(order), t.id \(order)"
         case .trackNumber: "COALESCE(t.track_number, -1) \(order), COALESCE(t.disc_number, -1) \(order), t.id \(order)"
         case .dateAdded: "t.added_at \(order), t.id \(order)"
@@ -2866,6 +3057,11 @@ public final class LibraryDatabase: @unchecked Sendable {
                 """,
                 [cursor.album, cursor.discNumber ?? -1, cursor.trackNumber ?? -1, cursor.id]
             )
+        case .year:
+            return (
+                "(t.year COLLATE NOCASE, t.title COLLATE NOCASE, t.id) \(comparison) (? COLLATE NOCASE, ? COLLATE NOCASE, ?)",
+                [cursor.year, cursor.title, cursor.id]
+            )
         case .discNumber:
             return (
                 "(COALESCE(t.disc_number, -1), COALESCE(t.track_number, -1), t.id) \(comparison) (?, ?, ?)",
@@ -2961,7 +3157,7 @@ public final class LibraryDatabase: @unchecked Sendable {
             sql: SQL.upsertTrack,
             arguments: [
                 track.rootID, item.identityKey, item.fileResourceID, track.relativePath, track.filename,
-                track.title, track.artist, track.album, track.albumArtist, track.genre, track.year, track.isCompilation,
+                track.title, track.artist, track.album, track.albumArtist, GenreNormalizer.normalize(track.genre), track.year, track.isCompilation,
                 track.discNumber, track.trackNumber, track.duration, track.fileSize,
                 track.modifiedAt.timeIntervalSince1970, track.format, track.bitrate,
                 track.hasArtwork, track.isAvailable, track.addedAt.timeIntervalSince1970, sessionID
@@ -3079,8 +3275,9 @@ public final class LibraryDatabase: @unchecked Sendable {
                     arguments: [track.album, track.albumArtist]
                 )
             }
-            if !track.genre.isEmpty {
-                try db.execute(sql: "INSERT OR IGNORE INTO genres(name) VALUES (?)", arguments: [track.genre])
+            let canonicalGenre = GenreNormalizer.normalize(track.genre)
+            if !canonicalGenre.isEmpty {
+                try db.execute(sql: "INSERT OR IGNORE INTO genres(name) VALUES (?)", arguments: [canonicalGenre])
             }
         }
     }

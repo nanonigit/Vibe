@@ -622,6 +622,45 @@ actor MusicBrainzMetadataService {
         return suggestion
     }
 
+    func fetchAlbumYear(for track: Track) async throws -> String? {
+        let album = track.album.trimmingCharacters(in: .whitespacesAndNewlines)
+        let artist = (track.albumArtist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? track.artist : track.albumArtist).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !album.isEmpty, !artist.isEmpty else { return nil }
+
+        struct YearReleaseGroup: Decodable {
+            let id: String
+            let title: String
+            let firstReleaseDate: String?
+            let score: Int?
+            enum CodingKeys: String, CodingKey {
+                case id, title, score
+                case firstReleaseDate = "first-release-date"
+            }
+        }
+        struct YearSearchResponse: Decodable {
+            let releaseGroups: [YearReleaseGroup]
+            enum CodingKeys: String, CodingKey { case releaseGroups = "release-groups" }
+        }
+
+        var search = URLComponents(string: "https://musicbrainz.org/ws/2/release-group/")!
+        search.queryItems = [
+            URLQueryItem(name: "query", value: "releasegroup:\"\(quotedPhrase(album))\" AND artist:\"\(quotedPhrase(artist))\""),
+            URLQueryItem(name: "fmt", value: "json"),
+            URLQueryItem(name: "limit", value: "5")
+        ]
+        guard let searchURL = search.url else { return nil }
+        let searchData = try await throttledData(from: searchURL)
+        let response = try JSONDecoder().decode(YearSearchResponse.self, from: searchData)
+        if let match = response.releaseGroups.first(where: { ($0.score ?? 0) >= 80 && ($0.firstReleaseDate?.isEmpty == false) }) {
+            if let dateStr = match.firstReleaseDate, dateStr.count >= 4 {
+                let yearStr = String(dateStr.prefix(4))
+                if Int(yearStr) != nil { return yearStr }
+            }
+        }
+        return nil
+    }
+
     private func throttledData(from url: URL) async throws -> Data {
         if let lastRequestAt {
             let elapsed = lastRequestAt.duration(to: clock.now)

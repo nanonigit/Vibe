@@ -8,9 +8,32 @@
   English | <a href="README.ja.md">日本語</a>
 </p>
 
-Vibe is a macOS music player for managing large local music collections across your Mac and external storage. Search, play, and organize your MP3, M4A, WAV, and FLAC files without uploading your music to a streaming service.
+Vibe is a macOS music player built for large, carefully maintained local collections. Keep the original library on an external SSD, continue listening from a protected Mac-side cache when the drive is away, and let opt-in metadata automation handle repetitive cleanup without uploading your audio to a streaming service.
 
 > The current release supports Apple Silicon. Distributed builds are ad hoc signed and are not notarized by Apple.
+
+## Keep the collection yours
+
+### External storage can remain the source of truth
+
+Choose an external SSD as the primary home for your music instead of duplicating the whole collection onto your Mac. Vibe remembers the library when the drive is disconnected, shows its connection state clearly, and returns to the original files when the drive reconnects.
+
+### Take the music you care about offline
+
+Vibe automatically keeps playable local copies within a configurable cache limit. Favorites and playlist tracks are protected from routine cache cleanup, so the music you intentionally organized remains available even when the main storage is not connected.
+
+### Automate metadata work without giving up control
+
+Enable only the maintenance jobs you want. Vibe can standardize genre names, suggest track and disc numbers through MusicBrainz, look up missing release years, normalize safe text differences, and classify untagged genres through library consensus, local rules, MusicBrainz, then an optional external AI provider. Existing genres are not overwritten by automatic classification, audio is not sent to AI providers, and file edits are validated through a working copy before the original is replaced.
+
+```mermaid
+flowchart LR
+    SSD["External SSD\nOriginal library"] -->|Connected| Vibe["Vibe\nSearch, organize, play"]
+    Vibe --> Cache["Mac cache\nOffline-ready tracks"]
+    Cache -->|SSD disconnected| Vibe
+    Sources["Library consensus\nLocal rules\nMusicBrainz\nOptional AI"] --> Metadata["Safe metadata suggestions"]
+    Metadata --> Vibe
+```
 
 ## Highlights
 
@@ -20,12 +43,13 @@ Vibe is a macOS music player for managing large local music collections across y
 - Designed to handle libraries of around 370,000 tracks without loading every track into memory
 - Scan and play MP3, M4A, WAV, and FLAC files
 - Browse by track, album, artist, genre, folder, favorites, or recently added
+- Show optional release-year columns for tracks and albums, and a representative genre for each artist
 - Save column order, visibility, and width
 - Restore your scroll position when returning to the artist list
 - Keep keyboard focus during incremental search, with a full-size search field from the first keystroke
 - Start with a concise library sidebar while preserving every saved visibility and ordering choice
 
-### External SSDs and offline playback
+### External SSD workflow and offline playback
 
 - See the connection status of your primary storage location in the sidebar
 - Keep library metadata available when your SSD is disconnected
@@ -37,6 +61,7 @@ Vibe is a macOS music player for managing large local music collections across y
 ### Playback and guitar practice
 
 - Keep playback controls available at the top of the inspector
+- Jump to the current album from its artwork or title, or to the artist page from the artist name
 - Use shuffle, repeat-one, and album or playlist repeat; shuffle the connected library or the playable cache when storage is offline
 - Choose playback speeds from 60% to 95% in 5% steps, or play at 100%
 - Shift pitch down a semitone, play at the original pitch, or shift up a semitone without changing speed
@@ -52,6 +77,7 @@ Vibe is a macOS music player for managing large local music collections across y
 - View track details, lyrics, discovery links, practice tools, and chords in the inspector
 - Browse trending music, YouTube, and music news when nothing is playing
 - Open YouTube and external articles in the built-in browser; media stops when you return to track information
+- Turn automatic article translation on or off from Display settings or by clicking its status in the built-in browser; the current page updates immediately
 - Prefer embedded artwork and fall back to external artwork when needed
 - Cache, add, and edit lyrics; auto-scroll synchronized lyrics during playback
 
@@ -64,10 +90,13 @@ Vibe is a macOS music player for managing large local music collections across y
 - Keep empty playlist states stable without visual flicker
 - Show, hide, and reorder library sections
 
-### Safer metadata editing
+### Automatic metadata care and safer editing
 
 - Edit title, artist, album, album artist, genre, and track or disc numbers for MP3, M4A, and WAV files
 - Batch-edit artist, album, album artist, genre, and disc number
+- Turn each metadata automation on to run it continuously, or turn it off to stop it; no separate start/stop controls are required
+- Standardize Japanese and inconsistent genre spellings to canonical English names, merging differences in case, punctuation, middle dots, and hyphens
+- Look up missing album release years through MusicBrainz and configured Web/AI sources
 - Write to a working copy, read it back, and validate the audio before replacing the original
 - Restore the original after a failed edit and move deleted files to the Trash
 - Confirm and safely convert older ID3v2.2 tags to ID3v2.3 before completing an edit

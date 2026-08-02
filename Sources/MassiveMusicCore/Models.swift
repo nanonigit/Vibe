@@ -320,6 +320,7 @@ public enum TrackSort: String, CaseIterable, Identifiable, Equatable, Sendable {
     case title = "タイトル"
     case artist = "アーティスト"
     case album = "アルバム"
+    case year = "リリース年"
     case discNumber = "ディスク番号"
     case trackNumber = "トラック番号"
     case dateAdded = "追加日"
@@ -339,12 +340,14 @@ public enum SortDirection: String, CaseIterable, Identifiable, Equatable, Sendab
 public enum AlbumSort: String, CaseIterable, Identifiable, Equatable, Sendable {
     case name = "アルバム"
     case artist = "アーティスト"
+    case year = "リリース年"
     case trackCount = "曲数"
     public var id: String { rawValue }
 }
 
 public enum ArtistSort: String, CaseIterable, Identifiable, Equatable, Sendable {
     case name = "アーティスト"
+    case genre = "ジャンル"
     case albumCount = "アルバム数"
     case trackCount = "曲数"
     public var id: String { rawValue }
@@ -541,7 +544,7 @@ public struct TrackMetadataEdit: Hashable, Codable, Sendable {
         normalized.arranger = MetadataTextNormalizer.normalizedWidths(arranger)
         normalized.conductor = MetadataTextNormalizer.normalizedWidths(conductor)
         normalized.publisher = MetadataTextNormalizer.normalizedWidths(publisher)
-        normalized.genre = MetadataTextNormalizer.normalizedWidths(genre)
+        normalized.genre = GenreNormalizer.normalize(genre)
         normalized.grouping = MetadataTextNormalizer.normalizedWidths(grouping)
         normalized.subtitle = MetadataTextNormalizer.normalizedWidths(subtitle)
         normalized.originalAlbum = MetadataTextNormalizer.normalizedWidths(originalAlbum)
@@ -641,9 +644,27 @@ public enum MetadataTextNormalizer {
 
 public enum GenreNormalizer {
     private static let exactJapaneseMap: [String: String] = [
+        // --- Basic genres ---
         "ロック": "Rock",
         "ポップス": "Pop",
         "ポップ": "Pop",
+        "ジャズ": "Jazz",
+        "クラシック": "Classical",
+        "交響曲": "Classical",
+        "協奏曲": "Classical",
+        "ブルース": "Blues",
+        "ソウル": "Soul",
+        "ソウルミュージック": "Soul",
+        "ファンク": "Funk",
+        "ディスコ": "Disco",
+        "レゲエ": "Reggae",
+        "カントリー": "Country",
+        "フォーク": "Folk",
+        "フォークソング": "Folk",
+        "ゴスペル": "Gospel",
+        "ラテン": "Latin",
+
+        // --- J-Pop / K-Pop ---
         "J-POP": "J-Pop",
         "JPOP": "J-Pop",
         "J POP": "J-Pop",
@@ -652,121 +673,508 @@ public enum GenreNormalizer {
         "K-POP": "K-Pop",
         "KPOP": "K-Pop",
         "K POP": "K-Pop",
-        "ジャズ": "Jazz",
-        "クラシック": "Classical",
-        "交響曲": "Classical",
-        "協奏曲": "Classical",
+        "邦楽": "J-Pop",
+        "洋楽": "Western Pop",
+
+        // --- Anime / Game ---
         "アニメ": "Anime",
         "アニソン": "Anime",
         "アニメソング": "Anime",
+        "ゲーム": "Video Game Music",
+        "ゲームミュージック": "Video Game Music",
+        "ゲーム音楽": "Video Game Music",
+        "ボーカロイド": "Vocaloid",
+        "ボカロ": "Vocaloid",
+
+        // --- Hip Hop / Rap ---
         "ヒップホップ": "Hip Hop",
         "ラップ": "Hip Hop",
+
+        // --- Electronic / Dance ---
+        "エレクトロニック": "Electronic",
+        "エレクトロニカ": "Electronica",
+        "エレクトロ": "Electro",
+        "電子音楽": "Electronic",
+        "テクノ": "Techno",
+        "ハウス": "House",
+        "トランス": "Trance",
+        "ダンス": "Dance",
+        "ダンスミュージック": "Dance",
+        "ユーロビート": "Eurobeat",
+        "ドラムンベース": "Drum and Bass",
+        "ダブステップ": "Dubstep",
+        "シンセポップ": "Synth Pop",
+        "シンセ・ポップ": "Synth Pop",
+        "エレクトロポップ": "Electropop",
+        "ニューウェーブ": "New Wave",
+        "ニュー・ウェーブ": "New Wave",
+        "インダストリアル": "Industrial",
+
+        // --- Rock sub-genres ---
+        "ハードロック": "Hard Rock",
         "オルタナティヴ": "Alternative Rock",
         "オルタナティブ": "Alternative Rock",
         "オルタナティヴ・ロック": "Alternative Rock",
         "オルタナティブ・ロック": "Alternative Rock",
         "オルタナティヴロック": "Alternative Rock",
         "オルタナティブロック": "Alternative Rock",
+        "プログレ": "Progressive Rock",
+        "プログレッシブ・ロック": "Progressive Rock",
+        "プログレッシブロック": "Progressive Rock",
+        "サイケデリック": "Psychedelic",
+        "サイケデリック・ロック": "Psychedelic Rock",
+        "サイケデリックロック": "Psychedelic Rock",
+        "ポストロック": "Post-Rock",
+        "ポスト・ロック": "Post-Rock",
+        "ガレージロック": "Garage Rock",
+        "ガレージ・ロック": "Garage Rock",
+        "サザンロック": "Southern Rock",
+        "サザン・ロック": "Southern Rock",
+        "グランジ": "Grunge",
+        "シューゲイザー": "Shoegaze",
+        "シューゲイズ": "Shoegaze",
+
+        // --- Metal sub-genres ---
+        "メタル": "Metal",
         "ヘヴィメタル": "Heavy Metal",
         "ヘビーメタル": "Heavy Metal",
-        "メタル": "Metal",
-        "ハードロック": "Hard Rock",
+        "デスメタル": "Death Metal",
+        "デス・メタル": "Death Metal",
+        "ブラックメタル": "Black Metal",
+        "ブラック・メタル": "Black Metal",
+        "パワーメタル": "Power Metal",
+        "パワー・メタル": "Power Metal",
+        "スラッシュメタル": "Thrash Metal",
+        "スラッシュ・メタル": "Thrash Metal",
+        "ドゥームメタル": "Doom Metal",
+        "ドゥーム・メタル": "Doom Metal",
+        "スピードメタル": "Speed Metal",
+        "スピード・メタル": "Speed Metal",
+        "メロディックデスメタル": "Melodic Death Metal",
+        "メロディック・デスメタル": "Melodic Death Metal",
+        "メロデス": "Melodic Death Metal",
+        "プログレッシブメタル": "Progressive Metal",
+        "プログレッシブ・メタル": "Progressive Metal",
+        "ゴシックメタル": "Gothic Metal",
+        "ゴシック・メタル": "Gothic Metal",
+        "フォークメタル": "Folk Metal",
+        "フォーク・メタル": "Folk Metal",
+        "ニューメタル": "Nu Metal",
+        "ニュー・メタル": "Nu Metal",
+        "ネオクラシカルメタル": "Neoclassical Metal",
+        "ネオクラシカル・メタル": "Neoclassical Metal",
+        "シンフォニックメタル": "Symphonic Metal",
+        "シンフォニック・メタル": "Symphonic Metal",
+        "シンフォニックパワーメタル": "Symphonic Power Metal",
+        "シンフォニック・パワーメタル": "Symphonic Power Metal",
+        "シンフォニックブラックメタル": "Symphonic Black Metal",
+        "シンフォニック・ブラックメタル": "Symphonic Black Metal",
+
+        // --- Symphonic / Orchestral ---
+        "シンフォニック": "Symphonic",
+        "シンフォニックロック": "Symphonic Rock",
+        "シンフォニック・ロック": "Symphonic Rock",
+
+        // --- Punk ---
         "パンク": "Punk",
         "パンクロック": "Punk Rock",
-        "フォーク": "Folk",
-        "フォークソング": "Folk",
-        "ブルース": "Blues",
-        "レゲエ": "Reggae",
-        "テクノ": "Techno",
-        "ハウス": "House",
+        "パンク・ロック": "Punk Rock",
+        "ハードコア": "Hardcore",
+        "ハードコアパンク": "Hardcore Punk",
+        "ハードコア・パンク": "Hardcore Punk",
+        "ポストパンク": "Post-Punk",
+        "ポスト・パンク": "Post-Punk",
+        "ポップパンク": "Pop Punk",
+        "ポップ・パンク": "Pop Punk",
+        "スカパンク": "Ska Punk",
+        "スカ・パンク": "Ska Punk",
+        "メロコア": "Melodic Hardcore",
+
+        // --- Jazz sub-genres ---
+        "ジャズ・フュージョン": "Jazz Fusion",
+        "ジャズフュージョン": "Jazz Fusion",
+        "ジャズ・ファンク": "Jazz Funk",
+        "ジャズファンク": "Jazz Funk",
+        "ジャズ・ヒップホップ": "Jazz Hip Hop",
+        "ジャズヒップホップ": "Jazz Hip Hop",
+        "ジャズ・クリスマス": "Christmas Jazz",
+        "ジャズクリスマス": "Christmas Jazz",
+        "ジャズ・ロック": "Jazz Rock",
+        "ジャズロック": "Jazz Rock",
+        "スムースジャズ": "Smooth Jazz",
+        "スムース・ジャズ": "Smooth Jazz",
+        "アシッドジャズ": "Acid Jazz",
+        "アシッド・ジャズ": "Acid Jazz",
+        "フリージャズ": "Free Jazz",
+        "フリー・ジャズ": "Free Jazz",
         "フュージョン": "Fusion",
+
+        // --- R&B / Soul ---
+        "R&B": "R&B",
+        "アール・アンド・ビー": "R&B",
+        "リズム・アンド・ブルース": "R&B",
+        "ネオソウル": "Neo Soul",
+        "ネオ・ソウル": "Neo Soul",
+        "モータウン": "Motown",
+
+        // --- Soundtrack / OST ---
+        "サウンドトラック": "Soundtrack",
+        "サントラ": "Soundtrack",
+        "劇伴": "Soundtrack",
+        "映画音楽": "Film Score",
+
+        // --- World / Traditional ---
+        "ワールドミュージック": "World Music",
+        "ワールド": "World",
+        "民謡": "Traditional Folk",
+        "伝統音楽": "Traditional",
         "演歌": "Enka",
         "歌謡曲": "Kayokyoku",
         "シティポップ": "City Pop",
         "シティ・ポップ": "City Pop",
-        "童謡": "Children's Music",
-        "キッズ": "Children's Music",
-        "ゲーム": "Video Game Music",
-        "ゲームミュージック": "Video Game Music",
-        "ゲーム音楽": "Video Game Music",
-        "サウンドトラック": "Soundtrack",
-        "サントラ": "Soundtrack",
-        "劇伴": "Soundtrack",
-        "ボーカロイド": "Vocaloid",
-        "ボカロ": "Vocaloid",
-        "洋楽": "Western Pop",
-        "邦楽": "J-Pop",
-        "イージーリスニング": "Easy Listening",
-        "環境音楽": "Ambient",
-        "アンビエント": "Ambient",
-        "吹奏楽": "Brass Band",
-        "ブラスバンド": "Brass Band",
-        "合唱": "Choral",
-        "民謡": "Traditional Folk",
-        "伝統音楽": "Traditional",
-        "ソウル": "Soul",
-        "ソウルミュージック": "Soul",
-        "ファンク": "Funk",
-        "ディスコ": "Disco",
-        "エレクトロニック": "Electronic",
-        "電子音楽": "Electronic",
-        "ダンス": "Dance",
-        "ダンスミュージック": "Dance",
-        "ゴスペル": "Gospel",
-        "カントリー": "Country",
+        "シャンソン": "Chanson",
         "ボサノバ": "Bossa Nova",
         "ボサノヴァ": "Bossa Nova",
         "サンバ": "Samba",
         "フラメンコ": "Flamenco",
-        "ラテン": "Latin",
+        "タンゴ": "Tango",
+        "ケルト": "Celtic",
+        "ケルティック": "Celtic",
+        "アフロビート": "Afrobeat",
+
+        // --- Ambient / New Age ---
+        "環境音楽": "Ambient",
+        "アンビエント": "Ambient",
+        "ニューエイジ": "New Age",
+        "チルアウト": "Chillout",
+        "ドローン": "Drone",
+
+        // --- Reggae / Ska / Dub ---
+        "スカ": "Ska",
+        "ダブ": "Dub",
+        "ダンスホール": "Dancehall",
+
+        // --- Children / Holiday ---
+        "童謡": "Children's Music",
+        "キッズ": "Children's Music",
+        "クリスマス": "Christmas",
+        "クリスマスソング": "Christmas",
+
+        // --- Other ---
+        "ノベルティ・ミュージック": "Novelty",
+        "ノベルティ": "Novelty",
+        "ハードコアテクノ": "Hardcore Techno",
+        "ハードコア・テクノ": "Hardcore Techno",
+        "ハードコア・ヒップホップ": "Hardcore Hip Hop",
+        "ハードコアヒップホップ": "Hardcore Hip Hop",
+        "ハードバップ": "Hard Bop",
+        "ハードバップ・ジャズ": "Hard Bop",
+        "ハード・バップ": "Hard Bop",
+        "バロック・ポップ": "Baroque Pop",
+        "バロックポップ": "Baroque Pop",
+        "バロック音楽": "Baroque",
+        "バロック": "Baroque",
+        "ヒップホップ／ラップ": "Hip Hop / Rap",
+        "ヒップホップ/ラップ": "Hip Hop / Rap",
         "インディー": "Indie",
         "インディーズ": "Indie",
-        "プログレ": "Progressive Rock",
-        "プログレッシブ・ロック": "Progressive Rock",
-        "サイケデリック": "Psychedelic",
-        "ユーロビート": "Eurobeat",
-        "ニューエイジ": "New Age",
-        "ワールドミュージック": "World Music",
-        "スカ": "Ska",
-        "ダブ": "Dub"
+        "インディーロック": "Indie Rock",
+        "インディー・ロック": "Indie Rock",
+        // --- Newly requested genres ---
+        "フレンチ・ハウス": "French House",
+        "フレンチハウス": "French House",
+        "フレンチ・ヒップホップ": "French Hip Hop",
+        "フレンチヒップホップ": "French Hip Hop",
+        "フレンチ・ポップ": "French Pop",
+        "フレンチポップ": "French Pop",
+        "フレンチ・ポップス": "French Pop",
+        "フレンチポップス": "French Pop",
+        "ブラジル音楽": "Brazilian Music",
+        "サンバロック": "Samba Rock",
+        "サンバ・ロック": "Samba Rock",
+        "ブラックゲイズ": "Blackgaze",
+        "ブラックンド・スラッシュメタル": "Blackened Thrash Metal",
+        "ブラックンドスラッシュメタル": "Blackened Thrash Metal",
+        "ブラックンド・デスメタル": "Blackened Death Metal",
+        "ブラックンドデスメタル": "Blackened Death Metal",
+        "ブリットポップ": "Britpop",
+        "ブリット・ポップ": "Britpop",
+        "ブルーグラス": "Bluegrass",
+        "ブルースロック": "Blues Rock",
+        "ブルース・ロック": "Blues Rock",
+        "ブルータルデスメタル": "Brutal Death Metal",
+        "ブルータル・デスメタル": "Brutal Death Metal",
+        "ブレイクコア": "Breakcore",
+        "ブレイク・コア": "Breakcore",
+        "ブレイクビーツ": "Breakbeat",
+        "ブレイク・ビーツ": "Breakbeat",
+        "プログレッシブハウス": "Progressive House",
+        "プログレッシブ・ハウス": "Progressive House",
+        "プログレッシブ・デスメタル": "Progressive Death Metal",
+        "プログレッシブデスメタル": "Progressive Death Metal",
+        "プログレッシブ・トランス": "Progressive Trance",
+        "プログレッシブトランス": "Progressive Trance",
+        "プログレッシブ・パワーメタル": "Progressive Power Metal",
+        "プログレッシブパワーメタル": "Progressive Power Metal",
+        "ペイガンメタル": "Pagan Metal",
+        "ペイガン・メタル": "Pagan Metal",
+        "ホラーコア": "Horrorcore",
+        "ホラーコア・ヒップホップ": "Horrorcore Hip Hop",
+        "ホラーコアヒップホップ": "Horrorcore Hip Hop",
+        "ホラーパンク": "Horror Punk",
+        "ホラー・パンク": "Horror Punk",
+        "ホラーメタル": "Horror Metal",
+        "ホラー・メタル": "Horror Metal",
+        "ボサノヴァ・ジャズ": "Bossa Nova Jazz",
+        "ボサノバ・ジャズ": "Bossa Nova Jazz",
+        "ボレロ": "Bolero",
+        "ボーカル・ジャズ": "Vocal Jazz",
+        "ボーカルジャズ": "Vocal Jazz",
+        "ボーカル・ポップ": "Vocal Pop",
+        "ボーカルポップ": "Vocal Pop",
+        "ポストハードコア": "Post-Hardcore",
+        "ポスト・ハードコア": "Post-Hardcore",
+        "ポスト・グランジ": "Post-Grunge",
+        "ポストグランジ": "Post-Grunge",
+        "ポップラップ": "Pop Rap",
+        "ポップ・ラップ": "Pop Rap",
+        "ポップロック": "Pop Rock",
+        "ポップ・ロック": "Pop Rock",
+        "マッシュアップ": "Mashup",
+        "マーチャル・インダストリアル": "Martial Industrial",
+        "マーチャルインダストリアル": "Martial Industrial",
+        "ミニマル・テクノ": "Minimal Techno",
+        "ミニマルテクノ": "Minimal Techno",
+        "ミュージカル・ソング": "Musical Song",
+        "ミュージカルソング": "Musical Song",
+        "ミンスコア": "Mincecore",
+        "メタルコア": "Metalcore",
+        "メロディック・ハードコア・パンク": "Melodic Hardcore Punk",
+        "メロディックハードコアパンク": "Melodic Hardcore Punk",
+        "メロディック・ハードロック": "Melodic Hard Rock",
+        "メロディックハードロック": "Melodic Hard Rock",
+        "メロディック・ブラックメタル": "Melodic Black Metal",
+        "メロディックブラックメタル": "Melodic Black Metal",
+        "メンフィス・アンダーグラウンド・ヒップホップ": "Memphis Underground Hip Hop",
+        "メンフィスアンダーグラウンドヒップホップ": "Memphis Underground Hip Hop",
+        "メンフィス・ラップ": "Memphis Rap",
+        "メンフィスラップ": "Memphis Rap",
+        "モルナ": "Morna",
+        "ユーロダンス": "Eurodance",
+        "ラップロック": "Rap Rock",
+        "ラップ・ロック": "Rap Rock",
+        "ラテンジャズ": "Latin Jazz",
+        "ラテン・ジャズ": "Latin Jazz",
+        "ラテンポップ": "Latin Pop",
+        "ラテン・ポップ": "Latin Pop",
+        "ラテン・エレクトロニカ": "Latin Electronica",
+        "ラテンエレクトロニカ": "Latin Electronica",
+        "ヴィジュアル系ロック": "Visual Kei Rock",
+        "ビジュアル系ロック": "Visual Kei Rock",
+        "ジャズ・サウンドトラック": "Jazz Soundtrack",
+        "ジャズサウンドトラック": "Jazz Soundtrack",
+        "ストーナー・メタル": "Stoner Metal",
+        "ストーナーメタル": "Stoner Metal",
+        "スポークンワード／コメディ": "Spoken Word / Comedy",
+        "スポークンワード/コメディ": "Spoken Word / Comedy",
+        "スラッジ・メタル": "Sludge Metal",
+        "スラッジメタル": "Sludge Metal",
+        "ソウル・ジャズ": "Soul Jazz",
+        "ソウルジャズ": "Soul Jazz",
+        "ソウル・ポップ": "Soul Pop",
+        "ソウルポップ": "Soul Pop",
+        "ソウル／R&B": "Soul / R&B",
+        "ソウル/R&B": "Soul / R&B",
+        "ソフト・ロック": "Soft Rock",
+        "ソフトロック": "Soft Rock",
+        "ダーク・アンビエント": "Dark Ambient",
+        "ダークアンビエント": "Dark Ambient",
+
+        // --- Building-block words for substring replacement ---
+        "フレンチ": "French",
+        "ブラジル": "Brazilian",
+        "ブラックンド": "Blackened",
+        "ブリット": "Brit",
+        "ブルータル": "Brutal",
+        "ブレイク": "Break",
+        "ビーツ": "Beats",
+        "ゲイズ": "Gaze",
+        "ペイガン": "Pagan",
+        "ホラー": "Horror",
+        "ボーカル": "Vocal",
+        "マーチャル": "Martial",
+        "ミニマル": "Minimal",
+        "ミュージカル": "Musical",
+        "ミンス": "Mince",
+        "コア": "Core",
+        "メンフィス": "Memphis",
+        "アンダーグラウンド": "Underground",
+        "ユーロ": "Euro",
+        "バップ": "Bop",
+        "ブラック": "Black",
+        "パワー": "Power",
+        "スピード": "Speed",
+        "デス": "Death",
+        "スラッシュ": "Thrash",
+        "ドゥーム": "Doom",
+        "ゴシック": "Gothic",
+        "メロディック": "Melodic",
+        "プログレッシブ": "Progressive",
+        "ネオクラシカル": "Neoclassical",
+        "スムース": "Smooth",
+        "アシッド": "Acid",
+        "フリー": "Free",
+        "ネオ": "Neo",
+        "ポスト": "Post",
+        "ニュー": "New"
     ]
 
     private static let acronyms: Set<String> = [
         "R&B", "EDM", "IDM", "EBM", "AOR", "OST", "DJ", "CD", "UK", "US", "BPM", "LO-FI", "HI-FI"
     ]
 
+    /// A punctuation- and case-insensitive index. Canonical values are also
+    /// indexed, so Japanese, English casing, middle-dot, slash and dash
+    /// variants converge on the same stable display value.
+    private static let canonicalAliases: [String: String] = {
+        var aliases: [String: String] = [:]
+        for (raw, canonical) in exactJapaneseMap {
+            aliases[lookupKey(raw)] = canonical
+            aliases[lookupKey(canonical)] = canonical
+        }
+        let englishAliases: [String: String] = [
+            "hiphop": "Hip Hop",
+            "hip-hop": "Hip Hop",
+            "rnb": "R&B",
+            "r and b": "R&B",
+            "rhythm and blues": "R&B",
+            "drum n bass": "Drum and Bass",
+            "drum & bass": "Drum and Bass",
+            "dnb": "Drum and Bass",
+            "lofi": "Lo-Fi",
+            "lo-fi": "Lo-Fi",
+            "j pop": "J-Pop",
+            "j-pop": "J-Pop",
+            "jpop": "J-Pop",
+            "k pop": "K-Pop",
+            "k-pop": "K-Pop",
+            "kpop": "K-Pop",
+            "j rock": "J-Rock",
+            "j-rock": "J-Rock",
+            "smooth jazz": "Smooth Jazz",
+            "smooth-jazz": "Smooth Jazz",
+            "soul r&b": "Soul / R&B",
+            "soul/r&b": "Soul / R&B",
+            "soul-r&b": "Soul / R&B",
+            "spoken word comedy": "Spoken Word / Comedy",
+            "spoken word / comedy": "Spoken Word / Comedy"
+        ]
+        for (raw, canonical) in englishAliases {
+            aliases[lookupKey(raw)] = canonical
+            aliases[lookupKey(canonical)] = canonical
+        }
+        return aliases
+    }()
+
+    private static func stripJapaneseSuffixes(_ text: String) -> String {
+        var str = text
+        let suffixes = [
+            "に分類された音楽", "に分頼された音楽", "に分頻された音楽", "に分された音楽",
+            "に分類された", "に分頼された", "に分頻された", "に分された",
+            "の音楽", "音楽"
+        ]
+        for suffix in suffixes {
+            if str.hasSuffix(suffix) {
+                str = String(str.dropLast(suffix.count)).trimmingCharacters(in: .whitespaces)
+            }
+        }
+        return str
+    }
+
     public static func normalize(_ genre: String) -> String {
-        let trimmed = MetadataTextNormalizer.trimLeadingAndTrailingSpaces(genre)
+        var trimmed = MetadataTextNormalizer.trimLeadingAndTrailingSpaces(genre)
         guard !trimmed.isEmpty else { return "" }
 
-        if let mapped = exactJapaneseMap[trimmed] {
+        trimmed = stripJapaneseSuffixes(trimmed)
+
+        if let mapped = canonicalAliases[lookupKey(trimmed)] {
             return mapped
         }
 
-        var cleaned = trimmed
-            .replacingOccurrences(of: "・", with: " ")
-            .replacingOccurrences(of: "／", with: "/")
+        var cleaned = normalizedSeparators(trimmed)
 
-        if let mapped = exactJapaneseMap[cleaned] {
+        cleaned = stripJapaneseSuffixes(cleaned)
+
+        if let mapped = canonicalAliases[lookupKey(cleaned)] {
             return mapped
         }
 
-        let hasJapanese = cleaned.unicodeScalars.contains { scalar in
-            switch scalar.value {
-            case 0x3040...0x309F, 0x30A0...0x30FF, 0x4E00...0x9FAF: return true
-            default: return false
-            }
+        // Strip parenthetical Japanese descriptions: "AOR (ウェストコースト ロック)" → "AOR"
+        cleaned = stripJapaneseParenthetical(cleaned)
+
+        let cleanedTrimmed = cleaned.trimmingCharacters(in: .whitespaces)
+        if let mapped = canonicalAliases[lookupKey(cleanedTrimmed)] {
+            return mapped
         }
 
-        if hasJapanese {
-            for (jp, en) in exactJapaneseMap {
-                if cleaned.contains(jp) {
-                    cleaned = cleaned.replacingOccurrences(of: jp, with: en)
+        if containsJapanese(cleanedTrimmed) {
+            // Sort by longest key first to avoid partial replacements
+            let sortedKeys = exactJapaneseMap.keys.sorted { $0.count > $1.count }
+            var result = cleanedTrimmed
+            for jp in sortedKeys {
+                if result.contains(jp), let en = exactJapaneseMap[jp] {
+                    result = result.replacingOccurrences(of: jp, with: en)
                 }
             }
+            result = normalizedSeparators(result).trimmingCharacters(in: .whitespaces)
+            if let mapped = canonicalAliases[lookupKey(result)] {
+                return mapped
+            }
+            // Never turn an unknown label into a misleading partial English
+            // value. It remains visible until an explicit translation is added.
+            guard !containsJapanese(result) else { return trimmed }
+            return toTitleCase(result)
         }
 
-        return toTitleCase(cleaned)
+        let titled = toTitleCase(cleanedTrimmed)
+        return canonicalAliases[lookupKey(titled)] ?? titled
+    }
+
+    public static func lookupKey(_ genre: String) -> String {
+        let folded = genre.precomposedStringWithCompatibilityMapping.folding(
+            options: [.caseInsensitive, .diacriticInsensitive],
+            locale: Locale(identifier: "en_US_POSIX")
+        )
+        let scalars = folded.unicodeScalars.filter {
+            CharacterSet.alphanumerics.contains($0) || $0.value == 0x26
+        }
+        return String(String.UnicodeScalarView(scalars))
+    }
+
+    private static func normalizedSeparators(_ value: String) -> String {
+        var normalized = value.precomposedStringWithCompatibilityMapping
+            .replacingOccurrences(of: "・", with: " ")
+            .replacingOccurrences(of: "／", with: " ")
+            .replacingOccurrences(of: "/", with: " ")
+            .replacingOccurrences(of: "|", with: " ")
+            .replacingOccurrences(of: "（", with: "(")
+            .replacingOccurrences(of: "）", with: ")")
+            .replacingOccurrences(of: "＆", with: "&")
+        for dash in ["-", "‐", "‑", "‒", "–", "—", "―", "−"] {
+            normalized = normalized.replacingOccurrences(of: dash, with: " ")
+        }
+        return normalized.components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    private static func containsJapanese(_ value: String) -> Bool {
+        value.unicodeScalars.contains { scalar in
+            switch scalar.value {
+            case 0x3040...0x309F, 0x30A0...0x30FF, 0x4E00...0x9FFF: true
+            default: false
+            }
+        }
     }
 
     public static func toTitleCase(_ string: String) -> String {
@@ -813,6 +1221,40 @@ public enum GenreNormalizer {
         guard let first = word.first else { return "" }
         return first.uppercased() + word.dropFirst().lowercased()
     }
+
+    /// Strips parenthetical content that contains Japanese characters.
+    /// "AOR (ウェストコースト ロック)" → "AOR"
+    /// "Rock (ロック)" → "Rock"
+    /// "Alternative Rock (indie)" → "Alternative Rock (indie)" (no Japanese → keep)
+    private static func stripJapaneseParenthetical(_ string: String) -> String {
+        var result = string
+        // Handle both (…) patterns
+        while let openRange = result.range(of: "(") {
+            guard let closeRange = result[openRange.upperBound...].range(of: ")") else { break }
+            let inside = String(result[openRange.upperBound..<closeRange.lowerBound])
+            let insideHasJapanese = inside.unicodeScalars.contains { scalar in
+                switch scalar.value {
+                case 0x3040...0x309F, 0x30A0...0x30FF, 0x4E00...0x9FAF: return true
+                default: return false
+                }
+            }
+            if insideHasJapanese {
+                // Remove the parenthetical and any leading space before it
+                var removeStart = openRange.lowerBound
+                if removeStart > result.startIndex {
+                    let before = result.index(before: removeStart)
+                    if result[before] == " " {
+                        removeStart = before
+                    }
+                }
+                result.removeSubrange(removeStart...closeRange.lowerBound)
+            } else {
+                break // No Japanese in this parenthetical, stop
+            }
+        }
+        return result
+    }
+
 }
 
 public struct ReleaseTrack: Codable, Hashable, Sendable {
@@ -1198,12 +1640,14 @@ public struct AlbumSummaryPage: Sendable {
 
 public struct ArtistSummary: Identifiable, Hashable, Sendable {
     public let name: String
+    public let genre: String
     public let albumCount: Int
     public let trackCount: Int
     public var id: String { name }
 
-    public init(name: String, albumCount: Int, trackCount: Int) {
+    public init(name: String, genre: String = "", albumCount: Int, trackCount: Int) {
         self.name = name
+        self.genre = genre
         self.albumCount = albumCount
         self.trackCount = trackCount
     }

@@ -382,6 +382,7 @@ final class LibraryViewModel: ObservableObject {
     @Published var genreDetailMode: GenreDetailMode = .albums
     @Published var language: AppLanguage
     @Published var appearance: AppearanceMode
+    @Published var autoTranslateExternalArticles = true
     @Published var diagnosticKind: MetadataIssueKind = .missingArtist
     @Published private(set) var diagnosticSummaries: [MetadataIssueSummary] = []
     @Published private(set) var variationCandidates: [MetadataVariationCandidate] = []
@@ -413,6 +414,14 @@ final class LibraryViewModel: ObservableObject {
     @Published private(set) var automaticGenreExternalAIRegisteredCount = 0
     @Published private(set) var automaticGenreRetrySecondsRemaining = 0
     @Published private(set) var hasRunAutomaticGenreScan = false
+    @Published var autoFetchAlbumYear = true
+    @Published private(set) var isScanningAutomaticAlbumYears = false
+    @Published private(set) var automaticAlbumYearProcessedCount = 0
+    @Published private(set) var automaticAlbumYearTotalCount = 0
+    @Published private(set) var automaticAlbumYearRegisteredCount = 0
+    @Published private(set) var automaticAlbumYearFailedCount = 0
+    @Published private(set) var hasRunAutomaticAlbumYearScan = false
+    private var automaticAlbumYearScanTask: Task<Void, Never>?
     @Published private(set) var batchMetadataProgress = BatchMetadataProgress.idle
     @Published var importProgress = ImportProgress.idle
     @Published private(set) var pagePresentationID = UUID()
@@ -470,6 +479,7 @@ final class LibraryViewModel: ObservableObject {
         enrichment = WebEnrichmentService(database: database)
         metadataAnalyzer = MetadataDiagnosticsAnalyzer(database: database)
         language = AppLanguage(rawValue: (try? database.setting(forKey: "app.language")) ?? "ja") ?? .japanese
+        autoTranslateExternalArticles = (try? database.setting(forKey: "app.autoTranslateExternalArticles")) != "false"
         let legacyAppearance = (try? database.setting(forKey: "app.appearance")) ?? "system"
         switch legacyAppearance {
         case "light": appearance = .paperLight
@@ -487,6 +497,7 @@ final class LibraryViewModel: ObservableObject {
         autoNormalizeGenresToEnglish = (try? database.setting(forKey: "genre.autoNormalizeToEnglish")) == "true"
         autoMigrateID3v22ToV23 = (try? database.setting(forKey: "metadata.autoMigrateID3v22ToV23")) != "false"
         autoRegisterHighConfidenceGenres = (try? database.setting(forKey: "genre.autoRegisterHighConfidence")) == "true"
+        autoFetchAlbumYear = (try? database.setting(forKey: "album.autoFetchYear")) != "false"
         if let stored = try? database.setting(forKey: "activityLog.maxRetentionLimit"),
            let val = Int(stored),
            let limit = LogRetentionLimit(rawValue: val) {
@@ -520,6 +531,9 @@ final class LibraryViewModel: ObservableObject {
         startLeadingTitleSpaceCleanup()
         startBulkAutoFillIfNeeded()
         startID3Migration()
+        startAutomaticGenreScanIfEnabled()
+        if autoNormalizeGenresToEnglish { startGenreNormalizationAndMerging() }
+        startAutomaticAlbumYearScanIfEnabled()
     }
 
     var canGoPrevious: Bool { offset > 0 }
@@ -589,6 +603,7 @@ final class LibraryViewModel: ObservableObject {
         case .title: text("タイトル", "Title")
         case .artist: text("アーティスト", "Artist")
         case .album: text("アルバム", "Album")
+        case .year: text("リリース年", "Release Year")
         case .discNumber: text("ディスク番号", "Disc Number")
         case .trackNumber: text("トラック番号", "Track Number")
         case .dateAdded: text("追加日", "Date Added")
@@ -920,6 +935,53 @@ final class LibraryViewModel: ObservableObject {
         }
     }
 
+    func standardizeVariation(_ candidate: MetadataVariationCandidate, choosing chosenValue: String) {
+        guard batchMetadataProgress.state != .running else {
+            errorMessage = text(
+                "別の一括更新が実行中です。完了後にもう一度お試しください。",
+                "Another batch update is running. Try again after it finishes."
+            )
+            return
+        }
+        guard chosenValue == candidate.valueA || chosenValue == candidate.valueB else { return }
+        let sourceValue = chosenValue == candidate.valueA ? candidate.valueB : candidate.valueA
+        guard sourceValue != chosenValue else { return }
+        let filter = ExactMetadataFilter(field: candidate.field, value: sourceValue)
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let tracks = try await Task.detached(priority: .userInitiated) {
+                    var result: [Track] = []
+                    var requestedOffset = 0
+                    while true {
+                        let page = try self.database.pageTracks(
+                            matching: filter,
+                            offset: requestedOffset,
+                            limit: 1_000
+                        )
+                        result.append(contentsOf: page.tracks)
+                        requestedOffset += page.tracks.count
+                        if page.tracks.isEmpty || requestedOffset >= page.totalCount { break }
+                    }
+                    return result
+                }.value
+                guard !tracks.isEmpty else {
+                    loadCurrentPage(reset: false)
+                    refreshMetadataDiagnostics()
+                    return
+                }
+                let changes: BatchMetadataChanges = switch candidate.field {
+                case .title: BatchMetadataChanges(title: chosenValue)
+                case .artist: BatchMetadataChanges(artist: chosenValue)
+                case .album: BatchMetadataChanges(album: chosenValue)
+                }
+                updateMetadata(for: tracks, changes: changes)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
     func searchVariationValue(_ value: String, field: MetadataField) {
         cancelPendingSearchNavigation()
         captureBrowseReturnState()
@@ -993,6 +1055,12 @@ final class LibraryViewModel: ObservableObject {
         sort = .album
         sortDirection = .ascending
         loadCurrentPage(reset: true)
+    }
+
+    func openAlbum(for track: Track) {
+        let album = track.album.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !album.isEmpty else { return }
+        openAlbum(AlbumSummary(name: album, artist: track.artist, year: track.year, trackCount: 0))
     }
 
     func openGenre(_ genre: String) {
@@ -1135,6 +1203,10 @@ final class LibraryViewModel: ObservableObject {
         do {
             try database.setSetting(language.rawValue, forKey: "app.language")
             try database.setSetting(appearance.rawValue, forKey: "app.appearance")
+            try database.setSetting(
+                autoTranslateExternalArticles ? "true" : "false",
+                forKey: "app.autoTranslateExternalArticles"
+            )
         } catch { errorMessage = error.localizedDescription }
     }
 
@@ -2588,7 +2660,7 @@ final class LibraryViewModel: ObservableObject {
     func saveGenreNormalizationSettings() {
         try? database.setSetting(autoNormalizeGenresToEnglish ? "true" : "false", forKey: "genre.autoNormalizeToEnglish")
         if autoNormalizeGenresToEnglish {
-            startGenreNormalizationAndMerging()
+            startGenreNormalizationAndMerging(forceResetCursor: true)
         } else {
             genreNormalizationTask?.cancel()
             genreNormalizationTask = nil
@@ -2600,7 +2672,6 @@ final class LibraryViewModel: ObservableObject {
     func startGenreNormalizationAndMerging(forceResetCursor: Bool = false) {
         guard forceResetCursor || autoNormalizeGenresToEnglish else { return }
         guard genreNormalizationTask == nil else { return }
-        guard allScanRootsAreConnected() else { return }
 
         if forceResetCursor {
             try? database.setSetting("0", forKey: "genre.normalizationCursor")
@@ -2628,26 +2699,37 @@ final class LibraryViewModel: ObservableObject {
                 while !Task.isCancelled, forceResetCursor || autoNormalizeGenresToEnglish {
                     let requestedAfterID = afterID
                     let page = try await Task.detached(priority: .utility) {
-                        try self.database.tracksForWidthNormalization(afterID: requestedAfterID, limit: 200)
+                        try self.database.tracksForGenreNormalization(afterID: requestedAfterID, limit: 200)
                     }.value
                     guard !page.isEmpty else { break }
                     for track in page {
                         try Task.checkCancellation()
                         afterID = track.id
                         processedCount += 1
-                        guard !track.genre.isEmpty else { continue }
                         let normalizedGenre = GenreNormalizer.normalize(track.genre)
                         if normalizedGenre != track.genre {
                             var edit = TrackMetadataEdit(track: track)
                             edit.genre = normalizedGenre
                             do {
-                                do {
-                                    try await trackFiles.updateMetadata(track: track, edit: edit)
-                                } catch let error as MassiveMusicError
-                                    where track.format.lowercased() == "mp3" && error.isRepairableID3Damage {
-                                    try await trackFiles.updateMetadata(
-                                        track: track, edit: edit, repairingCorruptID3: true
-                                    )
+                                let sourceAvailable = await trackFiles.sourceFileIsAvailable(for: track)
+                                if sourceAvailable {
+                                    do {
+                                        try await trackFiles.updateMetadata(track: track, edit: edit)
+                                    } catch let error as MassiveMusicError
+                                        where track.format.lowercased() == "mp3" && error.isRepairableID3Damage {
+                                        try await trackFiles.updateMetadata(
+                                            track: track, edit: edit, repairingCorruptID3: true
+                                        )
+                                    }
+                                } else {
+                                    try await Task.detached {
+                                        try self.database.queuePendingMetadataEdit(
+                                            id: track.id,
+                                            edit: edit,
+                                            fileSize: track.fileSize,
+                                            modifiedAt: track.modifiedAt
+                                        )
+                                    }.value
                                 }
                                 updatedCount += 1
                             } catch {
@@ -2669,6 +2751,7 @@ final class LibraryViewModel: ObservableObject {
                 await MainActor.run {
                     self.loadCurrentPage(reset: false)
                     self.refreshMetadataDiagnostics()
+                    self.refreshSidebarCounts()
                 }
                 if let firstError {
                     let errorMsg = text(
@@ -3529,7 +3612,141 @@ final class LibraryViewModel: ObservableObject {
                 autoRegisterHighConfidenceGenres ? "true" : "false",
                 forKey: "genre.autoRegisterHighConfidence"
             )
+            if autoRegisterHighConfidenceGenres && !isScanningAutomaticGenres {
+                startAutomaticGenreScan()
+            } else if !autoRegisterHighConfidenceGenres {
+                cancelAutomaticGenreScan()
+            }
         } catch { errorMessage = error.localizedDescription }
+    }
+
+    var automaticGenreAutomationStatus: String {
+        if isScanningAutomaticGenres {
+            return automaticGenreScanTotalCount > 0
+                ? text(
+                    "解析中 (\(automaticGenreScanProcessedCount)/\(automaticGenreScanTotalCount))",
+                    "Scanning (\(automaticGenreScanProcessedCount)/\(automaticGenreScanTotalCount))"
+                )
+                : text("準備中…", "Preparing…")
+        }
+        return autoRegisterHighConfidenceGenres
+            ? text("オン・次の対象を待機中", "On · Waiting for eligible songs")
+            : text("オフ・停止中", "Off · Stopped")
+    }
+
+    func startAutomaticGenreScanIfEnabled() {
+        if autoRegisterHighConfidenceGenres && !isScanningAutomaticGenres {
+            startAutomaticGenreScan()
+        }
+    }
+
+    func saveAlbumYearSettings() {
+        do {
+            try database.setSetting(
+                autoFetchAlbumYear ? "true" : "false",
+                forKey: "album.autoFetchYear"
+            )
+            if autoFetchAlbumYear && !isScanningAutomaticAlbumYears {
+                startAutomaticAlbumYearScan()
+            } else if !autoFetchAlbumYear {
+                cancelAutomaticAlbumYearScan()
+            }
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    func startAutomaticAlbumYearScanIfEnabled() {
+        if autoFetchAlbumYear && !isScanningAutomaticAlbumYears {
+            startAutomaticAlbumYearScan()
+        }
+    }
+
+    func cancelAutomaticAlbumYearScan() {
+        automaticAlbumYearScanTask?.cancel()
+        automaticAlbumYearScanTask = nil
+        isScanningAutomaticAlbumYears = false
+    }
+
+    var albumYearAutomationStatus: String {
+        if isScanningAutomaticAlbumYears {
+            return automaticAlbumYearTotalCount > 0
+                ? text(
+                    "調査中 (\(automaticAlbumYearProcessedCount)/\(automaticAlbumYearTotalCount))",
+                    "Scanning (\(automaticAlbumYearProcessedCount)/\(automaticAlbumYearTotalCount))"
+                )
+                : text("準備中…", "Preparing…")
+        }
+        return autoFetchAlbumYear
+            ? text("オン・次の対象を待機中", "On · Waiting for eligible albums")
+            : text("オフ・停止中", "Off · Stopped")
+    }
+
+    func startAutomaticAlbumYearScan() {
+        guard autoFetchAlbumYear else { return }
+        guard !isScanningAutomaticAlbumYears else { return }
+        automaticAlbumYearScanTask?.cancel()
+        isScanningAutomaticAlbumYears = true
+        automaticAlbumYearProcessedCount = 0
+        automaticAlbumYearTotalCount = 0
+        automaticAlbumYearRegisteredCount = 0
+        automaticAlbumYearFailedCount = 0
+        hasRunAutomaticAlbumYearScan = true
+
+        automaticAlbumYearScanTask = Task(priority: .utility) { [weak self] in
+            guard let self else { return }
+            defer {
+                Task { @MainActor in
+                    self.isScanningAutomaticAlbumYears = false
+                    self.automaticAlbumYearScanTask = nil
+                }
+            }
+
+            do {
+                let missingTracks = (try? self.database.tracksMissingYear(afterID: 0, limit: 1000)) ?? []
+                await MainActor.run {
+                    self.automaticAlbumYearTotalCount = missingTracks.count
+                }
+                guard !missingTracks.isEmpty else { return }
+
+                for track in missingTracks {
+                    if Task.isCancelled { break }
+                    var foundYear: String? = nil
+
+                    // 1. MusicBrainz APIから検索
+                    if let year = try? await self.musicMetadata.fetchAlbumYear(for: track) {
+                        foundYear = year
+                    }
+
+                    // 2. MusicBrainzで判明しなかった場合、OpenAI / AIから検索
+                    if foundYear == nil {
+                        if case let .value(key) = self.openAIKeyStore.readResult(database: self.database), let apiKey = key, !apiKey.isEmpty {
+                            foundYear = try? await self.genreClassifier.fetchYear(track: track, apiKey: apiKey, model: self.openAIModel)
+                        }
+                    }
+
+                    if let year = foundYear, !year.isEmpty {
+                        try? self.database.updateTrackYear(id: track.id, year: year)
+                        await MainActor.run {
+                            self.automaticAlbumYearRegisteredCount += 1
+                        }
+                    } else {
+                        await MainActor.run {
+                            self.automaticAlbumYearFailedCount += 1
+                        }
+                    }
+
+                    await MainActor.run {
+                        self.automaticAlbumYearProcessedCount += 1
+                    }
+                }
+                await MainActor.run {
+                    self.loadCurrentPage(reset: false)
+                }
+            } catch {
+                await MainActor.run {
+                    self.errorMessage = error.localizedDescription
+                }
+            }
+        }
     }
 
     private func startID3Migration() {
@@ -3671,6 +3888,7 @@ final class LibraryViewModel: ObservableObject {
     /// external providers. Requests run sequentially and progress is published
     /// after every track so the operation cannot look like a local batch pass.
     func startAutomaticGenreScan() {
+        guard autoRegisterHighConfidenceGenres else { return }
         guard !isScanningAutomaticGenres else { return }
         automaticGenreScanTask?.cancel()
         isScanningAutomaticGenres = true
@@ -3862,6 +4080,11 @@ final class LibraryViewModel: ObservableObject {
 
     func cancelAutomaticGenreScan() {
         automaticGenreScanTask?.cancel()
+        automaticGenreScanTask = nil
+        isScanningAutomaticGenres = false
+        automaticGenreScanCurrentTrack = ""
+        automaticGenreScanCurrentSource = ""
+        automaticGenreRetrySecondsRemaining = 0
     }
 
     private func recordAutomaticGenreRegistration(_ genre: String) {

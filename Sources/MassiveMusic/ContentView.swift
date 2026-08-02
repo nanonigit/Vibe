@@ -21,6 +21,15 @@ private struct BatchMetadataEditRequest: Identifiable {
     let tracks: [Track]
 }
 
+private struct VariationStandardizationRequest: Identifiable {
+    let candidate: MetadataVariationCandidate
+    let chosenValue: String
+
+    var id: String { "\(candidate.id):\(chosenValue)" }
+    var sourceValue: String { chosenValue == candidate.valueA ? candidate.valueB : candidate.valueA }
+    var affectedTrackCount: Int { chosenValue == candidate.valueA ? candidate.trackCountB : candidate.trackCountA }
+}
+
 private struct SidebarNavigationLabel: View {
     let title: String
     let systemImage: String
@@ -68,18 +77,16 @@ private struct CacheTrackLimitControl: View {
     let onChange: () -> Void
 
     var body: some View {
-        Stepper(value: $value, in: limits) {
-            HStack(spacing: 5) {
-                Text(label)
-                TextField("", value: $value, format: .number)
-                    .textFieldStyle(.roundedBorder)
-                    .multilineTextAlignment(.trailing)
-                    .monospacedDigit()
-                    .frame(width: 58)
-                Text(unit)
-            }
+        HStack(spacing: 4) {
+            Text(label).font(.caption).foregroundStyle(.secondary)
+            TextField("", value: $value, format: .number)
+                .textFieldStyle(.roundedBorder)
+                .multilineTextAlignment(.trailing)
+                .monospacedDigit()
+                .frame(width: 48)
+                .controlSize(.small)
+            Text(unit).font(.caption).foregroundStyle(.secondary)
         }
-        .fixedSize()
         .onChange(of: value) { _, newValue in
             let clamped = min(limits.upperBound, max(limits.lowerBound, newValue))
             if clamped != newValue { value = clamped }
@@ -100,6 +107,7 @@ struct ContentView: View {
     @State private var trackPendingDeletion: Track?
     @State private var tracksPendingDeletion: [Track]? = nil
     @State private var batchMetadataEditRequest: BatchMetadataEditRequest?
+    @State private var variationStandardizationRequest: VariationStandardizationRequest?
     @State private var selectionAnchorID: Int64?
     @State private var inspectorDragStartWidth: Double?
     @State private var isInspectorDividerHovered = false
@@ -118,6 +126,7 @@ struct ContentView: View {
     @AppStorage("columns.title.width") private var titleColumnWidth = 150.0
     @AppStorage("columns.artist.width") private var artistColumnWidth = 150.0
     @AppStorage("columns.album.width") private var albumColumnWidth = 180.0
+    @AppStorage("columns.year.width") private var yearColumnWidth = 85.0
     @AppStorage("columns.discNumber.width") private var discNumberColumnWidth = 82.0
     @AppStorage("columns.trackNumber.width") private var trackNumberColumnWidth = 90.0
     @AppStorage("columns.duration.width") private var durationColumnWidth = 65.0
@@ -126,19 +135,24 @@ struct ContentView: View {
     @AppStorage("columns.title.visible") private var isTitleColumnVisible = true
     @AppStorage("columns.artist.visible") private var isArtistColumnVisible = true
     @AppStorage("columns.album.visible") private var isAlbumColumnVisible = true
+    @AppStorage("columns.year.visible") private var isYearColumnVisible = true
     @AppStorage("columns.discNumber.visible") private var isDiscNumberColumnVisible = true
     @AppStorage("columns.trackNumber.visible") private var isTrackNumberColumnVisible = true
     @AppStorage("columns.duration.visible") private var isDurationColumnVisible = true
     @AppStorage("columns.format.visible") private var isFormatColumnVisible = true
     @AppStorage("columns.addedDate.visible") private var isAddedDateColumnVisible = true
     @AppStorage("columns.albumView.artist.visible") private var isAlbumViewArtistVisible = true
+    @AppStorage("columns.albumView.year.visible") private var isAlbumViewYearVisible = true
     @AppStorage("columns.albumView.songs.visible") private var isAlbumViewSongsVisible = true
     @AppStorage("columns.artistView.albums.visible") private var isArtistViewAlbumsVisible = true
     @AppStorage("columns.artistView.songs.visible") private var isArtistViewSongsVisible = true
+    @AppStorage("columns.artistView.genre.visible") private var isArtistViewGenreVisible = true
     @AppStorage("columns.albumView.album.width") private var albumViewAlbumWidth = 480.0
     @AppStorage("columns.albumView.artist.width") private var albumViewArtistWidth = 260.0
+    @AppStorage("columns.albumView.year.width") private var albumViewYearWidth = 85.0
     @AppStorage("columns.albumView.songs.width") private var albumViewSongsWidth = 80.0
     @AppStorage("columns.artistView.artist.width") private var artistViewArtistWidth = 480.0
+    @AppStorage("columns.artistView.genre.width") private var artistViewGenreWidth = 180.0
     @AppStorage("columns.artistView.albums.width") private var artistViewAlbumsWidth = 100.0
     @AppStorage("columns.artistView.songs.width") private var artistViewSongsWidth = 100.0
     @AppStorage("albums.presentation") private var albumPresentation = SummaryPresentation.list.rawValue
@@ -220,6 +234,36 @@ struct ContentView: View {
         }
         .sheet(item: $batchMetadataEditRequest, onDismiss: model.resetBatchMetadataProgress) { request in
             BatchTrackMetadataEditor(model: model, tracks: request.tracks)
+        }
+        .confirmationDialog(
+            model.text("表記を統一", "Standardize Spelling"),
+            isPresented: Binding(
+                get: { variationStandardizationRequest != nil },
+                set: { if !$0 { variationStandardizationRequest = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let request = variationStandardizationRequest {
+                let candidate = request.candidate
+                let chosenValue = request.chosenValue
+                Button(model.text(
+                    "\(request.affectedTrackCount.formatted())曲を「\(chosenValue)」へ統一",
+                    "Standardize \(request.affectedTrackCount.formatted()) songs as ‘\(chosenValue)’"
+                )) {
+                    model.standardizeVariation(candidate, choosing: chosenValue)
+                    variationStandardizationRequest = nil
+                }
+            }
+            Button(model.text("キャンセル", "Cancel"), role: .cancel) {
+                variationStandardizationRequest = nil
+            }
+        } message: {
+            if let request = variationStandardizationRequest {
+                Text(model.text(
+                    "\(metadataFieldTitle(request.candidate.field))が「\(request.sourceValue)」の\(request.affectedTrackCount.formatted())曲を「\(request.chosenValue)」へ変更します。音源タグにも安全な既存の書込処理で反映します。",
+                    "Change the \(metadataFieldTitle(request.candidate.field).lowercased()) from ‘\(request.sourceValue)’ to ‘\(request.chosenValue)’ for \(request.affectedTrackCount.formatted()) songs. The existing safe writer will update the audio tags too."
+                ))
+            }
         }
         .confirmationDialog(
             model.text("曲を削除", "Delete Song"),
@@ -788,11 +832,23 @@ struct ContentView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
-            detailHeaderArtwork
-            headerIdentity
-                .frame(maxWidth: .infinity, alignment: .leading)
-            if model.section != .upNext { headerControls }
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                detailHeaderArtwork
+                headerIdentity
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if model.section != .upNext { headerControls }
+            }
+            .frame(minWidth: model.section == .cache ? 1_020 : 720)
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 10) {
+                    detailHeaderArtwork
+                    headerIdentity
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if model.section != .upNext { compactHeaderControls }
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
@@ -930,15 +986,9 @@ struct ContentView: View {
 
     private var headerControls: some View {
         HStack(spacing: 12) {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 12) {
-                    if model.section == .cache { cacheHeaderControls }
-                    nonCacheHeaderControls
-                }
-                VStack(alignment: .trailing, spacing: 10) {
-                    if model.section == .cache { cacheHeaderControls }
-                    nonCacheHeaderControls
-                }
+            HStack(spacing: 14) {
+                if model.section == .cache { cacheHeaderControls }
+                nonCacheHeaderControls
             }
             if model.section != .diagnostics {
                 LibrarySearchField(model: model, isFocused: $isLibrarySearchFocused)
@@ -946,10 +996,26 @@ struct ContentView: View {
         }
     }
 
+    private var compactHeaderControls: some View {
+        VStack(alignment: .trailing, spacing: 8) {
+            HStack(spacing: 10) {
+                Spacer(minLength: 0)
+                if model.section == .cache { cacheHeaderControls }
+                nonCacheHeaderControls
+            }
+            if model.section != .diagnostics {
+                LibrarySearchField(model: model, isFocused: $isLibrarySearchFocused, isFlexible: true)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
     private var cacheHeaderControls: some View {
         HStack(spacing: 12) {
             Toggle(model.text("再生時に保存", "Save When Played"), isOn: $model.cacheEnabled)
                 .toggleStyle(.switch)
+                .controlSize(.small)
+                .font(.caption)
                 .onChange(of: model.cacheEnabled) { _, _ in model.saveCacheSettings() }
             CacheTrackLimitControl(
                 value: $model.cacheTrackLimit,
@@ -1035,14 +1101,17 @@ struct ContentView: View {
                 Menu {
                     if (model.section == .albums || model.selectedArtist != nil) && model.selectedAlbum == nil {
                         columnVisibilityButton(model.text("アーティスト", "Artist"), isVisible: $isAlbumViewArtistVisible)
+                        columnVisibilityButton(model.text("リリース年", "Year"), isVisible: $isAlbumViewYearVisible)
                         columnVisibilityButton(model.text("曲数", "Songs"), isVisible: $isAlbumViewSongsVisible)
                     } else if model.section == .artists && model.selectedArtist == nil {
+                        columnVisibilityButton(model.text("ジャンル", "Genre"), isVisible: $isArtistViewGenreVisible)
                         columnVisibilityButton(model.text("アルバム数", "Albums"), isVisible: $isArtistViewAlbumsVisible)
                         columnVisibilityButton(model.text("曲数", "Songs"), isVisible: $isArtistViewSongsVisible)
                     } else {
                         columnVisibilityButton(model.text("タイトル", "Title"), isVisible: $isTitleColumnVisible)
                         columnVisibilityButton(model.text("アーティスト", "Artist"), isVisible: $isArtistColumnVisible)
                         columnVisibilityButton(model.text("アルバム", "Album"), isVisible: $isAlbumColumnVisible)
+                        columnVisibilityButton(model.text("リリース年", "Release Year"), isVisible: $isYearColumnVisible)
                         columnVisibilityButton(model.text("ディスク番号", "Disc Number"), isVisible: $isDiscNumberColumnVisible)
                         columnVisibilityButton(model.text("トラック番号", "Track Number"), isVisible: $isTrackNumberColumnVisible)
                         columnVisibilityButton(model.text("時間", "Duration"), isVisible: $isDurationColumnVisible)
@@ -1050,7 +1119,7 @@ struct ContentView: View {
                         columnVisibilityButton(model.text("追加日", "Date Added"), isVisible: $isAddedDateColumnVisible)
                     }
                 } label: {
-                    Label(model.text("表示項目", "Columns"), systemImage: "rectangle.3.group")
+                    Image(systemName: "rectangle.3.group")
                 }
                 .help(model.text("表示する列を選択", "Choose visible columns"))
             }
@@ -1109,7 +1178,7 @@ struct ContentView: View {
     }
 
     private var defaultTrackColumnOrder: [TrackSort] {
-        [.title, .artist, .album, .discNumber, .trackNumber, .duration, .format, .dateAdded]
+        [.title, .artist, .album, .year, .discNumber, .trackNumber, .duration, .format, .dateAdded]
     }
 
     private var orderedTrackColumns: [TrackSort] {
@@ -1130,6 +1199,7 @@ struct ContentView: View {
         case .title: isTitleColumnVisible
         case .artist: isArtistColumnVisible
         case .album: isAlbumColumnVisible
+        case .year: isYearColumnVisible
         case .discNumber: isDiscNumberColumnVisible
         case .trackNumber: isTrackNumberColumnVisible
         case .duration: isDurationColumnVisible
@@ -1159,6 +1229,7 @@ struct ContentView: View {
                         titleWidth: $titleColumnWidth,
                         artistWidth: $artistColumnWidth,
                         albumWidth: $albumColumnWidth,
+                        yearWidth: $yearColumnWidth,
                         discNumberWidth: $discNumberColumnWidth,
                         trackNumberWidth: $trackNumberColumnWidth,
                         durationWidth: $durationColumnWidth,
@@ -1198,7 +1269,7 @@ struct ContentView: View {
                                 }
                                 .padding(.horizontal, 8)
                                 .frame(width: contentWidth, height: 32, alignment: .leading)
-                                .background(trackRowBackground(track: track, isCurrent: player.currentTrack?.id == track.id))
+                                .background(trackRowBackground(track: track, index: index, isCurrent: player.currentTrack?.id == track.id))
                                 .overlay(alignment: .leading) {
                                     if player.currentTrack?.id == track.id {
                                         Rectangle()
@@ -1345,6 +1416,11 @@ struct ContentView: View {
                 }
             }
             .disabled(track.album.isEmpty)
+        case .year:
+            Text(track.year.isEmpty ? "—" : track.year)
+                .monospacedDigit()
+                .foregroundStyle(track.year.isEmpty ? .secondary : .primary)
+                .frame(width: yearColumnWidth, alignment: .leading)
         case .discNumber:
             Text(track.discNumber.map(String.init) ?? "—")
                 .monospacedDigit()
@@ -1403,14 +1479,14 @@ struct ContentView: View {
         ].joined(separator: "::")
     }
 
-    private func trackRowBackground(track: Track, isCurrent: Bool) -> Color {
+    private func trackRowBackground(track: Track, index: Int, isCurrent: Bool) -> Color {
         if model.selectedTrackIDs.contains(track.id) {
             return Color.accentColor.opacity(0.30)
         }
         if isCurrent {
             return Color.accentColor.opacity(0.18)
         }
-        return track.id.isMultiple(of: 2) ? Color.secondary.opacity(0.06) : Color.clear
+        return index.isMultiple(of: 2) ? Color.secondary.opacity(0.06) : Color.clear
     }
 
     @ViewBuilder
@@ -1503,6 +1579,14 @@ struct ContentView: View {
                         }
                         .tableColumnDivider()
                 }
+                if isAlbumViewYearVisible {
+                    albumHeaderButton(.year, title: model.text("年", "Year"))
+                        .frame(width: albumViewYearWidth, alignment: .trailing)
+                        .overlay(alignment: .trailing) {
+                            ColumnResizeHandle(width: $albumViewYearWidth, range: 50...150)
+                        }
+                        .tableColumnDivider()
+                }
                 if isAlbumViewSongsVisible {
                     albumHeaderButton(.trackCount, title: model.text("曲数", "Songs"))
                         .frame(width: albumViewSongsWidth, alignment: .trailing)
@@ -1531,6 +1615,13 @@ struct ContentView: View {
                         .buttonStyle(.plain)
                         .tableColumnDivider()
                     }
+                    if isAlbumViewYearVisible {
+                        Text(album.year.isEmpty ? "-" : album.year)
+                            .foregroundStyle(album.year.isEmpty ? .secondary : .primary)
+                            .frame(width: albumViewYearWidth, alignment: .trailing)
+                            .monospacedDigit()
+                            .tableColumnDivider()
+                    }
                     if isAlbumViewSongsVisible {
                         Text(album.trackCount.formatted()).frame(width: albumViewSongsWidth, alignment: .trailing).monospacedDigit().tableColumnDivider()
                     }
@@ -1553,7 +1644,13 @@ struct ContentView: View {
                                 .frame(maxWidth: .infinity)
                             Text(album.name).font(.headline).lineLimit(2)
                             Text(model.displayArtist(album.artist)).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-                            Text(album.year.isEmpty ? model.text("\(album.trackCount)曲", "\(album.trackCount) songs") : "\(album.year) • " + model.text("\(album.trackCount)曲", "\(album.trackCount) songs")).font(.caption).foregroundStyle(.tertiary)
+                            Text(
+                                album.year.isEmpty
+                                    ? model.text("\(album.trackCount)曲", "\(album.trackCount) songs")
+                                    : album.year + model.text("年 • \(album.trackCount)曲", " • \(album.trackCount) songs")
+                            )
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
@@ -1569,6 +1666,7 @@ struct ContentView: View {
     private var albumSummaryContentWidth: Double {
         albumViewAlbumWidth
             + (isAlbumViewArtistVisible ? albumViewArtistWidth + 8 : 0)
+            + (isAlbumViewYearVisible ? albumViewYearWidth + 8 : 0)
             + (isAlbumViewSongsVisible ? albumViewSongsWidth + 8 : 0) + 70
     }
 
@@ -1620,6 +1718,14 @@ struct ContentView: View {
                         ColumnResizeHandle(width: $artistViewArtistWidth, range: 140...900)
                     }
                     .tableColumnDivider()
+                if isArtistViewGenreVisible {
+                    artistHeaderButton(.genre, title: model.text("ジャンル", "Genre"))
+                        .frame(width: artistViewGenreWidth, alignment: .leading)
+                        .overlay(alignment: .trailing) {
+                            ColumnResizeHandle(width: $artistViewGenreWidth, range: 90...360)
+                        }
+                        .tableColumnDivider()
+                }
                 if isArtistViewAlbumsVisible {
                     artistHeaderButton(.albumCount, title: model.text("アルバム数", "Albums"))
                         .frame(width: artistViewAlbumsWidth, alignment: .trailing)
@@ -1649,6 +1755,13 @@ struct ContentView: View {
                         Button { openArtistPreservingScrollPosition(artist) } label: {
                             HStack {
                                 Label(model.displayArtist(artist.name), systemImage: artist.name.isEmpty ? "person.crop.circle.badge.questionmark" : "music.mic").frame(width: artistViewArtistWidth, alignment: .leading).tableColumnDivider()
+                                if isArtistViewGenreVisible {
+                                    Text(artist.genre.isEmpty ? "—" : artist.genre)
+                                        .foregroundStyle(artist.genre.isEmpty ? .secondary : .primary)
+                                        .lineLimit(1)
+                                        .frame(width: artistViewGenreWidth, alignment: .leading)
+                                        .tableColumnDivider()
+                                }
                                 if isArtistViewAlbumsVisible {
                                     Text(artist.albumCount.formatted()).frame(width: artistViewAlbumsWidth, alignment: .trailing).monospacedDigit().tableColumnDivider()
                                 }
@@ -1744,6 +1857,7 @@ struct ContentView: View {
 
     private var artistSummaryContentWidth: Double {
         artistViewArtistWidth
+            + (isArtistViewGenreVisible ? artistViewGenreWidth + 8 : 0)
             + (isArtistViewAlbumsVisible ? artistViewAlbumsWidth + 8 : 0)
             + (isArtistViewSongsVisible ? artistViewSongsWidth + 8 : 0) + 70
     }
@@ -1764,7 +1878,7 @@ struct ContentView: View {
                 }
             }
             .foregroundStyle(isActive ? Color.white : Color.secondary)
-            .frame(maxWidth: .infinity, alignment: sort == .name ? .leading : .trailing)
+            .frame(maxWidth: .infinity, alignment: (sort == .name || sort == .genre) ? .leading : .trailing)
             .padding(.horizontal, 6)
             .padding(.vertical, 4)
             .background(
@@ -2011,6 +2125,42 @@ struct ContentView: View {
                 .padding(8)
             }
             Divider()
+            HStack(spacing: 12) {
+                Toggle(
+                    model.text("ジャンル名を英語・標準表記へ自動マージ", "Standardize genres to English Title Case"),
+                    isOn: $model.autoNormalizeGenresToEnglish
+                )
+                .onChange(of: model.autoNormalizeGenresToEnglish) { _, _ in
+                    model.saveGenreNormalizationSettings()
+                }
+                .controlSize(.small)
+
+                Spacer()
+
+                if model.isNormalizingGenres {
+                    ProgressView().controlSize(.small)
+                    Text(model.genreNormalizationProgress.isEmpty
+                         ? model.text("整理中…", "Normalizing…")
+                         : model.genreNormalizationProgress)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                } else {
+                    Button {
+                        model.startGenreNormalizationAndMerging(forceResetCursor: true)
+                    } label: {
+                        Label(
+                            model.text("ジャンルをマージ・再整理", "Merge & Standardize Genres"),
+                            systemImage: "arrow.triangle.merge"
+                        )
+                    }
+                    .controlSize(.small)
+                    .buttonStyle(.bordered)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.secondary.opacity(0.04))
+            Divider()
             if isDuplicateSelectionMode {
                 duplicateSelectionToolbar
                 Divider()
@@ -2063,10 +2213,22 @@ struct ContentView: View {
                                 Text(metadataFieldTitle(candidate.field)).font(.caption.bold()).foregroundStyle(.secondary)
                                 Text(variationReason(candidate)).font(.caption).foregroundStyle(.orange)
                             }
-                            Button("\(candidate.valueA)  (\(candidate.trackCountA.formatted()))") { model.searchVariationValue(candidate.valueA, field: candidate.field) }
-                                .buttonStyle(.link).lineLimit(1)
-                            Button("\(candidate.valueB)  (\(candidate.trackCountB.formatted()))") { model.searchVariationValue(candidate.valueB, field: candidate.field) }
-                                .buttonStyle(.link).lineLimit(1)
+                            variationChoiceRow(
+                                value: candidate.valueA,
+                                count: candidate.trackCountA,
+                                candidate: candidate,
+                                onInspect: {
+                                    model.searchVariationValue(candidate.valueA, field: candidate.field)
+                                }
+                            )
+                            variationChoiceRow(
+                                value: candidate.valueB,
+                                count: candidate.trackCountB,
+                                candidate: candidate,
+                                onInspect: {
+                                    model.searchVariationValue(candidate.valueB, field: candidate.field)
+                                }
+                            )
                         }
                         Spacer()
                         Button(model.text("候補から除外", "Ignore")) { model.ignoreVariation(candidate) }
@@ -2430,6 +2592,7 @@ struct ContentView: View {
         if isTitleColumnVisible { width += titleColumnWidth; visibleColumns += 1 }
         if isArtistColumnVisible { width += artistColumnWidth; visibleColumns += 1 }
         if isAlbumColumnVisible { width += albumColumnWidth; visibleColumns += 1 }
+        if isYearColumnVisible { width += yearColumnWidth; visibleColumns += 1 }
         if isDiscNumberColumnVisible { width += discNumberColumnWidth; visibleColumns += 1 }
         if isTrackNumberColumnVisible { width += trackNumberColumnWidth; visibleColumns += 1 }
         if isDurationColumnVisible { width += durationColumnWidth; visibleColumns += 1 }
@@ -2458,6 +2621,28 @@ struct ContentView: View {
         switch candidate.reason {
         case .normalization: model.text("全角・半角／空白／大文字小文字", "Width, spacing, or case")
         case .likelyTypo: model.text("タイプミスの可能性（距離 \(candidate.editDistance)）", "Possible typo (distance \(candidate.editDistance))")
+        }
+    }
+
+    private func variationChoiceRow(
+        value: String,
+        count: Int,
+        candidate: MetadataVariationCandidate,
+        onInspect: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 10) {
+            Button("\(value)  (\(count.formatted()))", action: onInspect)
+            .buttonStyle(.link)
+            .lineLimit(1)
+            Button(model.text("この表記に統一", "Use This Spelling")) {
+                variationStandardizationRequest = VariationStandardizationRequest(
+                    candidate: candidate,
+                    chosenValue: value
+                )
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(model.batchMetadataProgress.state == .running)
         }
     }
 
@@ -2526,8 +2711,20 @@ struct ContentView: View {
 private struct LibrarySearchField: View {
     @ObservedObject var model: LibraryViewModel
     @FocusState.Binding var isFocused: Bool
+    var isFlexible = false
 
+    @ViewBuilder
     var body: some View {
+        if isFlexible {
+            searchField
+                .frame(minWidth: 180, maxWidth: .infinity)
+        } else {
+            searchField
+                .frame(width: 360)
+        }
+    }
+
+    private var searchField: some View {
         HStack(spacing: 7) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
@@ -2561,7 +2758,6 @@ private struct LibrarySearchField: View {
             }
         }
         .padding(.horizontal, 9)
-        .frame(width: 360)
         .frame(height: 30)
         .background(.background, in: RoundedRectangle(cornerRadius: 7))
         .overlay {
@@ -2577,6 +2773,7 @@ private struct TrackSortHeader: View {
     @Binding var titleWidth: Double
     @Binding var artistWidth: Double
     @Binding var albumWidth: Double
+    @Binding var yearWidth: Double
     @Binding var discNumberWidth: Double
     @Binding var trackNumberWidth: Double
     @Binding var durationWidth: Double
@@ -2621,6 +2818,9 @@ private struct TrackSortHeader: View {
         case .album:
             header(.album).frame(width: albumWidth, alignment: .leading)
                 .overlay(alignment: .trailing) { ColumnResizeHandle(width: $albumWidth, range: 80...500) }
+        case .year:
+            header(.year).frame(width: yearWidth, alignment: .leading)
+                .overlay(alignment: .trailing) { ColumnResizeHandle(width: $yearWidth, range: 68...140) }
         case .discNumber:
             header(.discNumber).frame(width: discNumberWidth, alignment: .leading)
                 .overlay(alignment: .trailing) { ColumnResizeHandle(width: $discNumberWidth, range: 64...160) }
@@ -2828,7 +3028,11 @@ private struct NowPlayingInspector: View {
 
             Group {
                 if let browserURL {
-                    EmbeddedBrowserView(url: browserURL, targetLanguage: model.language.rawValue) {
+                    EmbeddedBrowserView(
+                        url: browserURL,
+                        targetLanguage: model.language.rawValue,
+                        autoTranslate: browserAutoTranslateBinding
+                    ) {
                         self.browserURL = nil
                         if tab == 5 { tab = 0 }
                     }
@@ -2839,6 +3043,16 @@ private struct NowPlayingInspector: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(model.appearance.palette.inspector)
+    }
+
+    private var browserAutoTranslateBinding: Binding<Bool> {
+        Binding(
+            get: { model.autoTranslateExternalArticles },
+            set: { enabled in
+                model.autoTranslateExternalArticles = enabled
+                model.savePresentationSettings()
+            }
+        )
     }
 
     @ViewBuilder private var playerInformation: some View {
@@ -4609,7 +4823,17 @@ private struct LibrarySettingsView: View {
                         ForEach(AppLanguage.allCases) { Text($0.displayName).tag($0) }
                     }
                     AppearanceThemePicker(model: model, selection: $model.appearance)
-                    Text(model.text("Wikipediaとニュースは選択言語の版を優先し、外部記事は内部ブラウザで選択言語へ自動翻訳します。", "Wikipedia and news prefer the selected locale. External articles are automatically translated in the internal browser."))
+                    Toggle(
+                        model.text("外部記事を選択言語へ自動翻訳", "Automatically translate external articles"),
+                        isOn: $model.autoTranslateExternalArticles
+                    )
+                    .onChange(of: model.autoTranslateExternalArticles) { _, _ in
+                        model.savePresentationSettings()
+                    }
+                    Text(model.text(
+                        "Wikipediaとニュースは選択言語の版を優先します。自動翻訳をオフにすると、内部ブラウザは翻訳サービスを使わず元ページを表示します。",
+                        "Wikipedia and news prefer the selected locale. When automatic translation is off, the internal browser shows the original page without using the translation service."
+                    ))
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 SettingsCard(
@@ -4633,33 +4857,10 @@ private struct LibrarySettingsView: View {
                     ))
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    HStack {
-                        if model.isScanningAutomaticGenres {
-                            Button(model.text("ジャンル検索を停止", "Stop Genre Scan")) {
-                                model.cancelAutomaticGenreScan()
-                            }
-                            .buttonStyle(.bordered)
-                            Spacer()
-                            Text(
-                                model.automaticGenreScanTotalCount > 0
-                                ? model.text(
-                                    "解析中 (\(model.automaticGenreScanProcessedCount)/\(model.automaticGenreScanTotalCount))",
-                                    "Scanning (\(model.automaticGenreScanProcessedCount)/\(model.automaticGenreScanTotalCount))"
-                                )
-                                : model.text("準備中…", "Preparing…")
-                            )
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                        } else {
-                            Button {
-                                model.startAutomaticGenreScan()
-                            } label: {
-                                Label(model.text("ジャンル検索を開始", "Start Genre Scan"), systemImage: "play.fill")
-                            }
-                            .buttonStyle(.borderedProminent)
-                        }
-                    }
-                    .padding(.top, 2)
+                    Label(model.automaticGenreAutomationStatus, systemImage: model.isScanningAutomaticGenres ? "arrow.triangle.2.circlepath" : "circle.dotted")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 2)
                     Divider()
                     Toggle(
                         model.text(
@@ -4677,13 +4878,40 @@ private struct LibrarySettingsView: View {
                     ))
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    HStack {
-                        Button(model.text("ジャンルをマージ・再整理", "Merge & Re-organize Genres")) {
-                            model.startGenreNormalizationAndMerging(forceResetCursor: true)
-                        }
-                        .disabled(model.isNormalizingGenres)
-                    }
+                    Label(
+                        model.isNormalizingGenres
+                            ? (model.genreNormalizationProgress.isEmpty
+                                ? model.text("ジャンルを整理中…", "Standardizing genres…")
+                                : model.genreNormalizationProgress)
+                            : (model.autoNormalizeGenresToEnglish
+                                ? model.text("自動整理はオンです", "Automatic standardization is on")
+                                : model.text("自動整理はオフです", "Automatic standardization is off")),
+                        systemImage: model.isNormalizingGenres ? "arrow.triangle.merge" : "circle.dotted"
+                    )
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
                     .padding(.top, 2)
+                    Divider()
+                    Toggle(
+                        model.text(
+                            "AI・Webからアルバムのリリース年を自動取得・登録",
+                            "Automatically fetch & save album release year via Web/AI"
+                        ),
+                        isOn: $model.autoFetchAlbumYear
+                    )
+                    .onChange(of: model.autoFetchAlbumYear) { _, _ in
+                        model.saveAlbumYearSettings()
+                    }
+                    Text(model.text(
+                        "リリース年が未設定のアルバム/楽曲について、MusicBrainzおよびWeb/AIからオリジナルのリリース年（西暦）を自動調査して登録します。",
+                        "Automatically checks MusicBrainz and Web/AI for missing album release years (YYYY) and updates tracks."
+                    ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    Label(model.albumYearAutomationStatus, systemImage: model.isScanningAutomaticAlbumYears ? "calendar.badge.clock" : "circle.dotted")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 2)
                     Divider()
                     Toggle(
                         model.text(
@@ -5294,72 +5522,10 @@ private struct UnifiedPlayerControls: View {
     @State private var isVolumePopoverPresented = false
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            PlayerArtwork(
-                artworkURL: model.enrichedInfo?.artworkURL,
-                size: isCompact ? 44 : 72,
-                cornerRadius: isCompact ? 8 : 9,
-                placeholderPointSize: isCompact ? 17 : 25
-            )
-            .accessibilityLabel(model.text("アルバムジャケット", "Album artwork"))
-
-            VStack(spacing: 9) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(player.currentTrack?.title ?? model.text("再生していません", "Not Playing"))
-                            .font(.headline)
-                            .lineLimit(1)
-                        Text(player.currentTrack?.artist ?? model.text("曲を選択してください", "Select a song"))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: 0)
-                    HStack(spacing: 2) {
-                        shuffleButton
-                        repeatButton
-                    }
-                    miniPlayerButton
-                    volumeButton
-                }
-
-                HStack(spacing: 8) {
-                    Spacer(minLength: 4)
-                    Button(action: player.previous) {
-                        Image(systemName: "backward.fill")
-                    }
-                    .accessibilityLabel(model.text("前の曲", "Previous Track"))
-                    Button(action: player.togglePlayPause) {
-                        Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                            .font(.system(size: isCompact ? 27 : 34))
-                            .foregroundStyle(Color.accentColor)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(player.isPlaying ? model.text("一時停止", "Pause") : model.text("再生", "Play"))
-                    .keyboardShortcut(.space, modifiers: [])
-                    Button(action: player.next) {
-                        Image(systemName: "forward.fill")
-                    }
-                    .accessibilityLabel(model.text("次の曲", "Next Track"))
-                    Spacer(minLength: 4)
-                }
-                .disabled(player.currentTrack == nil)
-
-                HStack(spacing: 7) {
-                    timeLabel(player.elapsed)
-                    Slider(
-                        value: Binding(
-                            get: { player.elapsed },
-                            set: { player.seek(to: $0) }
-                        ),
-                        in: 0...max(1, player.duration)
-                    )
-                    .accessibilityLabel(model.text("再生位置", "Playback Position"))
-                    timeLabel(player.duration)
-                }
-                .disabled(player.currentTrack == nil)
-            }
-            .frame(maxWidth: .infinity)
+        ViewThatFits(in: .horizontal) {
+            regularPlayerLayout
+                .frame(minWidth: isCompact ? 360 : 420)
+            narrowPlayerLayout
         }
         .buttonStyle(.borderless)
         .padding(.horizontal, isCompact ? 12 : 14)
@@ -5385,6 +5551,133 @@ private struct UnifiedPlayerControls: View {
                 .frame(width: 3)
                 .padding(.vertical, 8)
         }
+    }
+
+    private var regularPlayerLayout: some View {
+        HStack(alignment: .top, spacing: 12) {
+            playerArtwork(size: isCompact ? 44 : 72)
+
+            VStack(spacing: 9) {
+                HStack {
+                    trackIdentity
+                    Spacer(minLength: 0)
+                    utilityControls
+                }
+                transportControls
+                seekControls
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    private var narrowPlayerLayout: some View {
+        VStack(spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
+                playerArtwork(size: isCompact ? 40 : 52)
+                trackIdentity
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            utilityControls
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            transportControls
+            seekControls
+        }
+    }
+
+    private func playerArtwork(size: CGFloat) -> some View {
+        Button {
+            guard let track = player.currentTrack else { return }
+            model.openAlbum(for: track)
+        } label: {
+            PlayerArtwork(
+                artworkURL: model.enrichedInfo?.artworkURL,
+                size: size,
+                cornerRadius: isCompact ? 8 : 9,
+                placeholderPointSize: isCompact ? 17 : 25
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(player.currentTrack?.album.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false)
+        .help(model.text("このアルバムを表示", "Show This Album"))
+        .accessibilityLabel(model.text("アルバムを表示", "Show Album"))
+    }
+
+    private var trackIdentity: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Button {
+                guard let track = player.currentTrack else { return }
+                model.openAlbum(for: track)
+            } label: {
+                Text(player.currentTrack?.title ?? model.text("再生していません", "Not Playing"))
+                    .font(.headline)
+                    .lineLimit(1)
+            }
+            .buttonStyle(.plain)
+            .disabled(player.currentTrack?.album.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false)
+            .help(model.text("このアルバムを表示", "Show This Album"))
+
+            Button {
+                guard let track = player.currentTrack else { return }
+                model.openArtist(named: track.artist)
+            } label: {
+                Text(player.currentTrack?.artist ?? model.text("曲を選択してください", "Select a song"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .buttonStyle(.plain)
+            .disabled(player.currentTrack?.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false)
+            .help(model.text("このアーティストを表示", "Show This Artist"))
+        }
+    }
+
+    private var utilityControls: some View {
+        HStack(spacing: 2) {
+            shuffleButton
+            repeatButton
+            miniPlayerButton
+            volumeButton
+        }
+    }
+
+    private var transportControls: some View {
+        HStack(spacing: 8) {
+            Spacer(minLength: 4)
+            Button(action: player.previous) {
+                Image(systemName: "backward.fill")
+            }
+            .accessibilityLabel(model.text("前の曲", "Previous Track"))
+            Button(action: player.togglePlayPause) {
+                Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                    .font(.system(size: isCompact ? 27 : 34))
+                    .foregroundStyle(Color.accentColor)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(player.isPlaying ? model.text("一時停止", "Pause") : model.text("再生", "Play"))
+            .keyboardShortcut(.space, modifiers: [])
+            Button(action: player.next) {
+                Image(systemName: "forward.fill")
+            }
+            .accessibilityLabel(model.text("次の曲", "Next Track"))
+            Spacer(minLength: 4)
+        }
+        .disabled(player.currentTrack == nil)
+    }
+
+    private var seekControls: some View {
+        HStack(spacing: 7) {
+            timeLabel(player.elapsed)
+            Slider(
+                value: Binding(
+                    get: { player.elapsed },
+                    set: { player.seek(to: $0) }
+                ),
+                in: 0...max(1, player.duration)
+            )
+            .accessibilityLabel(model.text("再生位置", "Playback Position"))
+            timeLabel(player.duration)
+        }
+        .disabled(player.currentTrack == nil)
     }
 
     private var shuffleButton: some View {
