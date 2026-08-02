@@ -13,6 +13,7 @@
 		1292B16A4FD43753F00718EE /* MassiveMusicCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1D6D0D4E68792929A77AF7CA /* MassiveMusicCore.framework */; };
 		17AFA1B40C1EE3B86E6321E4 /* PlaybackController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D314067172C2605FACDA1D9 /* PlaybackController.swift */; };
 		1AB1A3F3FF93E6A304F6E5A1 /* MassiveMusicCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1D6D0D4E68792929A77AF7CA /* MassiveMusicCore.framework */; };
+		1D4D2CA47519C2062EC29030 /* WikipediaGenreResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16EA278C3A32D346E3886A91 /* WikipediaGenreResolver.swift */; };
 		305CCC742A86644E49A2F16D /* LibraryDatabaseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D59077B85F29D508DAF5A884 /* LibraryDatabaseTests.swift */; };
 		328D3660EED2E97357A870E3 /* MassiveMusicCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1D6D0D4E68792929A77AF7CA /* MassiveMusicCore.framework */; };
 		35508DC7DBB2879C7DCAE121 /* AudioMetadataReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44C6A5FD11532D54F9C756C8 /* AudioMetadataReader.swift */; };
@@ -103,6 +104,7 @@
 /* Begin PBXFileReference section */
 		027CC3C2F505B4D836CEDEAA /* LibraryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryViewModel.swift; sourceTree = "<group>"; };
 		0D314067172C2605FACDA1D9 /* PlaybackController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackController.swift; sourceTree = "<group>"; };
+		16EA278C3A32D346E3886A91 /* WikipediaGenreResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WikipediaGenreResolver.swift; sourceTree = "<group>"; };
 		1C8F291EA19DE5D45C206C36 /* MassiveMusicBench */ = {isa = PBXFileReference; includeInIndex = 0; path = MassiveMusicBench; sourceTree = BUILT_PRODUCTS_DIR; };
 		1D6D0D4E68792929A77AF7CA /* MassiveMusicCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = MassiveMusicCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		249608F643C1212C36CE6977 /* MassiveMusic.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MassiveMusic.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -220,6 +222,7 @@
 				9C7AAB7B87B4EA4628D5B065 /* MassiveMusicApp.swift */,
 				64D180DA590B7EA581757223 /* OpenAIGenreClassifier.swift */,
 				0D314067172C2605FACDA1D9 /* PlaybackController.swift */,
+				16EA278C3A32D346E3886A91 /* WikipediaGenreResolver.swift */,
 			);
 			path = MassiveMusic;
 			sourceTree = "<group>";
@@ -496,6 +499,7 @@
 				F14763EB2FA857A0FC3E1C8D /* MassiveMusicApp.swift in Sources */,
 				E46D4255C38ECB727E9077E9 /* OpenAIGenreClassifier.swift in Sources */,
 				17AFA1B40C1EE3B86E6321E4 /* PlaybackController.swift in Sources */,
+				1D4D2CA47519C2062EC29030 /* WikipediaGenreResolver.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -24,7 +24,11 @@ struct LibraryDatabaseTests {
             "ストーナー・メタル": "Stoner Metal",
             "スポークンワード／コメディ": "Spoken Word / Comedy",
             "スラッジメタル": "Sludge Metal",
-            "ダーク・アンビエント": "Dark Ambient"
+            "ダーク・アンビエント": "Dark Ambient",
+            "沖縄民謡": "Okinawan Folk Music",
+            "現代クラシック": "Contemporary Classical",
+            "渋谷系": "Shibuya-Kei",
+            "日本語ヒップホップ": "Japanese Hip Hop"
         ]
 
         for (raw, expected) in aliases {
@@ -34,6 +38,70 @@ struct LibraryDatabaseTests {
 
     @Test func unknownJapaneseGenreIsNotSilentlyDeleted() {
         #expect(GenreNormalizer.normalize("未知ジャンル") == "未知ジャンル")
+    }
+
+    @Test func genreKnowledgePersistsCanonicalEnglishDescriptionAndSource() throws {
+        let context = try TestContext()
+        defer { try? FileManager.default.removeItem(at: context.directory) }
+        let knowledge = GenreKnowledge(
+            rawGenre: "沖縄民謡",
+            canonicalName: "Okinawan Folk Music",
+            summaryJapanese: "沖縄諸島で育った伝統的な民俗音楽です。",
+            summaryEnglish: "Traditional folk music developed in the Okinawa Islands.",
+            sourceTitle: "Music of Okinawa",
+            sourceURL: URL(string: "https://en.wikipedia.org/wiki/Music_of_Okinawa")!,
+            resolvedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+
+        try context.database.saveGenreKnowledge(knowledge)
+
+        #expect(try context.database.genreKnowledge(forRawGenre: "沖縄民謡") == knowledge)
+        #expect(try context.database.genreKnowledge(forCanonicalName: "okinawan folk music") == knowledge)
+        #expect(try context.database.allGenreKnowledge() == [knowledge])
+    }
+
+    @Test func genreKnowledgeUpsertRefreshesAnExistingRawAlias() throws {
+        let context = try TestContext()
+        defer { try? FileManager.default.removeItem(at: context.directory) }
+        let sourceURL = URL(string: "https://en.wikipedia.org/wiki/Shibuya-kei")!
+        try context.database.saveGenreKnowledge(GenreKnowledge(
+            rawGenre: "渋谷系",
+            canonicalName: "Shibuya-Kei",
+            summaryJapanese: "旧説明",
+            summaryEnglish: "Old summary",
+            sourceTitle: "Shibuya-kei",
+            sourceURL: sourceURL,
+            resolvedAt: Date(timeIntervalSince1970: 10)
+        ))
+        let refreshed = GenreKnowledge(
+            rawGenre: "渋谷系",
+            canonicalName: "Shibuya-Kei",
+            summaryJapanese: "更新された説明",
+            summaryEnglish: "Updated summary",
+            sourceTitle: "Shibuya-kei",
+            sourceURL: sourceURL,
+            resolvedAt: Date(timeIntervalSince1970: 20)
+        )
+
+        try context.database.saveGenreKnowledge(refreshed)
+
+        #expect(try context.database.genreKnowledge(forRawGenre: "渋谷系") == refreshed)
+        #expect(try context.database.allGenreKnowledge().count == 1)
+    }
+
+    @Test func genreAutomationRequiresEnglishLabelsAndShowsProvenanceAndCompletion() throws {
+        let repository = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let classifier = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/OpenAIGenreClassifier.swift"), encoding: .utf8)
+        let model = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"), encoding: .utf8)
+        let view = try String(contentsOf: repository.appending(path: "Sources/MassiveMusic/ContentView.swift"), encoding: .utf8)
+
+        #expect(classifier.components(separatedBy: "Return the genre field in English Title Case.").count == 3)
+        #expect(model.contains("genreNormalizationLastUnresolved"))
+        #expect(model.contains("wikipediaGenreResolver.resolve"))
+        #expect(model.contains("canonicalGenreForRegistration(suggestion.genre)"))
+        #expect(model.contains("genre: canonicalGenre"))
+        #expect(view.contains("model.genreNormalizationStatusText"))
+        #expect(view.contains("knowledge.sourceURL"))
     }
 
     @Test func genreFacetsAndDetailsMergeCanonicalAliases() throws {
@@ -562,15 +630,15 @@ struct LibraryDatabaseTests {
         #expect(content.contains("model.isScanningAutomaticGenres"))
         #expect(content.contains("sidebarAutomaticGenreProgress"))
         #expect(content.contains("automaticGenreRetrySecondsRemaining"))
-        #expect(model.contains("recordAutomaticGenreRegistration(suggestion.genre)"))
+        #expect(model.contains("recordAutomaticGenreRegistration(canonicalGenre)"))
         #expect(scan.contains("consensusGenreForAlbum(track: track)"))
         #expect(scan.contains("musicMetadata.genreSuggestion("))
         #expect(scan.range(of: "consensusGenreForAlbum(track: track)")!.lowerBound < scan.range(of: "genreClassifier.classify(")!.lowerBound)
         #expect(content.contains("ライブラリ内一致→ローカル判定→MusicBrainz→外部AI"))
         #expect(content.contains("automaticGenreMusicBrainzRegisteredCount"))
         #expect(model.contains("enum GenreDescriptionCatalog"))
-        #expect(content.contains("GenreDescriptionCatalog.shortDescription"))
-        #expect(content.contains("GenreDescriptionCatalog.detailDescription"))
+        #expect(content.contains("model.genreShortDescription"))
+        #expect(content.contains("model.genreDetailDescription"))
     }
 
     @Test func displaySettingsOfferSixPersistentPreviewThemes() throws {
@@ -1601,7 +1669,7 @@ struct LibraryDatabaseTests {
 
     @Test func migrationEnablesExpectedSchemaAndWAL() throws {
         let context = try TestContext()
-        #expect(try context.database.schemaVersion() == 11)
+        #expect(try context.database.schemaVersion() == 12)
         #expect(try context.database.journalMode().lowercased() == "wal")
     }
 
@@ -2558,10 +2626,10 @@ struct LibraryDatabaseTests {
         let model = try String(contentsOf: sourceRoot.appending(path: "Sources/MassiveMusic/LibraryViewModel.swift"))
         let services = try String(contentsOf: sourceRoot.appending(path: "Sources/MassiveMusic/LibraryServices.swift"))
         let content = try String(contentsOf: sourceRoot.appending(path: "Sources/MassiveMusic/ContentView.swift"))
-        #expect(model.contains("try self.database.updateTrackGenre(id: track.id, genre: genre)"))
+        #expect(model.contains("try self.database.updateTrackGenre(id: track.id, genre: canonicalGenre)"))
         #expect(model.contains("await trackFiles.sourceFileIsAvailable(for: track)"))
         #expect(model.contains("await trackFiles.isID3v22Tag(for: track)"))
-        #expect(model.contains("purpose: .aiGenre(genre)"))
+        #expect(model.contains("purpose: .aiGenre(canonicalGenre)"))
         #expect(model.contains("updateMetadataAfterID3RepairConfirmation"))
         #expect(model.contains("where track.format.lowercased() == \"mp3\" && error.isRepairableID3Damage"))
         #expect(services.contains("func sourceFileIsAvailable(for track: Track) -> Bool"))

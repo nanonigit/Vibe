@@ -929,11 +929,20 @@ struct ContentView: View {
                 Text(model.text("\(model.genreDetailTitle(model.genreDetailMode))・\(model.totalCount.formatted()) 件", "\(model.genreDetailTitle(model.genreDetailMode)) · \(model.totalCount.formatted()) items"))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 if let genre = model.selectedGenre {
-                    Text(GenreDescriptionCatalog.detailDescription(for: genre, language: model.language))
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(model.genreDetailDescription(genre))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let knowledge = model.genreKnowledge(for: genre) {
+                            Link(destination: knowledge.sourceURL) {
+                                Label(model.text("Wikipedia出典", "Wikipedia Source"), systemImage: "link")
+                            }
+                            .font(.caption2)
+                            .help(knowledge.sourceTitle)
+                        }
+                    }
                 }
             } else {
                 Text(model.section == .cache
@@ -1909,7 +1918,7 @@ struct ContentView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(facet.name)
                                     .lineLimit(1)
-                                Text(GenreDescriptionCatalog.shortDescription(for: facet.name, language: model.language))
+                                Text(model.genreShortDescription(facet.name))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
@@ -4883,13 +4892,7 @@ private struct LibrarySettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     Label(
-                        model.isNormalizingGenres
-                            ? (model.genreNormalizationProgress.isEmpty
-                                ? model.text("ジャンルを整理中…", "Standardizing genres…")
-                                : model.genreNormalizationProgress)
-                            : (model.autoNormalizeGenresToEnglish
-                                ? model.text("自動整理はオンです", "Automatic standardization is on")
-                                : model.text("自動整理はオフです", "Automatic standardization is off")),
+                        model.genreNormalizationStatusText,
                         systemImage: model.isNormalizingGenres ? "arrow.triangle.merge" : "circle.dotted"
                     )
                     .font(.caption.monospacedDigit())

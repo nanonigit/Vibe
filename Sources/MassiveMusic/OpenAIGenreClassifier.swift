@@ -101,7 +101,7 @@ actor OpenAIGenreClassifier {
             "model": model,
             "store": false,
             "input": [
-                ["role": "system", "content": "Infer one concise music genre from metadata only. Never claim that audio was analyzed. Write the rationale in \(languageName)."],
+                ["role": "system", "content": "Infer one concise music genre from metadata only. Return the genre field in English Title Case. Never claim that audio was analyzed. Write the rationale in \(languageName)."],
                 ["role": "user", "content": metadata]
             ],
             "text": ["format": ["type": "json_schema", "name": "genre_suggestion", "strict": true, "schema": schema]]
@@ -197,7 +197,7 @@ actor GeminiGenreClassifier {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let languageName = language == "ja" ? "Japanese" : "English"
         let prompt = """
-        Infer one concise music genre from metadata only. Never claim audio was analyzed.
+        Infer one concise music genre from metadata only. Return the genre field in English Title Case. Never claim audio was analyzed.
         Write the rationale in \(languageName).
         Title: \(track.title)
         Artist: \(track.artist)

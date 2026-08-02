@@ -492,3 +492,11 @@
 - Automatic local genre registration is now opt-in and writes only missing genres whose classifier confidence is at least 80%; low-confidence `Other` results are no longer auto-saved.
 - Preserved the OpenAI/Gemini app-protected database storage path and updated stale user-facing Keychain wording. Legacy Keychain access remains migration-only and suppresses authentication UI.
 - All 107 tests across 3 suites pass. The arm64 Release was built, ad-hoc signed with the production file/bookmark/network entitlements, passed deep strict signature verification, and launched successfully as PID 93504.
+
+# Phase 49 progress
+
+- Traced the remaining Japanese genre facets to the deliberate unknown-alias safety fallback, not a stopped maintenance task. Added retained checked/updated/unresolved completion totals so management now distinguishes enabled/idle, running, and completed states.
+- Added schema v12 genre knowledge, bounded Wikipedia search/language-link/summary lookup, successful-result caching, English canonical registration gates, and attributed Japanese/English descriptions in genre browse/detail views.
+- Added the reported aliases, including Okinawan Folk Music, Shibuya-Kei, Japanese Rock, Japanese Folk, and Japanese Hip Hop. OpenAI/Gemini labels are requested in English Title Case, and every AI registration path validates or resolves Japanese output before saving.
+- All 176 tests pass with no failures or skips. Debug and arm64 Release builds pass; `outputs/Vibe-0.17.app` passes deep strict ad-hoc signature verification.
+- The production database, audio files, installed app, and running maintenance jobs were not changed or launched. Full-library normalization still requires explicit user confirmation.

@@ -835,6 +835,22 @@ public enum GenreNormalizer {
         "ワールド": "World",
         "民謡": "Traditional Folk",
         "伝統音楽": "Traditional",
+        "沖縄民謡": "Okinawan Folk Music",
+        "現代": "Contemporary",
+        "現代クラシック": "Contemporary Classical",
+        "讃美歌": "Hymn",
+        "子ども向けアニメソング": "Children's Anime Songs",
+        "実験": "Experimental",
+        "実験的ロック": "Experimental Rock",
+        "実験電子": "Experimental Electronic",
+        "渋谷系": "Shibuya-Kei",
+        "吹奏楽": "Wind Ensemble",
+        "伝統邦楽": "Traditional Japanese Music",
+        "電子": "Electronic",
+        "特撮": "Tokusatsu",
+        "日本のフォーク": "Japanese Folk",
+        "日本のロック": "Japanese Rock",
+        "日本語ヒップホップ": "Japanese Hip Hop",
         "演歌": "Enka",
         "歌謡曲": "Kayokyoku",
         "シティポップ": "City Pop",
@@ -1175,7 +1191,7 @@ public enum GenreNormalizer {
             .joined(separator: " ")
     }
 
-    private static func containsJapanese(_ value: String) -> Bool {
+    public static func containsJapanese(_ value: String) -> Bool {
         value.unicodeScalars.contains { scalar in
             switch scalar.value {
             case 0x3040...0x309F, 0x30A0...0x30FF, 0x4E00...0x9FFF: true
@@ -1613,6 +1629,34 @@ public struct Facet: Identifiable, Hashable, Sendable {
     public init(name: String, count: Int) {
         self.name = name
         self.count = count
+    }
+}
+
+public struct GenreKnowledge: Equatable, Sendable {
+    public let rawGenre: String
+    public let canonicalName: String
+    public let summaryJapanese: String
+    public let summaryEnglish: String
+    public let sourceTitle: String
+    public let sourceURL: URL
+    public let resolvedAt: Date
+
+    public init(
+        rawGenre: String,
+        canonicalName: String,
+        summaryJapanese: String,
+        summaryEnglish: String,
+        sourceTitle: String,
+        sourceURL: URL,
+        resolvedAt: Date
+    ) {
+        self.rawGenre = rawGenre
+        self.canonicalName = canonicalName
+        self.summaryJapanese = summaryJapanese
+        self.summaryEnglish = summaryEnglish
+        self.sourceTitle = sourceTitle
+        self.sourceURL = sourceURL
+        self.resolvedAt = resolvedAt
     }
 }
 

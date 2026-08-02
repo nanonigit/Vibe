@@ -140,6 +140,13 @@ public final class LibraryDatabase: @unchecked Sendable {
                 arguments: [11, Date().timeIntervalSince1970]
             )
         }
+        migrator.registerMigration("v12_genre_knowledge") { db in
+            try db.execute(sql: Schema.genreKnowledge)
+            try db.execute(
+                sql: "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                arguments: [12, Date().timeIntervalSince1970]
+            )
+        }
         return migrator
     }
 
@@ -379,6 +386,85 @@ public final class LibraryDatabase: @unchecked Sendable {
             )
             return rows.map(Self.decodeTrack)
         }
+    }
+
+    public func saveGenreKnowledge(_ knowledge: GenreKnowledge) throws {
+        let rawKey = GenreNormalizer.lookupKey(knowledge.rawGenre)
+        guard !rawKey.isEmpty else {
+            throw MassiveMusicError.metadataWriteFailed("Genre knowledge requires a non-empty raw label")
+        }
+        try pool.write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO genre_knowledge(
+                        raw_key, raw_genre, canonical_name, summary_ja, summary_en,
+                        source_title, source_url, resolved_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(raw_key) DO UPDATE SET
+                        raw_genre = excluded.raw_genre,
+                        canonical_name = excluded.canonical_name,
+                        summary_ja = excluded.summary_ja,
+                        summary_en = excluded.summary_en,
+                        source_title = excluded.source_title,
+                        source_url = excluded.source_url,
+                        resolved_at = excluded.resolved_at
+                    """,
+                arguments: [
+                    rawKey, knowledge.rawGenre, knowledge.canonicalName,
+                    knowledge.summaryJapanese, knowledge.summaryEnglish,
+                    knowledge.sourceTitle, knowledge.sourceURL.absoluteString,
+                    knowledge.resolvedAt.timeIntervalSince1970
+                ]
+            )
+        }
+    }
+
+    public func genreKnowledge(forRawGenre rawGenre: String) throws -> GenreKnowledge? {
+        let rawKey = GenreNormalizer.lookupKey(rawGenre)
+        guard !rawKey.isEmpty else { return nil }
+        return try pool.read { db in
+            try Row.fetchOne(
+                db,
+                sql: "SELECT * FROM genre_knowledge WHERE raw_key = ?",
+                arguments: [rawKey]
+            ).flatMap(Self.decodeGenreKnowledge)
+        }
+    }
+
+    public func genreKnowledge(forCanonicalName canonicalName: String) throws -> GenreKnowledge? {
+        try pool.read { db in
+            try Row.fetchOne(
+                db,
+                sql: """
+                    SELECT * FROM genre_knowledge
+                    WHERE canonical_name = ? COLLATE NOCASE
+                    ORDER BY resolved_at DESC LIMIT 1
+                    """,
+                arguments: [canonicalName]
+            ).flatMap(Self.decodeGenreKnowledge)
+        }
+    }
+
+    public func allGenreKnowledge() throws -> [GenreKnowledge] {
+        try pool.read { db in
+            try Row.fetchAll(
+                db,
+                sql: "SELECT * FROM genre_knowledge ORDER BY canonical_name COLLATE NOCASE, raw_key"
+            ).compactMap(Self.decodeGenreKnowledge)
+        }
+    }
+
+    private static func decodeGenreKnowledge(_ row: Row) -> GenreKnowledge? {
+        guard let sourceURL = URL(string: row["source_url"] as String) else { return nil }
+        return GenreKnowledge(
+            rawGenre: row["raw_genre"],
+            canonicalName: row["canonical_name"],
+            summaryJapanese: row["summary_ja"],
+            summaryEnglish: row["summary_en"],
+            sourceTitle: row["source_title"],
+            sourceURL: sourceURL,
+            resolvedAt: Date(timeIntervalSince1970: row["resolved_at"])
+        )
     }
 
     public func mp3TracksForID3Migration(afterID: Int64, limit: Int = defaultPageSize) throws -> [Track] {
@@ -3316,6 +3402,21 @@ private enum SQL {
 }
 
 private enum Schema {
+    static let genreKnowledge = """
+        CREATE TABLE genre_knowledge(
+            raw_key TEXT PRIMARY KEY COLLATE NOCASE,
+            raw_genre TEXT NOT NULL,
+            canonical_name TEXT NOT NULL COLLATE NOCASE,
+            summary_ja TEXT NOT NULL DEFAULT '',
+            summary_en TEXT NOT NULL DEFAULT '',
+            source_title TEXT NOT NULL,
+            source_url TEXT NOT NULL,
+            resolved_at REAL NOT NULL
+        );
+        CREATE INDEX genre_knowledge_canonical_idx
+            ON genre_knowledge(canonical_name COLLATE NOCASE, resolved_at DESC);
+        """
+
     static let musicBrainzAutoFillAttempts = """
         CREATE TABLE musicbrainz_autofill_attempts(
             album_key TEXT PRIMARY KEY,

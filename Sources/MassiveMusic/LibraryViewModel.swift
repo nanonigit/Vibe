@@ -359,6 +359,11 @@ final class LibraryViewModel: ObservableObject {
     @Published var autoNormalizeGenresToEnglish = false
     @Published var isNormalizingGenres = false
     @Published var genreNormalizationProgress = ""
+    @Published private(set) var genreNormalizationLastChecked = 0
+    @Published private(set) var genreNormalizationLastUpdated = 0
+    @Published private(set) var genreNormalizationLastUnresolved = 0
+    @Published private(set) var genreNormalizationLastCompletedAt: Date?
+    @Published private(set) var genreKnowledgeByCanonicalName: [String: GenreKnowledge] = [:]
     @Published var autoMigrateID3v22ToV23 = true
     @Published var autoRegisterHighConfidenceGenres = false
     @Published var isID3Migrating = false
@@ -434,6 +439,7 @@ final class LibraryViewModel: ObservableObject {
     private let trackFiles: TrackFileCoordinator
     private let offlineCache: OfflineCacheManager
     private let enrichment: WebEnrichmentService
+    private let wikipediaGenreResolver: WikipediaGenreResolver
     private let musicMetadata = MusicBrainzMetadataService()
     private let metadataAnalyzer: MetadataDiagnosticsAnalyzer
     private let openAIKeyStore = ProviderAPIKeyStore.openAI
@@ -477,6 +483,7 @@ final class LibraryViewModel: ObservableObject {
         trackFiles = TrackFileCoordinator(database: database)
         offlineCache = OfflineCacheManager(database: database)
         enrichment = WebEnrichmentService(database: database)
+        wikipediaGenreResolver = WikipediaGenreResolver(database: database)
         metadataAnalyzer = MetadataDiagnosticsAnalyzer(database: database)
         language = AppLanguage(rawValue: (try? database.setting(forKey: "app.language")) ?? "ja") ?? .japanese
         autoTranslateExternalArticles = (try? database.setting(forKey: "app.autoTranslateExternalArticles")) != "false"
@@ -495,6 +502,14 @@ final class LibraryViewModel: ObservableObject {
         normalizeMetadataCharacterWidths = (try? database.setting(forKey: "metadata.normalizeCharacterWidths")) == "true"
         trimMetadataWhitespace = (try? database.setting(forKey: "metadata.trimWhitespace")) == "true"
         autoNormalizeGenresToEnglish = (try? database.setting(forKey: "genre.autoNormalizeToEnglish")) == "true"
+        genreNormalizationLastChecked = Int((try? database.setting(forKey: "genre.normalizationLastChecked")) ?? "0") ?? 0
+        genreNormalizationLastUpdated = Int((try? database.setting(forKey: "genre.normalizationLastUpdated")) ?? "0") ?? 0
+        genreNormalizationLastUnresolved = Int((try? database.setting(forKey: "genre.normalizationLastUnresolved")) ?? "0") ?? 0
+        if let rawDate = try? database.setting(forKey: "genre.normalizationLastCompletedAt"),
+           let interval = Double(rawDate) {
+            genreNormalizationLastCompletedAt = Date(timeIntervalSince1970: interval)
+        }
+        refreshGenreKnowledge()
         autoMigrateID3v22ToV23 = (try? database.setting(forKey: "metadata.autoMigrateID3v22ToV23")) != "false"
         autoRegisterHighConfidenceGenres = (try? database.setting(forKey: "genre.autoRegisterHighConfidence")) == "true"
         autoFetchAlbumYear = (try? database.setting(forKey: "album.autoFetchYear")) != "false"
@@ -1473,15 +1488,31 @@ final class LibraryViewModel: ObservableObject {
         String(error.localizedDescription.prefix(160))
     }
 
+    private func canonicalGenreForRegistration(_ rawGenre: String) async -> String? {
+        let normalized = GenreNormalizer.normalize(rawGenre)
+        guard GenreNormalizer.containsJapanese(normalized) else { return normalized }
+        guard let knowledge = await wikipediaGenreResolver.resolve(rawGenre) else { return nil }
+        refreshGenreKnowledge()
+        return knowledge.canonicalName
+    }
+
     func applyGenreSuggestion(to track: Track) {
         guard let genreSuggestion else { return }
         self.genreSuggestion = nil
         let genre = genreSuggestion.genre
         Task { [weak self] in
             guard let self else { return }
+            var canonicalGenre = GenreNormalizer.normalize(genre)
             do {
+                guard let verifiedGenre = await canonicalGenreForRegistration(genre) else {
+                    throw MassiveMusicError.metadataWriteFailed(text(
+                        "ジャンル「\(genre)」の英語正規名と出典を確認できませんでした。元のジャンルは変更していません。",
+                        "Could not verify an English canonical name and source for genre “\(genre)”. The original genre was not changed."
+                    ))
+                }
+                canonicalGenre = verifiedGenre
                 var edit = TrackMetadataEdit(track: track)
-                edit.genre = genre
+                edit.genre = canonicalGenre
                 if await trackFiles.sourceFileIsAvailable(for: track) {
                     // A v2.2 tag needs an explicit decision before conversion.
                     // Keep the proposed genre in the request so confirmation
@@ -1491,7 +1522,7 @@ final class LibraryViewModel: ObservableObject {
                         metadataRepairRequest = MetadataRepairRequest(
                             track: track,
                             edit: edit,
-                            purpose: .aiGenre(genre)
+                            purpose: .aiGenre(canonicalGenre)
                         )
                         return
                     }
@@ -1501,7 +1532,7 @@ final class LibraryViewModel: ObservableObject {
                     // drive is disconnected. The source can be reconciled when
                     // it becomes available again.
                     try await Task.detached {
-                        try self.database.updateTrackGenre(id: track.id, genre: genre)
+                        try self.database.updateTrackGenre(id: track.id, genre: canonicalGenre)
                     }.value
                     lastMetadataEditedTrack = track.applying(edit)
                     loadCurrentPage(reset: false)
@@ -1510,11 +1541,11 @@ final class LibraryViewModel: ObservableObject {
                 let requiresConversion = (error as? MassiveMusicError)?.requiresID3v23Conversion == true
                 if track.format.lowercased() == "mp3", requiresConversion {
                     var edit = TrackMetadataEdit(track: track)
-                    edit.genre = genre
+                    edit.genre = canonicalGenre
                     metadataRepairRequest = MetadataRepairRequest(
                         track: track,
                         edit: edit,
-                        purpose: .aiGenre(genre)
+                        purpose: .aiGenre(canonicalGenre)
                     )
                 } else {
                     errorMessage = error.localizedDescription
@@ -2282,6 +2313,22 @@ final class LibraryViewModel: ObservableObject {
         edit: TrackMetadataEdit,
         closeRenamedAlbumDetail: Bool = false
     ) async throws {
+        var edit = edit
+        if edit.genre != track.genre {
+            let normalizedGenre = GenreNormalizer.normalize(edit.genre)
+            if GenreNormalizer.containsJapanese(normalizedGenre) {
+                guard let knowledge = await wikipediaGenreResolver.resolve(edit.genre) else {
+                    throw MassiveMusicError.metadataWriteFailed(text(
+                        "ジャンル「\(edit.genre)」の英語正規名と出典を確認できませんでした。元のジャンルは変更していません。",
+                        "Could not verify an English canonical name and source for genre “\(edit.genre)”. The original genre was not changed."
+                    ))
+                }
+                edit.genre = knowledge.canonicalName
+                refreshGenreKnowledge()
+            } else {
+                edit.genre = normalizedGenre
+            }
+        }
         let sourceFileIsAvailable = await trackFiles.sourceFileIsAvailable(for: track)
         if !sourceFileIsAvailable {
             try await queueMetadataEditForLater(
@@ -2710,6 +2757,58 @@ final class LibraryViewModel: ObservableObject {
         }
     }
 
+    var genreNormalizationStatusText: String {
+        if isNormalizingGenres {
+            return genreNormalizationProgress.isEmpty
+                ? text("ジャンルを整理中…", "Standardizing genres…")
+                : genreNormalizationProgress
+        }
+        if let completedAt = genreNormalizationLastCompletedAt {
+            let time = completedAt.formatted(date: .abbreviated, time: .shortened)
+            return text(
+                "前回完了: \(genreNormalizationLastChecked)曲確認・\(genreNormalizationLastUpdated)曲更新・\(genreNormalizationLastUnresolved)件未解決（\(time)）",
+                "Last completed: \(genreNormalizationLastChecked) checked, \(genreNormalizationLastUpdated) updated, \(genreNormalizationLastUnresolved) unresolved (\(time))"
+            )
+        }
+        return autoNormalizeGenresToEnglish
+            ? text("自動整理はオン・次回走査待ち", "Automatic standardization is on and ready")
+            : text("自動整理はオフです", "Automatic standardization is off")
+    }
+
+    func genreShortDescription(_ genre: String) -> String {
+        guard let knowledge = genreKnowledge(for: genre) else {
+            return GenreDescriptionCatalog.shortDescription(for: genre, language: language)
+        }
+        let summary = language == .japanese ? knowledge.summaryJapanese : knowledge.summaryEnglish
+        return summary.isEmpty
+            ? GenreDescriptionCatalog.shortDescription(for: genre, language: language)
+            : summary
+    }
+
+    func genreDetailDescription(_ genre: String) -> String {
+        guard let knowledge = genreKnowledge(for: genre) else {
+            return GenreDescriptionCatalog.detailDescription(for: genre, language: language)
+        }
+        let summary = language == .japanese ? knowledge.summaryJapanese : knowledge.summaryEnglish
+        return summary.isEmpty
+            ? GenreDescriptionCatalog.detailDescription(for: genre, language: language)
+            : summary
+    }
+
+    func genreKnowledge(for genre: String) -> GenreKnowledge? {
+        genreKnowledgeByCanonicalName[GenreNormalizer.lookupKey(genre)]
+    }
+
+    private func refreshGenreKnowledge() {
+        let all = (try? database.allGenreKnowledge()) ?? []
+        genreKnowledgeByCanonicalName = Dictionary(
+            all.map { (GenreNormalizer.lookupKey($0.canonicalName), $0) },
+            uniquingKeysWith: { existing, newer in
+                existing.resolvedAt >= newer.resolvedAt ? existing : newer
+            }
+        )
+    }
+
     func startGenreNormalizationAndMerging(forceResetCursor: Bool = false) {
         guard forceResetCursor || autoNormalizeGenresToEnglish else { return }
         guard genreNormalizationTask == nil else { return }
@@ -2735,8 +2834,10 @@ final class LibraryViewModel: ObservableObject {
             var processedCount = 0
             var updatedCount = 0
             var failed = 0
+            var unresolvedKeys: Set<String> = []
             var firstError: Error?
             do {
+                await wikipediaGenreResolver.resetTransientFailures()
                 while !Task.isCancelled, forceResetCursor || autoNormalizeGenresToEnglish {
                     let requestedAfterID = afterID
                     let page = try await Task.detached(priority: .utility) {
@@ -2747,7 +2848,12 @@ final class LibraryViewModel: ObservableObject {
                         try Task.checkCancellation()
                         afterID = track.id
                         processedCount += 1
-                        let normalizedGenre = GenreNormalizer.normalize(track.genre)
+                        var normalizedGenre = GenreNormalizer.normalize(track.genre)
+                        if let knowledge = await wikipediaGenreResolver.resolve(track.genre) {
+                            normalizedGenre = knowledge.canonicalName
+                        } else if GenreNormalizer.containsJapanese(normalizedGenre) {
+                            unresolvedKeys.insert(GenreNormalizer.lookupKey(track.genre))
+                        }
                         if normalizedGenre != track.genre {
                             var edit = TrackMetadataEdit(track: track)
                             edit.genre = normalizedGenre
@@ -2781,8 +2887,8 @@ final class LibraryViewModel: ObservableObject {
                     }
                     await MainActor.run {
                         self.genreNormalizationProgress = self.text(
-                            "ジャンルを英語標準表記に整理中… (\(processedCount)曲確認・\(updatedCount)曲更新)",
-                            "Standardizing genres… (\(processedCount) checked, \(updatedCount) updated)"
+                            "ジャンルを英語標準表記に整理中… (\(processedCount)曲確認・\(updatedCount)曲更新・\(unresolvedKeys.count)件未解決)",
+                            "Standardizing genres… (\(processedCount) checked, \(updatedCount) updated, \(unresolvedKeys.count) unresolved)"
                         )
                     }
                     try database.setSetting(
@@ -2790,10 +2896,22 @@ final class LibraryViewModel: ObservableObject {
                     )
                 }
                 await MainActor.run {
+                    self.genreNormalizationLastChecked = processedCount
+                    self.genreNormalizationLastUpdated = updatedCount
+                    self.genreNormalizationLastUnresolved = unresolvedKeys.count
+                    self.genreNormalizationLastCompletedAt = Date()
+                    self.refreshGenreKnowledge()
                     self.loadCurrentPage(reset: false)
                     self.refreshMetadataDiagnostics()
                     self.refreshSidebarCounts()
                 }
+                try database.setSetting(String(processedCount), forKey: "genre.normalizationLastChecked")
+                try database.setSetting(String(updatedCount), forKey: "genre.normalizationLastUpdated")
+                try database.setSetting(String(unresolvedKeys.count), forKey: "genre.normalizationLastUnresolved")
+                try database.setSetting(
+                    String(Date().timeIntervalSince1970),
+                    forKey: "genre.normalizationLastCompletedAt"
+                )
                 if let firstError {
                     let errorMsg = text(
                         "ジャンル標準化で\(failed)曲を保存できませんでした。最初のエラー: \(firstError.localizedDescription)",
@@ -4065,19 +4183,23 @@ final class LibraryViewModel: ObservableObject {
                         if let suggestion {
                             consecutiveProviderFailures = 0
                             if suggestion.confidence >= 0.80 {
-                                do {
-                                    try await Task.detached {
-                                        try self.database.updateTrackGenre(id: track.id, genre: suggestion.genre)
-                                    }.value
-                                    automaticGenreRegisteredCount += 1
-                                    switch suggestion.source {
-                                    case .library: automaticGenreLibraryRegisteredCount += 1
-                                    case .local: automaticGenreLocalRegisteredCount += 1
-                                    case .musicBrainz: automaticGenreMusicBrainzRegisteredCount += 1
-                                    case .openAI, .gemini: automaticGenreExternalAIRegisteredCount += 1
+                                if let canonicalGenre = await canonicalGenreForRegistration(suggestion.genre) {
+                                    do {
+                                        try await Task.detached {
+                                            try self.database.updateTrackGenre(id: track.id, genre: canonicalGenre)
+                                        }.value
+                                        automaticGenreRegisteredCount += 1
+                                        switch suggestion.source {
+                                        case .library: automaticGenreLibraryRegisteredCount += 1
+                                        case .local: automaticGenreLocalRegisteredCount += 1
+                                        case .musicBrainz: automaticGenreMusicBrainzRegisteredCount += 1
+                                        case .openAI, .gemini: automaticGenreExternalAIRegisteredCount += 1
+                                        }
+                                        recordAutomaticGenreRegistration(canonicalGenre)
+                                    } catch {
+                                        automaticGenreScanFailedCount += 1
                                     }
-                                    recordAutomaticGenreRegistration(suggestion.genre)
-                                } catch {
+                                } else {
                                     automaticGenreScanFailedCount += 1
                                 }
                             } else {
