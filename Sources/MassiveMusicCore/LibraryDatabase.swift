@@ -179,6 +179,12 @@ public final class LibraryDatabase: @unchecked Sendable {
         try trackCount()
     }
 
+    public func recentlyPlayedTrackCount() throws -> Int {
+        try pool.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks WHERE last_played_at IS NOT NULL AND is_available = 1") ?? 0
+        }
+    }
+
     public func librarySidebarCounts() throws -> (
         tracks: Int,
         albums: Int,
@@ -528,13 +534,13 @@ public final class LibraryDatabase: @unchecked Sendable {
             let previous = try Row.fetchOne(db, sql: "SELECT * FROM tracks WHERE id = ?", arguments: [id])
             try db.execute(
                 sql: """
-                    UPDATE tracks SET title = ?, artist = ?, album = ?, album_artist = ?, genre = ?, is_compilation = ?,
+                    UPDATE tracks SET title = ?, artist = ?, album = ?, album_artist = ?, genre = ?, year = ?, is_compilation = ?,
                         disc_number = ?, track_number = ?, file_size = ?, modified_at = ?,
                         has_artwork = CASE WHEN ? THEN 1 ELSE has_artwork END
                     WHERE id = ?
                     """,
                 arguments: [normalizedEdit.title, normalizedEdit.artist, normalizedEdit.album, normalizedEdit.albumArtist,
-                            normalizedEdit.genre, normalizedEdit.isCompilation, normalizedEdit.discNumber,
+                            normalizedEdit.genre, normalizedEdit.year, normalizedEdit.isCompilation, normalizedEdit.discNumber,
                             normalizedEdit.trackNumber, fileSize, modifiedAt.timeIntervalSince1970,
                             normalizedEdit.artworkData != nil, id]
             )
@@ -1305,6 +1311,51 @@ public final class LibraryDatabase: @unchecked Sendable {
         }
     }
 
+    public func pageRecentlyPlayedTracks(
+        query: String = "",
+        sort: TrackSort = .title,
+        direction: SortDirection = .ascending,
+        offset: Int = 0,
+        limit: Int = defaultPageSize
+    ) throws -> TrackPage {
+        guard (1...1_000).contains(limit) else { throw MassiveMusicError.invalidPageSize }
+        let safeOffset = max(0, offset)
+        let searchPattern = Self.ftsPattern(query)
+
+        return try pool.read { db in
+            var whereParts: [String] = ["t.last_played_at IS NOT NULL", "t.is_available = 1"]
+            var arguments: StatementArguments = []
+            var from = "tracks t"
+            if let searchPattern {
+                from += " JOIN tracks_fts f ON f.rowid = t.id"
+                whereParts.append("tracks_fts MATCH ?")
+                arguments += [searchPattern]
+            }
+            let whereSQL = whereParts.isEmpty ? "" : " WHERE " + whereParts.joined(separator: " AND ")
+            let total = try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM \(from)\(whereSQL)",
+                arguments: arguments
+            ) ?? 0
+            let orderSQL = sort == .title && direction == .ascending
+                ? "t.last_played_at DESC, t.id DESC"
+                : Self.orderSQL(sort, direction: direction)
+            var pageArguments = arguments
+            pageArguments += [limit, safeOffset]
+            let rows = try Row.fetchAll(
+                db,
+                sql: "SELECT t.* FROM \(from)\(whereSQL) ORDER BY \(orderSQL) LIMIT ? OFFSET ?",
+                arguments: pageArguments
+            )
+            return TrackPage(
+                tracks: rows.map(Self.decodeTrack),
+                offset: safeOffset,
+                limit: limit,
+                totalCount: total
+            )
+        }
+    }
+
     @discardableResult
     public func toggleFavorite(trackID: Int64) throws -> Bool {
         try pool.write { db in
@@ -1345,15 +1396,59 @@ public final class LibraryDatabase: @unchecked Sendable {
     public func similarTracks(to track: Track, limit: Int = 12) throws -> [Track] {
         guard (1...100).contains(limit) else { throw MassiveMusicError.invalidPageSize }
         return try pool.read { db in
+            let genre = track.genre.trimmingCharacters(in: .whitespacesAndNewlines)
+            let artist = track.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+            let albumArtist = track.albumArtist.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if genre.isEmpty && artist.isEmpty && albumArtist.isEmpty {
+                let rows = try Row.fetchAll(db, sql: """
+                    SELECT * FROM tracks
+                    WHERE id <> ? AND is_available = 1
+                    ORDER BY play_count ASC, RANDOM()
+                    LIMIT ?
+                    """, arguments: [track.id, limit])
+                return rows.map(Self.decodeTrack)
+            }
+
             let rows = try Row.fetchAll(db, sql: """
-                SELECT * FROM tracks
-                WHERE id <> ? AND is_available = 1
-                  AND ((? <> '' AND genre = ?) OR (? <> '' AND artist = ?) OR (? <> '' AND album_artist = ?))
-                ORDER BY CASE WHEN genre = ? THEN 0 WHEN artist = ? THEN 1 ELSE 2 END,
-                         play_count DESC, id
+                WITH candidates AS (
+                    SELECT t.*,
+                           ROW_NUMBER() OVER(
+                               PARTITION BY t.artist 
+                               ORDER BY t.play_count ASC, RANDOM()
+                           ) as artist_track_rank
+                    FROM tracks t
+                    WHERE t.id <> ? AND t.is_available = 1
+                      AND (
+                          (? <> '' AND t.genre = ?)
+                          OR (? <> '' AND t.artist = ?)
+                          OR (? <> '' AND t.album_artist = ?)
+                      )
+                )
+                SELECT * FROM candidates
+                WHERE (artist <> ? AND artist_track_rank <= 2)
+                   OR (artist = ? AND artist_track_rank <= 1)
+                ORDER BY 
+                    CASE 
+                        WHEN ? <> '' AND genre = ? AND artist <> ? THEN 0
+                        WHEN ? <> '' AND genre = ? THEN 1
+                        WHEN ? <> '' AND artist = ? THEN 2
+                        ELSE 3
+                    END ASC,
+                    play_count ASC,
+                    RANDOM()
                 LIMIT ?
-                """, arguments: [track.id, track.genre, track.genre, track.artist, track.artist,
-                                  track.albumArtist, track.albumArtist, track.genre, track.artist, limit])
+                """, arguments: [
+                    track.id,
+                    genre, genre,
+                    artist, artist,
+                    albumArtist, albumArtist,
+                    artist, artist,
+                    genre, genre, artist,
+                    genre, genre,
+                    artist, artist,
+                    limit
+                ])
             return rows.map(Self.decodeTrack)
         }
     }
@@ -1591,24 +1686,24 @@ public final class LibraryDatabase: @unchecked Sendable {
 
     public func cachedTracksBeyondLimit(_ limit: Int) throws -> [(Int64, String)] {
         try pool.read { db in
-            try Row.fetchAll(
+            let totalCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM local_cache") ?? 0
+            let targetLimit = max(0, limit)
+            let excess = totalCount - targetLimit
+            guard excess > 0 else { return [] }
+
+            return try Row.fetchAll(
                 db,
                 sql: """
                     SELECT c.track_id, c.local_path
                     FROM local_cache c
                     LEFT JOIN tracks t ON t.id = c.track_id
-                    ORDER BY 
-                        CASE 
-                            WHEN c.is_pinned = 1 
-                              OR (t.is_favorite IS NOT NULL AND t.is_favorite = 1) 
-                              OR EXISTS (SELECT 1 FROM playlist_items i WHERE i.track_id = c.track_id)
-                            THEN 0
-                            ELSE 1
-                        END ASC,
-                        c.last_accessed_at DESC
-                    LIMIT -1 OFFSET ?
+                    WHERE (c.is_pinned IS NULL OR c.is_pinned = 0)
+                      AND (t.is_favorite IS NULL OR t.is_favorite = 0)
+                      AND NOT EXISTS (SELECT 1 FROM playlist_items i WHERE i.track_id = c.track_id)
+                    ORDER BY c.last_accessed_at ASC
+                    LIMIT ?
                     """,
-                arguments: [max(0, limit)]
+                arguments: [excess]
             ).map { ($0["track_id"], $0["local_path"]) }
         }
     }
@@ -2767,6 +2862,13 @@ public final class LibraryDatabase: @unchecked Sendable {
                     arguments += [pattern]
                 }
             case let .recentlyAdded(query):
+                if let pattern = Self.ftsPattern(query) {
+                    from += " JOIN tracks_fts f ON f.rowid = t.id"
+                    predicates.append("tracks_fts MATCH ?")
+                    arguments += [pattern]
+                }
+            case let .history(query):
+                predicates.append("t.last_played_at IS NOT NULL")
                 if let pattern = Self.ftsPattern(query) {
                     from += " JOIN tracks_fts f ON f.rowid = t.id"
                     predicates.append("tracks_fts MATCH ?")

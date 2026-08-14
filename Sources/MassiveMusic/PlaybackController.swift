@@ -863,4 +863,33 @@ final class PlaybackController: ObservableObject {
         self.currentTrack = updated
         updateNowPlaying()
     }
+
+    func setCurrentTrackFavorite(_ isFavorite: Bool) {
+        guard let current = currentTrack, current.isFavorite != isFavorite else { return }
+        let updated = Track(
+            id: current.id,
+            rootID: current.rootID,
+            relativePath: current.relativePath,
+            filename: current.filename,
+            title: current.title,
+            artist: current.artist,
+            album: current.album,
+            albumArtist: current.albumArtist,
+            genre: current.genre,
+            year: current.year,
+            isCompilation: current.isCompilation,
+            discNumber: current.discNumber,
+            trackNumber: current.trackNumber,
+            duration: current.duration,
+            fileSize: current.fileSize,
+            modifiedAt: current.modifiedAt,
+            format: current.format,
+            bitrate: current.bitrate,
+            hasArtwork: current.hasArtwork,
+            isAvailable: current.isAvailable,
+            addedAt: current.addedAt,
+            isFavorite: isFavorite
+        )
+        self.currentTrack = updated
+    }
 }

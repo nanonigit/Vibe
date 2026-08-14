@@ -272,7 +272,7 @@ private struct BrowseReturnState {
 
 @MainActor
 final class LibraryViewModel: ObservableObject {
-    private static let defaultLibrarySectionOrder: [LibrarySection] = [.cache, .artists, .albums, .tracks, .genres, .favorites]
+    private static let defaultLibrarySectionOrder: [LibrarySection] = [.cache, .artists, .albums, .tracks, .history, .genres, .favorites]
     private static let defaultHiddenLibrarySections: Set<LibrarySection> = [.recentlyAdded, .upNext, .folders]
 
     @Published var section: LibrarySection = .tracks
@@ -305,6 +305,7 @@ final class LibraryViewModel: ObservableObject {
     @Published private(set) var offset = 0
     @Published private(set) var totalCount = 0
     @Published private(set) var favoriteTrackCount = 0
+    @Published private(set) var recentlyPlayedTrackCount = 0
     @Published private(set) var recentlyAddedTrackCount = 0
     @Published private(set) var libraryTrackCount = 0
     @Published private(set) var libraryAlbumCount = 0
@@ -587,6 +588,8 @@ final class LibraryViewModel: ObservableObject {
             scope = .genre(name: selectedGenre)
         } else if section == .favorites {
             scope = .favorites
+        } else if section == .history {
+            scope = .history(query: searchText)
         } else if section == .cache {
             scope = .cache(query: searchText)
         } else if section == .recentlyAdded {
@@ -606,6 +609,7 @@ final class LibraryViewModel: ObservableObject {
     func sectionTitle(_ section: LibrarySection) -> String {
         switch section {
         case .tracks: text("曲", "Songs")
+        case .history: text("履歴", "History")
         case .recentlyAdded: text("最近追加した曲", "Recently Added")
         case .upNext: text("次に再生", "Up Next")
         case .albums: text("アルバム", "Albums")
@@ -615,6 +619,7 @@ final class LibraryViewModel: ObservableObject {
         case .folders: text("フォルダ", "Folders")
         case .favorites: text("お気に入り", "Favorites")
         case .cache: text("キャッシュ", "Cache")
+        case .settings: text("設定と管理", "Settings & Management")
         case .activityLog: text("ログ", "Activity Log")
         case .diagnostics: text("メタデータ診断", "Metadata Diagnostics")
         }
@@ -738,6 +743,10 @@ final class LibraryViewModel: ObservableObject {
             sort = .dateAdded
             sortDirection = .descending
         }
+        if newSection == .history {
+            sort = .title
+            sortDirection = .ascending
+        }
         if newSection == .upNext {
             tracks = []
             facets = []
@@ -844,7 +853,7 @@ final class LibraryViewModel: ObservableObject {
 
     private static func isReorderableLibrarySection(_ section: LibrarySection) -> Bool {
         switch section {
-        case .playlists, .diagnostics, .activityLog: false
+        case .playlists, .settings, .diagnostics, .activityLog: false
         default: true
         }
     }
@@ -1107,12 +1116,16 @@ final class LibraryViewModel: ObservableObject {
         selectedGenre = nil
         selectedArtist = nil
         exactMetadataFilter = nil
-        selectedAlbum = AlbumSummary(
+        let summary = AlbumSummary(
             name: album,
             artist: track.albumNavigationArtist,
             year: track.year.trimmingCharacters(in: .whitespacesAndNewlines),
             trackCount: 0
         )
+        selectedAlbum = summary
+        if let currentArtwork = enrichedInfo?.artworkURL {
+            albumArtworkURLs[summary.id] = currentArtwork
+        }
         sort = .album
         sortDirection = .ascending
         loadCurrentPage(reset: true)
@@ -1991,6 +2004,18 @@ final class LibraryViewModel: ObservableObject {
                         try self.database.pageFavoriteTracks(
                             sort: requestedSort, direction: requestedDirection,
                             offset: requestedOffset, limit: self.pageSize
+                        )
+                    }.value
+                    try Task.checkCancellation()
+                    apply(page: page)
+                } else if requestedSection == .history {
+                    let page = try await Task.detached(priority: .userInitiated) {
+                        try self.database.pageRecentlyPlayedTracks(
+                            query: requestedQuery,
+                            sort: requestedSort,
+                            direction: requestedDirection,
+                            offset: requestedOffset,
+                            limit: self.pageSize
                         )
                     }.value
                     try Task.checkCancellation()
@@ -4059,7 +4084,7 @@ final class LibraryViewModel: ObservableObject {
             guard let self else { return }
             let currentTrack = (try? database.track(id: track.id)) ?? track
             async let info = enrichment.info(for: currentTrack, languageCode: language.rawValue)
-            async let similar = Task.detached { try self.database.similarTracks(to: currentTrack) }.value
+            async let similar = Task.detached { try self.database.similarTracks(to: currentTrack, limit: 50) }.value
             let resolvedInfo = await info
             let resolvedSimilar = (try? await similar) ?? []
             guard !Task.isCancelled else { return }
@@ -4537,6 +4562,7 @@ final class LibraryViewModel: ObservableObject {
         }
         switch section {
         case .tracks: return .tracks
+        case .history: return nil
         case .recentlyAdded: return .tracks
         case .albums: return .albums
         case .artists: return .artists
@@ -4624,13 +4650,15 @@ final class LibraryViewModel: ObservableObject {
             let counts = await Task.detached {
                 (
                     (try? self.database.favoriteTrackCount()) ?? 0,
+                    (try? self.database.recentlyPlayedTrackCount()) ?? 0,
                     (try? self.database.recentlyAddedTrackCount()) ?? 0,
                     try? self.database.librarySidebarCounts()
                 )
             }.value
             favoriteTrackCount = counts.0
-            recentlyAddedTrackCount = counts.1
-            if let library = counts.2 {
+            recentlyPlayedTrackCount = counts.1
+            recentlyAddedTrackCount = counts.2
+            if let library = counts.3 {
                 libraryTrackCount = library.tracks
                 libraryAlbumCount = library.albums
                 libraryArtistCount = library.artists

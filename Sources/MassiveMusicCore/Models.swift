@@ -2,6 +2,7 @@ import Foundation
 
 public enum LibrarySection: String, CaseIterable, Identifiable, Hashable, Sendable {
     case tracks = "曲"
+    case history = "履歴"
     case recentlyAdded = "最近追加した曲"
     case upNext = "次に再生"
     case albums = "アルバム"
@@ -11,6 +12,7 @@ public enum LibrarySection: String, CaseIterable, Identifiable, Hashable, Sendab
     case folders = "フォルダ"
     case favorites = "お気に入り"
     case cache = "キャッシュ"
+    case settings = "設定と管理"
     case activityLog = "ログ"
     case diagnostics = "メタデータ診断"
 
@@ -357,6 +359,7 @@ public enum ArtistSort: String, CaseIterable, Identifiable, Equatable, Sendable 
 
 public enum TrackPlaybackScope: Equatable, Sendable {
     case library(query: String)
+    case history(query: String)
     case recentlyAdded(query: String)
     case album(name: String, artist: String)
     case artist(name: String)
