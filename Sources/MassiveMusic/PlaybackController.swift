@@ -161,6 +161,18 @@ final class PlaybackController: ObservableObject {
                     }
                     url = try await offlineCache.playableURL(for: track, sourceURL: sourceURL)
                 }
+                let fileSize = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+                if fileSize == 0 || track.duration <= 0 {
+                    let isEnglish = (try? database.setting(forKey: "app.language")) == "en"
+                    errorMessage = isEnglish
+                        ? "The audio file is empty (0 bytes) or corrupted and cannot be played."
+                        : "音声ファイルが空（0バイト）または破損しているため再生できません。"
+                    isPlaying = false
+                    currentTrack = track
+                    elapsed = 0
+                    duration = 0
+                    return
+                }
                 let item = AVPlayerItem(url: url)
                 item.audioTimePitchAlgorithm = .spectral
                 unavailableTrackIDs.remove(track.id)

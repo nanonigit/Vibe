@@ -149,6 +149,7 @@ public enum MetadataIssueKind: String, CaseIterable, Identifiable, Equatable, Se
     case suspectedMojibake
     case duplicateTracks
     case suspectedVariations
+    case corruptedOrEmpty
     public var id: String { rawValue }
 }
 
@@ -156,6 +157,7 @@ public enum MetadataField: String, CaseIterable, Identifiable, Hashable, Sendabl
     case title
     case artist
     case album
+    case genre
     public var id: String { rawValue }
 }
 
@@ -1012,6 +1014,9 @@ public enum GenreNormalizer {
         "ソフトロック": "Soft Rock",
         "ダーク・アンビエント": "Dark Ambient",
         "ダークアンビエント": "Dark Ambient",
+        "ダーク・キャバレー": "Dark Cabaret",
+        "ダークキャバレー": "Dark Cabaret",
+        "キャバレー": "Cabaret",
 
         // --- Building-block words for substring replacement ---
         "フレンチ": "French",

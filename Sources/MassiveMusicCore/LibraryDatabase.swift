@@ -933,6 +933,7 @@ public final class LibraryDatabase: @unchecked Sendable {
         case .title: "title"
         case .artist: "artist"
         case .album: "album"
+        case .genre: "genre"
         }
         return try pool.read { db in
             let total = try Int.fetchOne(
@@ -1008,7 +1009,8 @@ public final class LibraryDatabase: @unchecked Sendable {
                     SUM(CASE WHEN \(Self.metadataIssuePredicate(.missingArtist)) THEN 1 ELSE 0 END) AS missing_artist,
                     SUM(CASE WHEN \(Self.metadataIssuePredicate(.missingAlbum)) THEN 1 ELSE 0 END) AS missing_album,
                     SUM(CASE WHEN \(Self.metadataIssuePredicate(.urlInMP3Metadata)) THEN 1 ELSE 0 END) AS url_metadata,
-                    SUM(CASE WHEN \(Self.metadataIssuePredicate(.suspectedMojibake)) THEN 1 ELSE 0 END) AS mojibake
+                    SUM(CASE WHEN \(Self.metadataIssuePredicate(.suspectedMojibake)) THEN 1 ELSE 0 END) AS mojibake,
+                    SUM(CASE WHEN \(Self.metadataIssuePredicate(.corruptedOrEmpty)) THEN 1 ELSE 0 END) AS corrupted_count
                 FROM tracks t
                 """) else { return [] }
             let duplicateCount = try Int.fetchOne(db, sql: Self.duplicateMetadataCountSQL) ?? 0
@@ -1018,7 +1020,8 @@ public final class LibraryDatabase: @unchecked Sendable {
                 MetadataIssueSummary(kind: .missingAlbum, count: row["missing_album"] ?? 0),
                 MetadataIssueSummary(kind: .urlInMP3Metadata, count: row["url_metadata"] ?? 0),
                 MetadataIssueSummary(kind: .suspectedMojibake, count: row["mojibake"] ?? 0),
-                MetadataIssueSummary(kind: .duplicateTracks, count: duplicateCount)
+                MetadataIssueSummary(kind: .duplicateTracks, count: duplicateCount),
+                MetadataIssueSummary(kind: .corruptedOrEmpty, count: row["corrupted_count"] ?? 0)
             ]
         }
     }
@@ -1593,13 +1596,16 @@ public final class LibraryDatabase: @unchecked Sendable {
                 sql: """
                     SELECT c.track_id, c.local_path
                     FROM local_cache c
-                    JOIN tracks t ON t.id = c.track_id
-                    WHERE c.is_pinned = 0
-                      AND t.is_favorite = 0
-                      AND NOT EXISTS (
-                          SELECT 1 FROM playlist_items i WHERE i.track_id = c.track_id
-                      )
-                    ORDER BY c.last_accessed_at DESC
+                    LEFT JOIN tracks t ON t.id = c.track_id
+                    ORDER BY 
+                        CASE 
+                            WHEN c.is_pinned = 1 
+                              OR (t.is_favorite IS NOT NULL AND t.is_favorite = 1) 
+                              OR EXISTS (SELECT 1 FROM playlist_items i WHERE i.track_id = c.track_id)
+                            THEN 0
+                            ELSE 1
+                        END ASC,
+                        c.last_accessed_at DESC
                     LIMIT -1 OFFSET ?
                     """,
                 arguments: [max(0, limit)]
@@ -2801,6 +2807,7 @@ public final class LibraryDatabase: @unchecked Sendable {
                 case .title: "title"
                 case .artist: "artist"
                 case .album: "album"
+                case .genre: "genre"
                 }
                 predicates.append("t.\(column) = ?")
                 arguments += [value]
@@ -3037,6 +3044,7 @@ public final class LibraryDatabase: @unchecked Sendable {
         case .title: "t.title"
         case .artist: "t.artist"
         case .album: "t.album"
+        case .genre: "t.genre"
         case nil: "t.title || ' ' || t.artist || ' ' || t.album || ' ' || t.album_artist || ' ' || t.genre || ' ' || t.filename"
         }
         return switch kind {
@@ -3073,6 +3081,7 @@ public final class LibraryDatabase: @unchecked Sendable {
             )
             """
         case .suspectedVariations: "0"
+        case .corruptedOrEmpty: "t.duration <= 0 OR t.is_available = 0"
         }
     }
 
@@ -3107,7 +3116,7 @@ public final class LibraryDatabase: @unchecked Sendable {
         """
 
     private static func metadataColumn(_ field: MetadataField) -> String {
-        switch field { case .title: "title"; case .artist: "artist"; case .album: "album" }
+        switch field { case .title: "title"; case .artist: "artist"; case .album: "album"; case .genre: "genre" }
     }
 
     private static func ftsPattern(_ query: String) -> String? {

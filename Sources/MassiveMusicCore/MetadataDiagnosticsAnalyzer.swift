@@ -117,7 +117,22 @@ public actor MetadataDiagnosticsAnalyzer {
                 guard first.normalized != second.normalized else { continue }
                 let maximum = max(first.normalized.count, second.normalized.count) >= 16 ? 2 : 1
                 let distance = MetadataNormalizer.editDistance(first.normalized, second.normalized, maximum: maximum)
-                if distance <= maximum,
+                
+                let isGenreVariant: Bool
+                if field == .genre {
+                    let n1 = first.normalized
+                    let n2 = second.normalized
+                    let isPrefixMatch = (n1.count >= 4 && n2.hasPrefix(n1)) || (n2.count >= 4 && n1.hasPrefix(n2))
+                    let isKnownSuffixVariant = (n1.hasPrefix("stoner") && n2.hasPrefix("stoner"))
+                        || (n1.hasPrefix("surf") && n2.hasPrefix("surf"))
+                        || (n1.hasPrefix("swing") && n2.hasPrefix("swing"))
+                        || (n1.hasPrefix("dark") && n2.hasPrefix("dark"))
+                    isGenreVariant = isPrefixMatch || isKnownSuffixVariant
+                } else {
+                    isGenreVariant = false
+                }
+
+                if (distance <= maximum || isGenreVariant),
                    try database.insertTypoCandidate(field: field, first: first, second: second, distance: distance) {
                     inserted += 1
                 }

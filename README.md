@@ -44,10 +44,18 @@ flowchart LR
 - Scan and play MP3, M4A, WAV, and FLAC files
 - Browse by track, album, artist, genre, folder, favorites, or recently added
 - Show optional release-year columns for tracks and albums, and a representative genre for each artist
-- Save column order, visibility, and width
+- Drag-and-drop column reordering, visibility toggles, and persistent column widths for track and artist tables
 - Restore your scroll position when returning to the artist list
 - Keep keyboard focus during incremental search, with a full-size search field from the first keystroke
 - Start with a concise library sidebar while preserving every saved visibility and ordering choice
+
+### Metadata diagnostics, file repair, and variation standardization
+
+- Automatically detect and list corrupted or unplayable files (zero-byte files and invalid audio headers)
+- Re-scan and repair missing metadata or durations directly from source files
+- Batch delete and move unrepairable corrupted files to Trash
+- Real-time progress bar, song counters, spinner, and cancel support during batch variation standardization
+- Diagnose duplicates, missing values, mojibake, and embedded URLs
 
 ### External SSD workflow and offline playback
 
@@ -157,7 +165,7 @@ brew upgrade --cask vibe
 
 ### Direct download
 
-Download `Vibe-v0.16.0-macos-arm64.zip` from [GitHub Releases](https://github.com/nanonigit/Vibe/releases), extract it, and move `Vibe.app` wherever you prefer.
+Download `Vibe-v0.17.0-macos-arm64.zip` from [GitHub Releases](https://github.com/nanonigit/Vibe/releases), extract it, and move `Vibe.app` wherever you prefer.
 
 The current build is not notarized. If macOS blocks the first launch, Control-click Vibe in Finder, choose **Open**, review the warning, and confirm that you want to launch it.
 

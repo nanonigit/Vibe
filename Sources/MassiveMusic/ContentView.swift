@@ -113,8 +113,6 @@ struct ContentView: View {
     @State private var batchMetadataEditRequest: BatchMetadataEditRequest?
     @State private var variationStandardizationRequest: VariationStandardizationRequest?
     @State private var selectionAnchorID: Int64?
-    @State private var inspectorDragStartWidth: Double?
-    @State private var isInspectorDividerHovered = false
     @State private var sidebarDropTarget: LibrarySection?
     @State private var isReorderingLibrary = false
     @State private var isReorderingPlaylists = false
@@ -123,6 +121,7 @@ struct ContentView: View {
     @State private var playlistNameDraft = ""
     @State private var artistScrollPosition: String?
     @State private var artistReturnScrollPosition: String?
+    @State private var showDeleteUnrepairableAlert = false
     @FocusState private var isTrackTableFocused: Bool
     @FocusState private var isLibrarySearchFocused: Bool
     @FocusState private var focusedPlaylistEditorID: Int64?
@@ -153,12 +152,13 @@ struct ContentView: View {
     @AppStorage("columns.artistView.genre.visible") private var isArtistViewGenreVisible = true
     @AppStorage("columns.albumView.album.width") private var albumViewAlbumWidth = 480.0
     @AppStorage("columns.albumView.artist.width") private var albumViewArtistWidth = 260.0
-    @AppStorage("columns.albumView.year.width") private var albumViewYearWidth = 85.0
+    @AppStorage("columns.albumView.year.width") private var albumViewYearWidth = 100.0
     @AppStorage("columns.albumView.songs.width") private var albumViewSongsWidth = 80.0
     @AppStorage("columns.artistView.artist.width") private var artistViewArtistWidth = 480.0
     @AppStorage("columns.artistView.genre.width") private var artistViewGenreWidth = 180.0
     @AppStorage("columns.artistView.albums.width") private var artistViewAlbumsWidth = 100.0
     @AppStorage("columns.artistView.songs.width") private var artistViewSongsWidth = 100.0
+    @AppStorage("columns.artistView.order.v1") private var artistColumnOrderStorage = ""
     @AppStorage("albums.presentation") private var albumPresentation = SummaryPresentation.list.rawValue
     @AppStorage("artists.presentation") private var artistPresentation = SummaryPresentation.list.rawValue
 
@@ -174,8 +174,12 @@ struct ContentView: View {
                         .frame(minWidth: 420, maxWidth: .infinity)
                         .clipped()
                     if showInspector {
-                        inspectorDivider
-                            .zIndex(10)
+                        InspectorDivider(
+                            inspectorWidth: $inspectorWidth,
+                            helpText: model.text("ドラッグで幅を変更・ダブルクリックで元に戻す", "Drag to resize; double-click to reset"),
+                            accessibilityText: model.text("再生情報パネルの幅を変更", "Resize Now Playing panel")
+                        )
+                        .zIndex(10)
                         NowPlayingInspector(
                             model: model,
                             player: player,
@@ -186,7 +190,8 @@ struct ContentView: View {
                                 showSettings = true
                             }
                         )
-                            .frame(width: inspectorWidth)
+                            .frame(minWidth: inspectorWidth, maxWidth: inspectorWidth)
+                            .transaction { $0.animation = nil }
                     }
                 }
                 .padding(.top, -max(0, geometry.safeAreaInsets.top - 16))
@@ -343,54 +348,6 @@ struct ContentView: View {
         } message: {
             Text(model.errorMessage ?? player.errorMessage ?? "")
         }
-    }
-
-    private var inspectorDivider: some View {
-        ZStack {
-            Rectangle()
-                .fill(isInspectorDividerHovered || inspectorDragStartWidth != nil
-                    ? Color.accentColor.opacity(0.16)
-                    : Color.clear)
-            Rectangle()
-                .fill(Color(nsColor: .separatorColor))
-                .frame(width: inspectorDragStartWidth == nil ? 1 : 2)
-            Capsule()
-                .fill(isInspectorDividerHovered || inspectorDragStartWidth != nil
-                    ? Color.accentColor
-                    : Color.secondary.opacity(0.68))
-                .frame(
-                    width: isInspectorDividerHovered || inspectorDragStartWidth != nil ? 6 : 4,
-                    height: isInspectorDividerHovered || inspectorDragStartWidth != nil ? 72 : 52
-                )
-                .overlay {
-                    VStack(spacing: 5) {
-                        ForEach(0..<3, id: \.self) { _ in
-                            Circle().fill(Color(nsColor: .windowBackgroundColor)).frame(width: 2.5, height: 2.5)
-                        }
-                    }
-                }
-        }
-        .frame(width: 18)
-        .contentShape(Rectangle())
-        .animation(.easeOut(duration: 0.12), value: isInspectorDividerHovered)
-        .onHover { hovering in
-            isInspectorDividerHovered = hovering
-            if hovering { NSCursor.resizeLeftRight.push() }
-            else { NSCursor.pop() }
-        }
-        .highPriorityGesture(
-            DragGesture(minimumDistance: 0, coordinateSpace: .global)
-                .onChanged { value in
-                    let start = inspectorDragStartWidth ?? inspectorWidth
-                    inspectorDragStartWidth = start
-                    let dragDistance = value.startLocation.x - value.location.x
-                    inspectorWidth = min(600, max(260, start + dragDistance))
-                }
-                .onEnded { _ in inspectorDragStartWidth = nil }
-        )
-        .onTapGesture(count: 2) { inspectorWidth = 310 }
-        .help(model.text("ドラッグで幅を変更・ダブルクリックで元に戻す", "Drag to resize; double-click to reset"))
-        .accessibilityLabel(model.text("再生情報パネルの幅を変更", "Resize Now Playing panel"))
     }
 
     private var inspectorToggleButton: some View {
@@ -1114,7 +1071,7 @@ struct ContentView: View {
                 Menu {
                     if (model.section == .albums || model.selectedArtist != nil) && model.selectedAlbum == nil {
                         columnVisibilityButton(model.text("アーティスト", "Artist"), isVisible: $isAlbumViewArtistVisible)
-                        columnVisibilityButton(model.text("リリース年", "Year"), isVisible: $isAlbumViewYearVisible)
+                        columnVisibilityButton(model.text("リリース年", "Release Year"), isVisible: $isAlbumViewYearVisible)
                         columnVisibilityButton(model.text("曲数", "Songs"), isVisible: $isAlbumViewSongsVisible)
                     } else if model.section == .artists && model.selectedArtist == nil {
                         columnVisibilityButton(model.text("ジャンル", "Genre"), isVisible: $isArtistViewGenreVisible)
@@ -1593,10 +1550,10 @@ struct ContentView: View {
                         .tableColumnDivider()
                 }
                 if isAlbumViewYearVisible {
-                    albumHeaderButton(.year, title: model.text("年", "Year"))
+                    albumHeaderButton(.year, title: model.text("リリース年", "Release Year"))
                         .frame(width: albumViewYearWidth, alignment: .trailing)
                         .overlay(alignment: .trailing) {
-                            ColumnResizeHandle(width: $albumViewYearWidth, range: 50...150)
+                            ColumnResizeHandle(width: $albumViewYearWidth, range: 60...200)
                         }
                         .tableColumnDivider()
                 }
@@ -1720,40 +1677,56 @@ struct ContentView: View {
         }
     }
 
+    private let defaultArtistColumnOrder: [ArtistSort] = [.name, .genre, .albumCount, .trackCount]
+
+    private var orderedArtistColumns: [ArtistSort] {
+        var seen = Set<String>()
+        let stored = artistColumnOrderStorage
+            .split(separator: ",")
+            .compactMap { ArtistSort(rawValue: String($0)) }
+            .filter { defaultArtistColumnOrder.contains($0) && seen.insert($0.rawValue).inserted }
+        return stored + defaultArtistColumnOrder.filter { !seen.contains($0.rawValue) }
+    }
+
+    private var orderedVisibleArtistColumns: [ArtistSort] {
+        orderedArtistColumns.filter(isArtistColumnVisible)
+    }
+
+    private func isArtistColumnVisible(_ column: ArtistSort) -> Bool {
+        switch column {
+        case .name: true
+        case .genre: isArtistViewGenreVisible
+        case .albumCount: isArtistViewAlbumsVisible
+        case .trackCount: isArtistViewSongsVisible
+        }
+    }
+
+    private func moveArtistColumn(_ source: ArtistSort, before destination: ArtistSort) {
+        guard source != destination else { return }
+        var order = orderedArtistColumns
+        guard let sourceIndex = order.firstIndex(of: source) else { return }
+        order.remove(at: sourceIndex)
+        guard let destinationIndex = order.firstIndex(of: destination) else { return }
+        order.insert(source, at: destinationIndex)
+        artistColumnOrderStorage = order.map(\.rawValue).joined(separator: ",")
+    }
+
     private var artistSummaryTable: some View {
         GeometryReader { geometry in
             ScrollView(.horizontal, showsIndicators: true) {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                artistHeaderButton(.name, title: model.text("アーティスト", "Artist"))
-                    .frame(width: artistViewArtistWidth, alignment: .leading)
-                    .overlay(alignment: .trailing) {
-                        ColumnResizeHandle(width: $artistViewArtistWidth, range: 140...900)
-                    }
-                    .tableColumnDivider()
-                if isArtistViewGenreVisible {
-                    artistHeaderButton(.genre, title: model.text("ジャンル", "Genre"))
-                        .frame(width: artistViewGenreWidth, alignment: .leading)
-                        .overlay(alignment: .trailing) {
-                            ColumnResizeHandle(width: $artistViewGenreWidth, range: 90...360)
-                        }
+                ForEach(orderedVisibleArtistColumns) { column in
+                    artistColumnHeader(column)
                         .tableColumnDivider()
-                }
-                if isArtistViewAlbumsVisible {
-                    artistHeaderButton(.albumCount, title: model.text("アルバム数", "Albums"))
-                        .frame(width: artistViewAlbumsWidth, alignment: .trailing)
-                        .overlay(alignment: .trailing) {
-                            ColumnResizeHandle(width: $artistViewAlbumsWidth, range: 65...200)
+                        .draggable(column.rawValue)
+                        .dropDestination(for: String.self) { values, _ in
+                            guard let rawValue = values.first,
+                                  let source = ArtistSort(rawValue: rawValue),
+                                  orderedVisibleArtistColumns.contains(source) else { return false }
+                            moveArtistColumn(source, before: column)
+                            return true
                         }
-                        .tableColumnDivider()
-                }
-                if isArtistViewSongsVisible {
-                    artistHeaderButton(.trackCount, title: model.text("曲数", "Songs"))
-                        .frame(width: artistViewSongsWidth, alignment: .trailing)
-                        .overlay(alignment: .trailing) {
-                            ColumnResizeHandle(width: $artistViewSongsWidth, range: 55...180)
-                        }
-                        .tableColumnDivider()
                 }
                 Spacer().frame(width: 28)
             }
@@ -1766,20 +1739,10 @@ struct ContentView: View {
                 LazyVStack(spacing: 0) {
                     ForEach(model.artistSummaries) { artist in
                         Button { openArtistPreservingScrollPosition(artist) } label: {
-                            HStack {
-                                Label(model.displayArtist(artist.name), systemImage: artist.name.isEmpty ? "person.crop.circle.badge.questionmark" : "music.mic").frame(width: artistViewArtistWidth, alignment: .leading).tableColumnDivider()
-                                if isArtistViewGenreVisible {
-                                    Text(artist.genre.isEmpty ? "—" : artist.genre)
-                                        .foregroundStyle(artist.genre.isEmpty ? .secondary : .primary)
-                                        .lineLimit(1)
-                                        .frame(width: artistViewGenreWidth, alignment: .leading)
+                            HStack(spacing: 8) {
+                                ForEach(orderedVisibleArtistColumns) { column in
+                                    artistColumnCell(column, artist: artist)
                                         .tableColumnDivider()
-                                }
-                                if isArtistViewAlbumsVisible {
-                                    Text(artist.albumCount.formatted()).frame(width: artistViewAlbumsWidth, alignment: .trailing).monospacedDigit().tableColumnDivider()
-                                }
-                                if isArtistViewSongsVisible {
-                                    Text(artist.trackCount.formatted()).frame(width: artistViewSongsWidth, alignment: .trailing).monospacedDigit().tableColumnDivider()
                                 }
                                 Image(systemName: "chevron.right").foregroundStyle(.tertiary).frame(width: 20)
                             }
@@ -1836,8 +1799,10 @@ struct ContentView: View {
             && model.selectedArtist != nil
             && model.selectedAlbum == nil
         model.closeDetail()
-        guard shouldRestoreArtistList, artistReturnScrollPosition != nil else { return }
-        restorePendingArtistScrollPositionIfNeeded()
+        if shouldRestoreArtistList, artistReturnScrollPosition != nil {
+            restorePendingArtistScrollPositionIfNeeded()
+        }
+        restorePendingBrowseScrollPositionIfNeeded()
     }
 
     private func restorePendingArtistScrollPositionIfNeeded() {
@@ -1855,24 +1820,93 @@ struct ContentView: View {
     }
 
     private func restorePendingBrowseScrollPositionIfNeeded() {
-        guard !model.isLoading, model.needsBrowseScrollRestoration else { return }
+        guard model.needsBrowseScrollRestoration else { return }
         let trackPosition = model.trackScrollPosition
-        let variationPosition = model.resolvedVariationScrollPositionForRestoration()
         model.trackScrollPosition = nil
-        model.variationScrollPosition = nil
-        model.completeBrowseScrollRestoration()
         Task { @MainActor in
             await Task.yield()
+            try? await Task.sleep(nanoseconds: 50_000_000)
             model.trackScrollPosition = trackPosition
-            model.variationScrollPosition = variationPosition
+        }
+    }
+
+    private func restoreVariationScroll(using proxy: ScrollViewProxy) {
+        guard let targetID = model.resolvedVariationScrollPositionForRestoration() else { return }
+        for delay in [0.01, 0.05, 0.12] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                proxy.scrollTo(targetID, anchor: .center)
+            }
+        }
+    }
+
+    private func restoreGenreScroll(using proxy: ScrollViewProxy) {
+        guard let target = model.resolvedGenreScrollPositionForRestoration() else { return }
+        for delay in [0.01, 0.05, 0.12] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                proxy.scrollTo(target, anchor: .center)
+            }
+        }
+    }
+
+    @ViewBuilder private func artistColumnHeader(_ column: ArtistSort) -> some View {
+        switch column {
+        case .name:
+            artistHeaderButton(.name, title: model.text("アーティスト", "Artist"))
+                .frame(width: artistViewArtistWidth, alignment: .leading)
+                .overlay(alignment: .trailing) {
+                    ColumnResizeHandle(width: $artistViewArtistWidth, range: 140...900)
+                }
+        case .genre:
+            artistHeaderButton(.genre, title: model.text("ジャンル", "Genre"))
+                .frame(width: artistViewGenreWidth, alignment: .leading)
+                .overlay(alignment: .trailing) {
+                    ColumnResizeHandle(width: $artistViewGenreWidth, range: 90...360)
+                }
+        case .albumCount:
+            artistHeaderButton(.albumCount, title: model.text("アルバム数", "Albums"))
+                .frame(width: artistViewAlbumsWidth, alignment: .trailing)
+                .overlay(alignment: .trailing) {
+                    ColumnResizeHandle(width: $artistViewAlbumsWidth, range: 65...200)
+                }
+        case .trackCount:
+            artistHeaderButton(.trackCount, title: model.text("曲数", "Songs"))
+                .frame(width: artistViewSongsWidth, alignment: .trailing)
+                .overlay(alignment: .trailing) {
+                    ColumnResizeHandle(width: $artistViewSongsWidth, range: 55...180)
+                }
+        }
+    }
+
+    @ViewBuilder private func artistColumnCell(_ column: ArtistSort, artist: ArtistSummary) -> some View {
+        switch column {
+        case .name:
+            Label(model.displayArtist(artist.name), systemImage: artist.name.isEmpty ? "person.crop.circle.badge.questionmark" : "music.mic")
+                .frame(width: artistViewArtistWidth, alignment: .leading)
+        case .genre:
+            Text(artist.genre.isEmpty ? "—" : artist.genre)
+                .foregroundStyle(artist.genre.isEmpty ? .secondary : .primary)
+                .lineLimit(1)
+                .frame(width: artistViewGenreWidth, alignment: .leading)
+        case .albumCount:
+            Text(artist.albumCount.formatted())
+                .frame(width: artistViewAlbumsWidth, alignment: .trailing)
+                .monospacedDigit()
+        case .trackCount:
+            Text(artist.trackCount.formatted())
+                .frame(width: artistViewSongsWidth, alignment: .trailing)
+                .monospacedDigit()
         }
     }
 
     private var artistSummaryContentWidth: Double {
-        artistViewArtistWidth
-            + (isArtistViewGenreVisible ? artistViewGenreWidth + 8 : 0)
-            + (isArtistViewAlbumsVisible ? artistViewAlbumsWidth + 8 : 0)
-            + (isArtistViewSongsVisible ? artistViewSongsWidth + 8 : 0) + 70
+        orderedVisibleArtistColumns.reduce(0.0) { sum, column in
+            switch column {
+            case .name: sum + artistViewArtistWidth + 8
+            case .genre: sum + artistViewGenreWidth + 8
+            case .albumCount: sum + artistViewAlbumsWidth + 8
+            case .trackCount: sum + artistViewSongsWidth + 8
+            }
+        } + 70
     }
 
     private func artistHeaderButton(_ sort: ArtistSort, title: String) -> some View {
@@ -1910,35 +1944,45 @@ struct ContentView: View {
                 genreAutomaticScanControls
                 Divider()
             }
-            List(model.facets) { facet in
-                if model.section == .genres {
-                    Button { model.openGenre(facet.name) } label: {
+            ScrollViewReader { proxy in
+                List(model.facets) { facet in
+                    if model.section == .genres {
+                        Button { model.openGenre(facet.name, anchorGenre: facet.name) } label: {
+                            HStack {
+                                Image(systemName: icon(for: model.section)).frame(width: 24)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(facet.name)
+                                        .lineLimit(1)
+                                    Text(model.genreShortDescription(facet.name))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+                                Text(facet.count.formatted()).foregroundStyle(.secondary).monospacedDigit()
+                                Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.vertical, 3)
+                        .id(facet.name)
+                    } else {
                         HStack {
                             Image(systemName: icon(for: model.section)).frame(width: 24)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(facet.name)
-                                    .lineLimit(1)
-                                Text(model.genreShortDescription(facet.name))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
+                            Text(facet.name)
                             Spacer()
                             Text(facet.count.formatted()).foregroundStyle(.secondary).monospacedDigit()
-                            Image(systemName: "chevron.right").foregroundStyle(.tertiary)
                         }
-                        .contentShape(Rectangle())
+                        .padding(.vertical, 3)
+                        .id(facet.name)
                     }
-                    .buttonStyle(.plain)
-                    .padding(.vertical, 3)
-                } else {
-                    HStack {
-                        Image(systemName: icon(for: model.section)).frame(width: 24)
-                        Text(facet.name)
-                        Spacer()
-                        Text(facet.count.formatted()).foregroundStyle(.secondary).monospacedDigit()
-                    }
-                    .padding(.vertical, 3)
+                }
+                .onAppear {
+                    restoreGenreScroll(using: proxy)
+                }
+                .onChange(of: model.facets.first?.name) { _, _ in
+                    restoreGenreScroll(using: proxy)
                 }
             }
         }
@@ -2179,6 +2223,33 @@ struct ContentView: View {
                 Divider()
             }
             if model.diagnosticKind == .suspectedVariations {
+                if model.batchMetadataProgress.state == .running {
+                    HStack(spacing: 12) {
+                        ProgressView(
+                            value: Double(model.batchMetadataProgress.processed),
+                            total: Double(max(1, model.batchMetadataProgress.total))
+                        )
+                        .progressViewStyle(.linear)
+                        .frame(maxWidth: 220)
+
+                        Text(model.text(
+                            "表記を「\(model.activeStandardizingTargetValue ?? "")」に統一中… \(model.batchMetadataProgress.processed) / \(model.batchMetadataProgress.total) 曲 (\(Int(Double(model.batchMetadataProgress.processed) / Double(max(1, model.batchMetadataProgress.total)) * 100))%)",
+                            "Standardizing to \"\(model.activeStandardizingTargetValue ?? "")\"… \(model.batchMetadataProgress.processed) / \(model.batchMetadataProgress.total) songs (\(Int(Double(model.batchMetadataProgress.processed) / Double(max(1, model.batchMetadataProgress.total)) * 100))%)"
+                        ))
+                        .font(.caption.bold().monospacedDigit())
+                        .foregroundStyle(Color.accentColor)
+
+                        Spacer()
+
+                        Button(model.text("キャンセル", "Cancel")) {
+                            model.cancelBatchMetadataUpdate()
+                        }
+                        .controlSize(.small)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(Color.accentColor.opacity(0.12))
+                }
                 HStack {
                     if model.isAnalyzingMetadata {
                         ProgressView().controlSize(.small)
@@ -2193,6 +2264,7 @@ struct ContentView: View {
                             .font(.caption).foregroundStyle(.secondary)
                         Spacer()
                         Button(model.text("表記ゆれを解析", "Analyze Variations"), action: model.runMetadataAnalysis)
+                            .disabled(model.batchMetadataProgress.state == .running)
                     }
                 }.padding(10)
                 HStack(spacing: 10) {
@@ -2204,10 +2276,11 @@ struct ContentView: View {
                         Text(model.text("曲名", "Title")).tag(MetadataField?.some(.title))
                         Text(model.text("アルバム名", "Album")).tag(MetadataField?.some(.album))
                         Text(model.text("アーティスト名", "Artist")).tag(MetadataField?.some(.artist))
+                        Text(model.text("ジャンル", "Genre")).tag(MetadataField?.some(.genre))
                     }
                     .pickerStyle(.segmented)
                     .controlSize(.small)
-                    .frame(maxWidth: 520)
+                    .frame(maxWidth: 620)
                     Spacer()
                     Text(model.text(
                         "該当候補: \(model.totalCount.formatted())件",
@@ -2219,52 +2292,112 @@ struct ContentView: View {
                 .padding(.horizontal, 10)
                 .padding(.bottom, 10)
                 Divider()
-                List(model.variationCandidates) { candidate in
-                    HStack(spacing: 14) {
-                        VStack(alignment: .leading, spacing: 5) {
-                            HStack {
-                                Text(metadataFieldTitle(candidate.field)).font(.caption.bold()).foregroundStyle(.secondary)
-                                Text(variationReason(candidate)).font(.caption).foregroundStyle(.orange)
+                ScrollViewReader { proxy in
+                    List(model.variationCandidates) { candidate in
+                        HStack(spacing: 14) {
+                            VStack(alignment: .leading, spacing: 5) {
+                                HStack {
+                                    Text(metadataFieldTitle(candidate.field)).font(.caption.bold()).foregroundStyle(.secondary)
+                                    Text(variationReason(candidate)).font(.caption).foregroundStyle(.orange)
+                                }
+                                variationChoiceRow(
+                                    value: candidate.valueA,
+                                    count: candidate.trackCountA,
+                                    candidate: candidate,
+                                    onInspect: {
+                                        model.searchVariationValue(candidate.valueA, field: candidate.field, anchorCandidateID: candidate.id)
+                                    }
+                                )
+                                variationChoiceRow(
+                                    value: candidate.valueB,
+                                    count: candidate.trackCountB,
+                                    candidate: candidate,
+                                    onInspect: {
+                                        model.searchVariationValue(candidate.valueB, field: candidate.field, anchorCandidateID: candidate.id)
+                                    }
+                                )
                             }
-                            variationChoiceRow(
-                                value: candidate.valueA,
-                                count: candidate.trackCountA,
-                                candidate: candidate,
-                                onInspect: {
-                                    model.searchVariationValue(candidate.valueA, field: candidate.field)
-                                }
-                            )
-                            variationChoiceRow(
-                                value: candidate.valueB,
-                                count: candidate.trackCountB,
-                                candidate: candidate,
-                                onInspect: {
-                                    model.searchVariationValue(candidate.valueB, field: candidate.field)
-                                }
+                            Spacer()
+                            Button(model.text("候補から除外", "Ignore")) { model.ignoreVariation(candidate) }
+                        }
+                        .padding(.vertical, 4)
+                        .id(candidate.id)
+                    }
+                    .scrollTargetLayout()
+                    .scrollPosition(id: $model.variationScrollPosition, anchor: .top)
+                    .onAppear {
+                        restoreVariationScroll(using: proxy)
+                    }
+                    .onChange(of: model.variationCandidates.first?.id) { _, _ in
+                        restoreVariationScroll(using: proxy)
+                    }
+                    .overlay {
+                        if !model.isAnalyzingMetadata && model.variationCandidates.isEmpty {
+                            ContentUnavailableView(
+                                model.variationFieldFilter == nil
+                                    ? model.text("表記ゆれ候補はまだありません", "No Variation Candidates Yet")
+                                    : model.text("選択した項目の候補はありません", "No Candidates for This Field"),
+                                systemImage: "text.magnifyingglass",
+                                description: Text(
+                                    model.variationFieldFilter == nil
+                                        ? model.text("「表記ゆれを解析」をクリックしてください。", "Click Analyze Variations to scan the library.")
+                                        : model.text("別の項目を選ぶか、表記ゆれを再解析してください。", "Choose another field or analyze variations again.")
+                                )
                             )
                         }
-                        Spacer()
-                        Button(model.text("候補から除外", "Ignore")) { model.ignoreVariation(candidate) }
-                    }.padding(.vertical, 4)
-                }
-                .scrollPosition(id: $model.variationScrollPosition, anchor: .top)
-                .overlay {
-                    if !model.isAnalyzingMetadata && model.variationCandidates.isEmpty {
-                        ContentUnavailableView(
-                            model.variationFieldFilter == nil
-                                ? model.text("表記ゆれ候補はまだありません", "No Variation Candidates Yet")
-                                : model.text("選択した項目の候補はありません", "No Candidates for This Field"),
-                            systemImage: "text.magnifyingglass",
-                            description: Text(
-                                model.variationFieldFilter == nil
-                                    ? model.text("「表記ゆれを解析」をクリックしてください。", "Click Analyze Variations to scan the library.")
-                                    : model.text("別の項目を選ぶか、表記ゆれを再解析してください。", "Choose another field or analyze variations again.")
-                            )
-                        )
                     }
                 }
             } else {
-                if [.urlInMP3Metadata, .suspectedMojibake].contains(model.diagnosticKind) {
+                if model.diagnosticKind == .corruptedOrEmpty {
+                    HStack(spacing: 12) {
+                        Button {
+                            model.repairCorruptedTracks()
+                        } label: {
+                            Label(model.text("実ファイルからメタデータを再解析・修復", "Scan & Repair from Source File"), systemImage: "arrow.clockwise.circle")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(model.isRepairingCorruptedTracks)
+
+                        Button(role: .destructive) {
+                            showDeleteUnrepairableAlert = true
+                        } label: {
+                            Label(model.text("修復できない破損ファイルを削除", "Delete Unrepairable Corrupted Files"), systemImage: "trash")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(model.isRepairingCorruptedTracks)
+
+                        Spacer()
+
+                        if model.isRepairingCorruptedTracks {
+                            ProgressView().controlSize(.small)
+                            if let msg = model.repairProgressMessage {
+                                Text(msg).font(.caption).foregroundStyle(.secondary)
+                            }
+                        } else {
+                            Text(model.text(
+                                "該当曲: \(model.totalCount.formatted())曲",
+                                "Matching: \(model.totalCount.formatted()) songs"
+                            ))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .confirmationDialog(
+                        model.text("修復できない破損ファイルをゴミ箱へ移動して削除しますか？", "Move unrepairable corrupted files to Trash and remove from library?"),
+                        isPresented: $showDeleteUnrepairableAlert,
+                        titleVisibility: .visible
+                    ) {
+                        Button(model.text("削除を実行", "Delete Files"), role: .destructive) {
+                            model.removeUnrepairableCorruptedTracks()
+                        }
+                        Button(model.text("キャンセル", "Cancel"), role: .cancel) { }
+                    }
+                    Divider()
+                } else if [.urlInMP3Metadata, .suspectedMojibake].contains(model.diagnosticKind) {
                     HStack(spacing: 10) {
                         Picker(model.text("表示対象", "Show"), selection: Binding(
                             get: { model.metadataIssueFieldFilter },
@@ -2571,6 +2704,7 @@ struct ContentView: View {
         case .suspectedMojibake: model.text("文字化け候補", "Garbled Text Candidates")
         case .duplicateTracks: model.text("重複曲", "Duplicate Tracks")
         case .suspectedVariations: model.text("表記ゆれ候補", "Variation Candidates")
+        case .corruptedOrEmpty: model.text("破損・未再生可能", "Corrupted / Unplayable")
         }
     }
 
@@ -2583,6 +2717,7 @@ struct ContentView: View {
         case .suspectedMojibake: "text.badge.exclamationmark"
         case .duplicateTracks: "square.2.layers.3d"
         case .suspectedVariations: "text.magnifyingglass"
+        case .corruptedOrEmpty: "exclamationmark.triangle.fill"
         }
     }
 
@@ -2627,6 +2762,7 @@ struct ContentView: View {
         case .title: model.text("曲名", "Title")
         case .artist: model.text("アーティスト", "Artist")
         case .album: model.text("アルバム", "Album")
+        case .genre: model.text("ジャンル", "Genre")
         }
     }
 
@@ -2643,19 +2779,36 @@ struct ContentView: View {
         candidate: MetadataVariationCandidate,
         onInspect: @escaping () -> Void
     ) -> some View {
-        HStack(spacing: 10) {
+        let isThisActionRunning = model.batchMetadataProgress.state == .running
+            && model.activeStandardizingCandidateID == candidate.id
+            && model.activeStandardizingTargetValue == value
+
+        return HStack(spacing: 10) {
             Button("\(value)  (\(count.formatted()))", action: onInspect)
-            .buttonStyle(.link)
-            .lineLimit(1)
-            Button(model.text("この表記に統一", "Use This Spelling")) {
-                variationStandardizationRequest = VariationStandardizationRequest(
-                    candidate: candidate,
-                    chosenValue: value
-                )
+                .buttonStyle(.link)
+                .lineLimit(1)
+
+            if isThisActionRunning {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(model.text(
+                        "統一中… \(model.batchMetadataProgress.processed)/\(model.batchMetadataProgress.total)曲 (\(Int(Double(model.batchMetadataProgress.processed) / Double(max(1, model.batchMetadataProgress.total)) * 100))%)",
+                        "Updating… \(model.batchMetadataProgress.processed)/\(model.batchMetadataProgress.total) songs (\(Int(Double(model.batchMetadataProgress.processed) / Double(max(1, model.batchMetadataProgress.total)) * 100))%)"
+                    ))
+                    .font(.caption.bold().monospacedDigit())
+                    .foregroundStyle(Color.accentColor)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.accentColor.opacity(0.12), in: Capsule())
+            } else {
+                Button(model.text("この表記に統一", "Use This Spelling")) {
+                    model.standardizeVariation(candidate, choosing: value)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(model.batchMetadataProgress.state == .running)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .disabled(model.batchMetadataProgress.state == .running)
         }
     }
 
@@ -3017,6 +3170,58 @@ private struct UpNextLibraryView: View {
     }
 }
 
+private struct InspectorDivider: View {
+    @Binding var inspectorWidth: Double
+    let helpText: String
+    let accessibilityText: String
+    @State private var isHovered = false
+    @State private var dragStartWidth: Double?
+
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .fill(Color(nsColor: .separatorColor))
+                .frame(width: 1)
+            Capsule()
+                .fill(isHovered || dragStartWidth != nil
+                    ? Color.accentColor
+                    : Color.secondary.opacity(0.68))
+                .frame(
+                    width: isHovered || dragStartWidth != nil ? 6 : 4,
+                    height: isHovered || dragStartWidth != nil ? 72 : 52
+                )
+                .overlay {
+                    VStack(spacing: 5) {
+                        ForEach(0..<3, id: \.self) { _ in
+                            Circle().fill(Color(nsColor: .windowBackgroundColor)).frame(width: 2.5, height: 2.5)
+                        }
+                    }
+                }
+                .animation(.easeOut(duration: 0.12), value: isHovered)
+        }
+        .frame(width: 12)
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            isHovered = hovering
+            if hovering { NSCursor.resizeLeftRight.push() }
+            else { NSCursor.pop() }
+        }
+        .highPriorityGesture(
+            DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                .onChanged { value in
+                    let start = dragStartWidth ?? inspectorWidth
+                    dragStartWidth = start
+                    let dragDistance = value.startLocation.x - value.location.x
+                    inspectorWidth = min(600, max(260, start + dragDistance))
+                }
+                .onEnded { _ in dragStartWidth = nil }
+        )
+        .onTapGesture(count: 2) { inspectorWidth = 310 }
+        .help(helpText)
+        .accessibilityLabel(accessibilityText)
+    }
+}
+
 private struct NowPlayingInspector: View {
     @ObservedObject var model: LibraryViewModel
     @ObservedObject var player: PlaybackController
@@ -3174,59 +3379,30 @@ private struct NowPlayingInspector: View {
 
     private var idleDiscovery: some View {
         VStack(spacing: 16) {
-            Spacer(minLength: 12)
+            Spacer()
             Group {
                 if let appIcon = NSApp.applicationIconImage {
                     Image(nsImage: appIcon)
                         .resizable()
                         .scaledToFit()
-                        .frame(width: 210, height: 210)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .frame(width: 160, height: 160)
+                        .clipShape(RoundedRectangle(cornerRadius: 16))
+                        .opacity(0.85)
                 } else {
                     PlayerArtwork(
                         artworkURL: nil,
-                        size: 210,
-                        cornerRadius: 12,
-                        placeholderPointSize: 48
+                        size: 160,
+                        cornerRadius: 16,
+                        placeholderPointSize: 40
                     )
                 }
             }
-            Text(model.text("音楽を見つける", "Discover Music"))
-                .font(.title3.bold())
-            Text(model.text(
-                "曲を再生するまでは、ここから新しい音楽を探せます。",
-                "Until a song starts, discover new music from these links."
-            ))
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .multilineTextAlignment(.center)
-            VStack(spacing: 10) {
-                idleLink(
-                    model.text("話題の曲", "Trending Songs"),
-                    systemImage: "chart.line.uptrend.xyaxis",
-                    url: model.trendingMusicURL
-                )
-                idleLink("YouTube", systemImage: "play.rectangle.fill", url: model.youtubeMusicURL)
-                idleLink(
-                    model.text("音楽ニュース", "Music News"),
-                    systemImage: "newspaper.fill",
-                    url: model.musicNewsURL
-                )
-            }
+            Text(model.text("再生停止中", "Not Playing"))
+                .font(.headline)
+                .foregroundStyle(.secondary)
             Spacer()
         }
-        .padding(16)
-    }
-
-    private func idleLink(_ title: String, systemImage: String, url: URL?) -> some View {
-        Button {
-            browserURL = url
-        } label: {
-            Label(title, systemImage: systemImage)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .buttonStyle(.bordered)
-        .disabled(url == nil)
+        .padding(24)
     }
 
     private var lyrics: some View {
@@ -4312,10 +4488,10 @@ private struct TrackMetadataEditor: View {
         isSaving = true
         defer { isSaving = false }
         var pendingEdit = edit
-        pendingEdit.discNumber = positiveInteger(discNumber)
-        pendingEdit.totalDiscs = positiveInteger(totalDiscs)
-        pendingEdit.trackNumber = positiveInteger(trackNumber)
-        pendingEdit.totalTracks = positiveInteger(totalTracks)
+        pendingEdit.discNumber = validNumber(discNumber)
+        pendingEdit.totalDiscs = validNumber(totalDiscs)
+        pendingEdit.trackNumber = validNumber(trackNumber)
+        pendingEdit.totalTracks = validNumber(totalTracks)
         let saved = await model.updateMetadataFromEditor(for: track, edit: pendingEdit)
         if saved, let currentIndex {
             let updated = track.applying(pendingEdit)
@@ -4435,13 +4611,13 @@ private struct TrackMetadataEditor: View {
 
     private var numbersAreValid: Bool {
         [discNumber, totalDiscs, trackNumber, totalTracks].allSatisfy { value in
-            value.trimmingCharacters(in: .whitespaces).isEmpty || positiveInteger(value) != nil
+            value.trimmingCharacters(in: .whitespaces).isEmpty || validNumber(value) != nil
         }
     }
 
-    private func positiveInteger(_ value: String) -> Int? {
+    private func validNumber(_ value: String) -> Int? {
         let trimmed = value.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty, let number = Int(trimmed), number > 0 else { return nil }
+        guard !trimmed.isEmpty, let number = Int(trimmed), number >= 0 else { return nil }
         return number
     }
 }

@@ -7,5 +7,7 @@ MassiveMusic.xcodeproj/xcuserdata/
 *.sqlite*
 PerformanceArtifacts/
 work/
-outputs/
+*.zip
+.agents/
+skills-lock.json
 

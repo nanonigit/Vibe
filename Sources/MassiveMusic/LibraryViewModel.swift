@@ -165,7 +165,7 @@ enum GenreDescriptionCatalog {
         case "instrumental rock":
             return ("歌唱なしで楽器の展開を聴かせるロック", "Rock that develops through instruments rather than vocals", "ボーカルを中心に置かず、ギターやリズム隊の旋律、音色、ダイナミクスで曲を展開します。", "Develops through instrumental melody, texture, rhythm, and dynamics instead of a lead vocal.")
         case "folk metal":
-            return ("民族楽器や伝承旋律とメタルを融合", "Fuses folk instruments and traditional melody with metal", "地域の伝統旋律や民族楽器を、重いギターとメタルのリズムに組み合わせます。", "Combines regional traditional melodies and folk instruments with heavy guitars and metal rhythm.")
+            return ("民族楽器や伝承旋律とメタルを融合", "Fuses folk instruments and traditional melody with metal", "地域の伝統旋律や民族楽器を、重いギターとメタルのリズムに組み合わせます。", "Combines regional traditional melodies and folk instruments with heavy guitars and folk-metal rhythm.")
         case "other":
             return ("既存の大分類に収まりにくい音楽", "Music that does not fit a broad established category", "複数ジャンルの混合や独自性が強く、現在の大分類だけでは表しにくい曲をまとめています。", "A holding category for strongly hybrid or distinctive music that current broad labels do not describe well.")
         default:
@@ -267,6 +267,7 @@ private struct BrowseReturnState {
     let trackScrollPosition: Int64?
     let variationScrollPosition: Int64?
     let variationScrollFallbackIDs: [Int64]
+    let genreScrollPosition: String?
 }
 
 @MainActor
@@ -298,6 +299,7 @@ final class LibraryViewModel: ObservableObject {
     @Published var selectedIndexToken: String?
     @Published var trackScrollPosition: Int64?
     @Published var variationScrollPosition: Int64?
+    @Published var genreScrollPosition: String?
     @Published private(set) var needsBrowseScrollRestoration = false
     @Published var selectedPlaylistID: Int64?
     @Published private(set) var offset = 0
@@ -428,6 +430,8 @@ final class LibraryViewModel: ObservableObject {
     @Published private(set) var hasRunAutomaticAlbumYearScan = false
     private var automaticAlbumYearScanTask: Task<Void, Never>?
     @Published private(set) var batchMetadataProgress = BatchMetadataProgress.idle
+    @Published private(set) var activeStandardizingCandidateID: Int64? = nil
+    @Published private(set) var activeStandardizingTargetValue: String? = nil
     @Published var importProgress = ImportProgress.idle
     @Published private(set) var pagePresentationID = UUID()
 
@@ -547,8 +551,16 @@ final class LibraryViewModel: ObservableObject {
         startBulkAutoFillIfNeeded()
         startID3Migration()
         startAutomaticGenreScanIfEnabled()
-        if autoNormalizeGenresToEnglish { startGenreNormalizationAndMerging() }
+        if autoNormalizeGenresToEnglish { startGenreNormalizationAndMerging(forceResetCursor: true) }
         startAutomaticAlbumYearScanIfEnabled()
+        Task {
+            try? await offlineCache.enforceLimit()
+            let ids = Set((try? database.allCachedTrackIDs()) ?? [])
+            await MainActor.run {
+                self.cachedTrackIDs = ids
+                self.refreshSidebarCounts()
+            }
+        }
     }
 
     var canGoPrevious: Bool { offset > 0 }
@@ -962,6 +974,8 @@ final class LibraryViewModel: ObservableObject {
         let sourceValue = chosenValue == candidate.valueA ? candidate.valueB : candidate.valueA
         guard sourceValue != chosenValue else { return }
         let filter = ExactMetadataFilter(field: candidate.field, value: sourceValue)
+        activeStandardizingCandidateID = candidate.id
+        activeStandardizingTargetValue = chosenValue
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -981,6 +995,8 @@ final class LibraryViewModel: ObservableObject {
                     return result
                 }.value
                 guard !tracks.isEmpty else {
+                    activeStandardizingCandidateID = nil
+                    activeStandardizingTargetValue = nil
                     loadCurrentPage(reset: false)
                     refreshMetadataDiagnostics()
                     return
@@ -989,16 +1005,22 @@ final class LibraryViewModel: ObservableObject {
                 case .title: BatchMetadataChanges(title: chosenValue)
                 case .artist: BatchMetadataChanges(artist: chosenValue)
                 case .album: BatchMetadataChanges(album: chosenValue)
+                case .genre: BatchMetadataChanges(genre: chosenValue)
                 }
                 updateMetadata(for: tracks, changes: changes)
             } catch {
+                activeStandardizingCandidateID = nil
+                activeStandardizingTargetValue = nil
                 errorMessage = error.localizedDescription
             }
         }
     }
 
-    func searchVariationValue(_ value: String, field: MetadataField) {
+    func searchVariationValue(_ value: String, field: MetadataField, anchorCandidateID: Int64? = nil) {
         cancelPendingSearchNavigation()
+        if let anchorCandidateID {
+            variationScrollPosition = anchorCandidateID
+        }
         captureBrowseReturnState()
         usesDirectOffsetPaging = false
         selectedIndexToken = nil
@@ -1096,8 +1118,13 @@ final class LibraryViewModel: ObservableObject {
         loadCurrentPage(reset: true)
     }
 
-    func openGenre(_ genre: String) {
+    func openGenre(_ genre: String, anchorGenre: String? = nil) {
         cancelPendingSearchNavigation()
+        if let anchorGenre {
+            genreScrollPosition = anchorGenre
+        } else if genreScrollPosition == nil {
+            genreScrollPosition = genre
+        }
         captureBrowseReturnState()
         usesDirectOffsetPaging = false
         selectedIndexToken = nil
@@ -1195,7 +1222,8 @@ final class LibraryViewModel: ObservableObject {
             selectedIndexToken: selectedIndexToken,
             trackScrollPosition: trackScrollPosition,
             variationScrollPosition: variationScrollPosition,
-            variationScrollFallbackIDs: variationScrollFallbackIDs(from: variationScrollPosition)
+            variationScrollFallbackIDs: variationScrollFallbackIDs(from: variationScrollPosition),
+            genreScrollPosition: genreScrollPosition
         ))
         if browseReturnStack.count > 32 { browseReturnStack.removeFirst() }
     }
@@ -1224,7 +1252,8 @@ final class LibraryViewModel: ObservableObject {
         trackScrollPosition = state.trackScrollPosition
         variationScrollPosition = state.variationScrollPosition
         variationScrollRestorationFallbackIDs = state.variationScrollFallbackIDs
-        needsBrowseScrollRestoration = state.trackScrollPosition != nil || state.variationScrollPosition != nil
+        genreScrollPosition = state.genreScrollPosition
+        needsBrowseScrollRestoration = state.trackScrollPosition != nil || state.variationScrollPosition != nil || state.genreScrollPosition != nil
         return true
     }
 
@@ -1235,11 +1264,26 @@ final class LibraryViewModel: ObservableObject {
     }
 
     func resolvedVariationScrollPositionForRestoration() -> Int64? {
+        guard let variationScrollPosition else {
+            return variationScrollRestorationFallbackIDs.first
+        }
         let availableIDs = Set(variationCandidates.map(\.id))
-        if let variationScrollPosition, availableIDs.contains(variationScrollPosition) {
+        if availableIDs.isEmpty || availableIDs.contains(variationScrollPosition) {
             return variationScrollPosition
         }
-        return variationScrollRestorationFallbackIDs.first { availableIDs.contains($0) }
+        if let fallback = variationScrollRestorationFallbackIDs.first(where: { availableIDs.contains($0) }) {
+            return fallback
+        }
+        return variationScrollPosition
+    }
+
+    func resolvedGenreScrollPositionForRestoration() -> String? {
+        guard let genreScrollPosition else { return nil }
+        let availableNames = Set(facets.map(\.name))
+        if availableNames.isEmpty || availableNames.contains(genreScrollPosition) {
+            return genreScrollPosition
+        }
+        return genreScrollPosition
     }
 
     func completeBrowseScrollRestoration() {
@@ -2529,6 +2573,8 @@ final class LibraryViewModel: ObservableObject {
                 state: .completed, total: tracks.count, processed: tracks.count,
                 succeeded: succeeded, failed: failed
             )
+            activeStandardizingCandidateID = nil
+            activeStandardizingTargetValue = nil
             if let firstError {
                 errorMessage = text(
                     "\(failed)曲の更新に失敗しました。最初のエラー: \(firstError.localizedDescription)",
@@ -3459,7 +3505,12 @@ final class LibraryViewModel: ObservableObject {
             Task {
                 do {
                     try await offlineCache.enforceLimit()
-                    if section == .cache { loadCurrentPage(reset: true) }
+                    let ids = Set((try? database.allCachedTrackIDs()) ?? [])
+                    await MainActor.run {
+                        self.cachedTrackIDs = ids
+                        self.refreshSidebarCounts()
+                        if self.section == .cache { self.loadCurrentPage(reset: true) }
+                    }
                 } catch { errorMessage = error.localizedDescription }
             }
         } catch { errorMessage = error.localizedDescription }
@@ -4744,6 +4795,121 @@ final class LibraryViewModel: ObservableObject {
                 loadCurrentPage(reset: false)
             } catch {
                 print("Failed to sync pending metadata edits: \(error)")
+            }
+        }
+    }
+
+    private func trackSourceURL(_ track: Track) async -> URL? {
+        if let cachedURL = try? await offlineCache.cachedPlayableURL(for: track) {
+            return cachedURL
+        }
+        guard let root = try? await Task.detached(priority: .userInitiated, operation: {
+            try self.database.scanRoot(id: track.rootID)
+        }).value else { return nil }
+        guard let scoped = try? SecurityScopedRoot.resolve(bookmark: root.bookmark),
+              FileManager.default.fileExists(atPath: scoped.url.path) else { return nil }
+        let sourceURL = scoped.url.appending(path: track.relativePath)
+        return FileManager.default.fileExists(atPath: sourceURL.path) ? sourceURL : nil
+    }
+
+    @Published private(set) var isRepairingCorruptedTracks = false
+    @Published private(set) var repairProgressMessage: String? = nil
+
+    func repairCorruptedTracks() {
+        guard !isRepairingCorruptedTracks else { return }
+        isRepairingCorruptedTracks = true
+        repairProgressMessage = text("破損ファイルを検査・修復中…", "Scanning & repairing corrupted files…")
+        Task {
+            defer {
+                isRepairingCorruptedTracks = false
+                repairProgressMessage = nil
+            }
+            do {
+                var offset = 0
+                while true {
+                    let currentOffset = offset
+                    let db = self.database
+                    let page = try await Task.detached(priority: .userInitiated) {
+                        try db.pageMetadataIssues(kind: .corruptedOrEmpty, offset: currentOffset, limit: 500)
+                    }.value
+                    guard !page.tracks.isEmpty else { break }
+                    for track in page.tracks {
+                        guard let fileURL = await trackSourceURL(track) else { continue }
+                        let fileSize = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+                        guard fileSize > 0 else { continue }
+                        
+                        let meta = await AudioMetadataReader.read(url: fileURL)
+                        if meta.duration > 0 {
+                            var edit = TrackMetadataEdit(track: track)
+                            if edit.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !meta.title.isEmpty {
+                                edit.title = meta.title
+                            }
+                            if edit.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !meta.artist.isEmpty {
+                                edit.artist = meta.artist
+                            }
+                            if edit.album.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !meta.album.isEmpty {
+                                edit.album = meta.album
+                            }
+                            _ = await updateMetadataFromEditor(for: track, edit: edit)
+                        }
+                    }
+                    if page.tracks.count < 500 { break }
+                    offset += 500
+                }
+                loadCurrentPage(reset: true)
+                refreshMetadataDiagnostics()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func removeEmptyCorruptedTracks() {
+        removeUnrepairableCorruptedTracks()
+    }
+
+    func removeUnrepairableCorruptedTracks() {
+        guard !isRepairingCorruptedTracks else { return }
+        isRepairingCorruptedTracks = true
+        repairProgressMessage = text("修復できない破損ファイルを削除中…", "Removing unrepairable corrupted files…")
+        Task {
+            defer {
+                isRepairingCorruptedTracks = false
+                repairProgressMessage = nil
+            }
+            do {
+                while true {
+                    let page = try await Task.detached(priority: .userInitiated) {
+                        try self.database.pageMetadataIssues(kind: .corruptedOrEmpty, offset: 0, limit: 500)
+                    }.value
+                    guard !page.tracks.isEmpty else { break }
+                    var processedCount = 0
+                    for track in page.tracks {
+                        if let fileURL = await trackSourceURL(track) {
+                            let fileSize = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+                            let meta = await AudioMetadataReader.read(url: fileURL)
+                            if fileSize == 0 || meta.duration <= 0 {
+                                try? FileManager.default.trashItem(at: fileURL, resultingItemURL: nil)
+                                _ = try? await Task.detached {
+                                    try self.database.removeTrackFromLibrary(id: track.id, fileWasTrashed: true)
+                                }.value
+                                processedCount += 1
+                            }
+                        } else {
+                            _ = try? await Task.detached {
+                                try self.database.removeTrackFromLibrary(id: track.id, fileWasTrashed: false)
+                            }.value
+                            processedCount += 1
+                        }
+                    }
+                    if processedCount == 0 {
+                        break
+                    }
+                }
+                loadCurrentPage(reset: true)
+                refreshMetadataDiagnostics()
+            } catch {
+                errorMessage = error.localizedDescription
             }
         }
     }

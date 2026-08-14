@@ -7,8 +7,7 @@ options:
   defaultConfig: Debug
 packages:
   GRDB:
-    url: https://github.com/groue/GRDB.swift.git
-    exactVersion: 7.10.0
+    path: Packages/GRDB.swift
 settings:
   base:
     ARCHS: arm64
