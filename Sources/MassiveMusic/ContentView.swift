@@ -163,10 +163,12 @@ struct ContentView: View {
     @AppStorage("artists.presentation") private var artistPresentation = SummaryPresentation.list.rawValue
 
     var body: some View {
+        let isDark = model.appearance.isDark
         NavigationSplitView {
             sidebar
                 .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 300)
                 .background(model.appearance.palette.sidebar)
+                .environment(\.colorScheme, isDark ? .dark : .light)
         } detail: {
             GeometryReader { geometry in
                 let availableWidth = geometry.size.width
@@ -209,12 +211,15 @@ struct ContentView: View {
                         .padding(.trailing, 14)
                 }
             }
+            .environment(\.colorScheme, isDark ? .dark : .light)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(model.appearance.palette.canvas)
         .background(WindowAppearanceSynchronizer(mode: model.appearance).frame(width: 0, height: 0))
         .tint(model.appearance.palette.accent)
         .toolbar(removing: .sidebarToggle)
+        .environment(\.colorScheme, model.appearance.isDark ? .dark : .light)
+        .preferredColorScheme(model.appearance.isDark ? .dark : .light)
         .onChange(of: player.currentTrack) { _, track in model.enrich(track) }
         .onChange(of: model.language) { _, _ in
             model.savePresentationSettings()
@@ -244,7 +249,6 @@ struct ContentView: View {
                 inspectorWidth = max(inspectorWidth, 480)
             }
         }
-        .preferredColorScheme(model.appearance.colorScheme)
         .sheet(item: $trackBeingEdited) { track in
             TrackMetadataEditor(model: model, track: track, navigationTracks: model.tracks)
         }

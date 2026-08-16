@@ -61,16 +61,19 @@ private struct PlayerWindowRoot: View {
     var body: some View {
         Group {
             if let model = environment.model, let player = environment.player {
+                let isDark = model.appearance.isDark
                 if isMiniPlayer {
                     MiniPlayerView(player: player, model: model, isMiniPlayer: miniPlayerBinding)
-                        .preferredColorScheme(model.appearance.colorScheme)
+                        .preferredColorScheme(isDark ? .dark : .light)
+                        .environment(\.colorScheme, isDark ? .dark : .light)
                         .tint(model.appearance.palette.accent)
                         .background(model.appearance.palette.canvas)
                         .background(MiniPlayerWindowSizeLock(size: NSSize(width: 390, height: 132)))
                 } else {
                     ContentView(model: model, player: player, isMiniPlayer: miniPlayerBinding)
                         .frame(minWidth: 980, minHeight: 640)
-                        .preferredColorScheme(model.appearance.colorScheme)
+                        .preferredColorScheme(isDark ? .dark : .light)
+                        .environment(\.colorScheme, isDark ? .dark : .light)
                 }
             } else {
                 ContentUnavailableView(
@@ -83,6 +86,9 @@ private struct PlayerWindowRoot: View {
         }
         .onAppear {
             restoreWindowFrame()
+            synchronizeWindowAppearance()
+        }
+        .onChange(of: environment.model?.appearance) { _, _ in
             synchronizeWindowAppearance()
         }
         .onChange(of: isMiniPlayer) { _, mini in resizeWindow(mini: mini) }
@@ -100,10 +106,13 @@ private struct PlayerWindowRoot: View {
     private func synchronizeWindowAppearance() {
         guard let mode = environment.model?.appearance else { return }
         let appearance = NSAppearance(named: mode.isDark ? .darkAqua : .aqua)
-        NSApplication.shared.appearance = appearance
-        for window in NSApplication.shared.windows {
-            window.appearance = appearance
-            window.contentView?.needsDisplay = true
+        DispatchQueue.main.async {
+            NSApplication.shared.appearance = appearance
+            for window in NSApplication.shared.windows {
+                window.appearance = appearance
+                window.contentView?.appearance = appearance
+                window.contentView?.needsDisplay = true
+            }
         }
     }
 
@@ -196,18 +205,27 @@ struct WindowAppearanceSynchronizer: NSViewRepresentable {
     let mode: AppearanceMode
 
     func makeNSView(context: Context) -> NSView {
-        NSView(frame: .zero)
+        let view = NSView(frame: .zero)
+        applyAppearance(to: view)
+        return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        let appearance = NSAppearance(named: mode.isDark ? .darkAqua : .aqua)
+        applyAppearance(to: nsView)
+    }
+
+    private func applyAppearance(to nsView: NSView) {
+        let appearanceName: NSAppearance.Name = mode.isDark ? .darkAqua : .aqua
+        let appearance = NSAppearance(named: appearanceName)
+        nsView.window?.appearance = appearance
+        nsView.window?.contentView?.appearance = appearance
         DispatchQueue.main.async {
             NSApplication.shared.appearance = appearance
             for window in NSApplication.shared.windows {
                 window.appearance = appearance
+                window.contentView?.appearance = appearance
                 window.contentView?.needsDisplay = true
             }
-            nsView.window?.appearance = appearance
         }
     }
 }

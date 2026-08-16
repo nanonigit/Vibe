@@ -22,6 +22,9 @@ struct AppearancePalette {
     let divider: Color
     let selection: Color
     let accent: Color
+    let primaryText: Color
+    let secondaryText: Color
+    let tertiaryText: Color
 }
 
 enum AppearanceMode: String, CaseIterable, Identifiable {
@@ -53,7 +56,10 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
                 elevated: Color(red: 0.155, green: 0.158, blue: 0.166),
                 divider: Color.white.opacity(0.13),
                 selection: Color(red: 0.255, green: 0.490, blue: 0.960),
-                accent: Color(red: 0.350, green: 0.580, blue: 1.000)
+                accent: Color(red: 0.350, green: 0.580, blue: 1.000),
+                primaryText: Color(white: 0.96),
+                secondaryText: Color(white: 0.65),
+                tertiaryText: Color(white: 0.45)
             )
         case .graphiteDark:
             AppearancePalette(
@@ -64,7 +70,10 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
                 elevated: Color(red: 0.180, green: 0.180, blue: 0.188),
                 divider: Color.white.opacity(0.14),
                 selection: Color(red: 0.565, green: 0.510, blue: 0.790),
-                accent: Color(red: 0.690, green: 0.620, blue: 0.940)
+                accent: Color(red: 0.690, green: 0.620, blue: 0.940),
+                primaryText: Color(white: 0.96),
+                secondaryText: Color(white: 0.65),
+                tertiaryText: Color(white: 0.45)
             )
         case .midnightDark:
             AppearancePalette(
@@ -75,40 +84,52 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
                 elevated: Color(red: 0.085, green: 0.120, blue: 0.165),
                 divider: Color(red: 0.390, green: 0.620, blue: 0.850).opacity(0.22),
                 selection: Color(red: 0.060, green: 0.570, blue: 0.720),
-                accent: Color(red: 0.190, green: 0.720, blue: 0.890)
+                accent: Color(red: 0.190, green: 0.720, blue: 0.890),
+                primaryText: Color(red: 0.92, green: 0.96, blue: 1.0),
+                secondaryText: Color(red: 0.60, green: 0.72, blue: 0.85),
+                tertiaryText: Color(red: 0.40, green: 0.52, blue: 0.65)
             )
         case .paperLight:
             AppearancePalette(
-                canvas: Color(red: 0.955, green: 0.958, blue: 0.965),
-                sidebar: Color(red: 0.915, green: 0.922, blue: 0.935),
-                library: Color(red: 0.985, green: 0.986, blue: 0.990),
-                inspector: Color(red: 0.940, green: 0.945, blue: 0.955),
+                canvas: Color(red: 0.940, green: 0.945, blue: 0.952),
+                sidebar: Color(red: 0.900, green: 0.908, blue: 0.920),
+                library: Color(red: 0.975, green: 0.978, blue: 0.982),
+                inspector: Color(red: 0.925, green: 0.932, blue: 0.942),
                 elevated: Color.white,
-                divider: Color.black.opacity(0.13),
+                divider: Color.black.opacity(0.14),
                 selection: Color(red: 0.180, green: 0.430, blue: 0.850),
-                accent: Color(red: 0.100, green: 0.390, blue: 0.820)
+                accent: Color(red: 0.100, green: 0.390, blue: 0.820),
+                primaryText: Color(red: 0.11, green: 0.12, blue: 0.14),
+                secondaryText: Color(red: 0.38, green: 0.41, blue: 0.46),
+                tertiaryText: Color(red: 0.58, green: 0.62, blue: 0.68)
             )
         case .warmLight:
             AppearancePalette(
-                canvas: Color(red: 0.970, green: 0.950, blue: 0.910),
-                sidebar: Color(red: 0.930, green: 0.900, blue: 0.845),
-                library: Color(red: 0.990, green: 0.978, blue: 0.948),
-                inspector: Color(red: 0.950, green: 0.925, blue: 0.880),
-                elevated: Color(red: 1.000, green: 0.992, blue: 0.972),
-                divider: Color(red: 0.350, green: 0.270, blue: 0.180).opacity(0.18),
+                canvas: Color(red: 0.955, green: 0.935, blue: 0.895),
+                sidebar: Color(red: 0.915, green: 0.885, blue: 0.830),
+                library: Color(red: 0.980, green: 0.968, blue: 0.938),
+                inspector: Color(red: 0.935, green: 0.910, blue: 0.865),
+                elevated: Color(red: 1.000, green: 0.994, blue: 0.978),
+                divider: Color(red: 0.350, green: 0.270, blue: 0.180).opacity(0.20),
                 selection: Color(red: 0.780, green: 0.390, blue: 0.160),
-                accent: Color(red: 0.750, green: 0.330, blue: 0.100)
+                accent: Color(red: 0.750, green: 0.330, blue: 0.100),
+                primaryText: Color(red: 0.16, green: 0.12, blue: 0.08),
+                secondaryText: Color(red: 0.44, green: 0.37, blue: 0.29),
+                tertiaryText: Color(red: 0.62, green: 0.55, blue: 0.47)
             )
         case .mistLight:
             AppearancePalette(
-                canvas: Color(red: 0.925, green: 0.950, blue: 0.955),
-                sidebar: Color(red: 0.875, green: 0.915, blue: 0.925),
-                library: Color(red: 0.965, green: 0.978, blue: 0.980),
-                inspector: Color(red: 0.900, green: 0.935, blue: 0.940),
+                canvas: Color(red: 0.910, green: 0.938, blue: 0.945),
+                sidebar: Color(red: 0.860, green: 0.900, blue: 0.912),
+                library: Color(red: 0.955, green: 0.968, blue: 0.972),
+                inspector: Color(red: 0.885, green: 0.920, blue: 0.928),
                 elevated: Color(red: 0.985, green: 0.995, blue: 0.995),
-                divider: Color(red: 0.110, green: 0.300, blue: 0.340).opacity(0.17),
+                divider: Color(red: 0.110, green: 0.300, blue: 0.340).opacity(0.19),
                 selection: Color(red: 0.050, green: 0.500, blue: 0.540),
-                accent: Color(red: 0.020, green: 0.440, blue: 0.490)
+                accent: Color(red: 0.020, green: 0.440, blue: 0.490),
+                primaryText: Color(red: 0.08, green: 0.14, blue: 0.16),
+                secondaryText: Color(red: 0.32, green: 0.42, blue: 0.45),
+                tertiaryText: Color(red: 0.54, green: 0.63, blue: 0.66)
             )
         }
     }
