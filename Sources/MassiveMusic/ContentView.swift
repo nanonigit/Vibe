@@ -203,7 +203,7 @@ struct ContentView: View {
                         .transaction { $0.animation = nil }
                     }
                 }
-                .frame(width: availableWidth, height: geometry.size.height, alignment: .leading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                 .padding(.top, -max(0, geometry.safeAreaInsets.top - 16))
                 .overlay(alignment: .topTrailing) {
                     inspectorToggleButton
@@ -1287,6 +1287,7 @@ struct ContentView: View {
                 }
                 .frame(width: contentWidth, height: geometry.size.height, alignment: .topLeading)
             }
+            .scrollDisabled(trackContentWidth <= geometry.size.width)
             .id(trackTableContextID)
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
         }
@@ -3304,6 +3305,7 @@ private struct NowPlayingInspector: View {
         } else {
             VStack(spacing: 12) {
                 Picker("情報", selection: $tab) {
+                    Text(model.text("統計", "Stats")).tag(6)
                     Text(model.text("情報", "Info")).tag(0)
                     Text(model.text("歌詞", "Lyrics")).tag(1)
                     Text(model.text("発見", "Discover")).tag(2)
@@ -3312,13 +3314,23 @@ private struct NowPlayingInspector: View {
                     Text(model.text("コード", "Chords")).tag(5)
                 }.pickerStyle(.segmented).labelsHidden()
                 Group {
-                    if model.isEnriching { ProgressView(model.text("情報を取得中…", "Loading information…")) }
-                    else if tab == 0 { information }
-                    else if tab == 1 { lyrics }
-                    else if tab == 2 { discovery }
-                    else if tab == 3 { practice }
-                    else if tab == 4 { tabSearch }
-                    else { ProgressView(model.text("コードを検索中…", "Searching for chords…")) }
+                    if tab == 6 {
+                        idleDiscovery
+                    } else if model.isEnriching {
+                        ProgressView(model.text("情報を取得中…", "Loading information…"))
+                    } else if tab == 0 {
+                        information
+                    } else if tab == 1 {
+                        lyrics
+                    } else if tab == 2 {
+                        discovery
+                    } else if tab == 3 {
+                        practice
+                    } else if tab == 4 {
+                        tabSearch
+                    } else {
+                        ProgressView(model.text("コードを検索中…", "Searching for chords…"))
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }

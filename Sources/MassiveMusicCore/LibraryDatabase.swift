@@ -3418,10 +3418,24 @@ public final class LibraryDatabase: @unchecked Sendable {
 
         guard !tokens.isEmpty else { return nil }
 
+        // 単純な複数単語（クォートなし、演算子なし）の場合、フレーズ検索または同一フィールドANDを優先
+        let hasOperators = tokens.contains { t in
+            let u = t.uppercased()
+            return u == "OR" || u == "AND" || u == "NOT" || t == "|" || t == "&" || t.hasPrefix("-") || t.contains(":")
+        }
+
+        if !hasOperators && tokens.count > 1 && !inQuotes {
+            // 例: "kiss me" -> title: ("kiss" "me"*) OR album: ("kiss" "me"*) OR artist: ("kiss" "me"*) OR ("kiss" AND "me"*)
+            let terms = tokens.map { $0.replacingOccurrences(of: "\"", with: "\"\"") }
+            let exactPhrase = terms.map { "\"\($0)\"" }.joined(separator: " ")
+            let andTerms = terms.map { "\"\($0)\"" }.joined(separator: " AND ")
+            return "(\"\(terms.joined(separator: " "))\" OR (title: \(exactPhrase)) OR (album: \(exactPhrase)) OR (artist: \(exactPhrase)) OR (\(andTerms)))"
+        }
+
         var clauses: [String] = []
         var nextOp: String? = nil
 
-        for rawToken in tokens {
+        for (index, rawToken) in tokens.enumerated() {
             let upper = rawToken.uppercased()
             if upper == "OR" || rawToken == "|" {
                 nextOp = "OR"
@@ -3479,7 +3493,10 @@ public final class LibraryDatabase: @unchecked Sendable {
                 clause = columnPrefix.isEmpty ? "\"\(inner)\"" : "\(columnPrefix)\"\(inner)\""
             } else {
                 let clean = token.replacingOccurrences(of: "\"", with: "\"\"")
-                clause = columnPrefix.isEmpty ? "\"\(clean)\"*" : "\(columnPrefix)\"\(clean)\"*"
+                let isLastToken = (index == tokens.count - 1)
+                let usePrefix = isLastToken && clean.count >= 3
+                let termPattern = usePrefix ? "\"\(clean)\"*" : "\"\(clean)\""
+                clause = columnPrefix.isEmpty ? termPattern : "\(columnPrefix)\(termPattern)"
             }
 
             if clauses.isEmpty {
