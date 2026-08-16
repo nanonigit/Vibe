@@ -3254,6 +3254,7 @@ private struct NowPlayingInspector: View {
     @Binding var browserURL: URL?
     let openAISettings: () -> Void
     @State private var tab = 0
+    @State private var showStatsView = false
     @AppStorage("lyrics.autoScroll") private var lyricsAutoScroll = true
     @AppStorage("discovery.displayCount") private var discoveryDisplayCount = 15
     @State private var isEditingManualLyrics = false
@@ -3304,17 +3305,39 @@ private struct NowPlayingInspector: View {
             idleDiscovery
         } else {
             VStack(spacing: 12) {
-                Picker("情報", selection: $tab) {
-                    Text(model.text("統計", "Stats")).tag(6)
-                    Text(model.text("情報", "Info")).tag(0)
-                    Text(model.text("歌詞", "Lyrics")).tag(1)
-                    Text(model.text("発見", "Discover")).tag(2)
-                    Text(model.text("練習", "Practice")).tag(3)
-                    Text("TAB").tag(4)
-                    Text(model.text("コード", "Chords")).tag(5)
-                }.pickerStyle(.segmented).labelsHidden()
+                HStack(spacing: 8) {
+                    Picker("情報", selection: $tab) {
+                        Text(model.text("情報", "Info")).tag(0)
+                        Text(model.text("歌詞", "Lyrics")).tag(1)
+                        Text(model.text("発見", "Discover")).tag(2)
+                        Text(model.text("練習", "Practice")).tag(3)
+                        Text("TAB").tag(4)
+                        Text(model.text("コード", "Chords")).tag(5)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .disabled(showStatsView)
+
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.16)) {
+                            showStatsView.toggle()
+                        }
+                    } label: {
+                        Image(systemName: showStatsView ? "chart.bar.xaxis" : "chart.bar.xaxis")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(showStatsView ? Color.white : Color.secondary)
+                            .frame(width: 28, height: 22)
+                            .background(
+                                showStatsView ? Color.accentColor : Color.secondary.opacity(0.12),
+                                in: RoundedRectangle(cornerRadius: 6)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help(model.text("リスニング統計・バイオリズムを表示", "Show Listening Insights & Stats"))
+                }
+
                 Group {
-                    if tab == 6 {
+                    if showStatsView {
                         idleDiscovery
                     } else if model.isEnriching {
                         ProgressView(model.text("情報を取得中…", "Loading information…"))
