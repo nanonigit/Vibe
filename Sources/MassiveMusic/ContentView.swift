@@ -200,10 +200,11 @@ struct ContentView: View {
                             }
                         )
                         .frame(width: inspectorWidth)
+                        .clipped()
                         .transaction { $0.animation = nil }
                     }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                .frame(width: availableWidth, height: geometry.size.height, alignment: .leading)
                 .padding(.top, -max(0, geometry.safeAreaInsets.top - 16))
                 .overlay(alignment: .topTrailing) {
                     inspectorToggleButton
@@ -1010,6 +1011,72 @@ struct ContentView: View {
                 limits: 0...500,
                 onChange: model.saveCacheSettings
             )
+
+            Divider().frame(height: 16)
+
+            // Cloud Sync Menu / Button for iPhone & iPad
+            HStack(spacing: 6) {
+                if model.isCloudSyncing {
+                    HStack(spacing: 5) {
+                        ProgressView().controlSize(.small)
+                        Text(model.cloudSyncProgress)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(model.appearance.palette.accent)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(model.appearance.palette.accent.opacity(0.12), in: Capsule())
+                } else {
+                    Button {
+                        model.syncCacheToCloud()
+                    } label: {
+                        Label(
+                            model.text("クラウドへ書き出し", "Export to Cloud"),
+                            systemImage: "icloud.and.arrow.up"
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help(model.text("iPhone/iPadで聴けるようにキャッシュをクラウドストレージへコピーします", "Export cached songs to cloud storage for iPhone/iPad"))
+
+                    Menu {
+                        Section(model.text("同期先クラウドストレージ", "Sync Destination")) {
+                            ForEach(CloudSyncProvider.allCases) { provider in
+                                Button {
+                                    model.cloudSyncProvider = provider
+                                    model.saveCloudSyncSettings()
+                                    if provider == .custom && model.customCloudSyncPath.isEmpty {
+                                        model.chooseCustomCloudSyncDirectory()
+                                    }
+                                } label: {
+                                    HStack {
+                                        Text(provider.title(isJapanese: model.language == .japanese))
+                                        if model.cloudSyncProvider == provider {
+                                            Image(systemName: "checkmark")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if model.cloudSyncProvider == .custom {
+                            Button(model.text("カスタムフォルダを変更…", "Change Custom Folder…")) {
+                                model.chooseCustomCloudSyncDirectory()
+                            }
+                        }
+
+                        Divider()
+
+                        Button(model.text("クラウドフォルダをFinderで開く", "Show Cloud Folder in Finder")) {
+                            model.revealCloudSyncDirectory()
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .frame(width: 24)
+                }
+            }
         }
         .fixedSize(horizontal: true, vertical: false)
     }
@@ -3859,6 +3926,8 @@ private struct IdleListeningInsightsView: View {
     @ObservedObject var player: PlaybackController
     @State private var hoveredTrackID: Int64? = nil
     @State private var hoveredPeriodID: String? = nil
+    @State private var selectedPeriodID: String? = nil
+    @State private var selectedGenre: String? = nil
 
     private var insights: ListeningInsights { model.listeningInsights }
     private var palette: AppearancePalette { model.appearance.palette }
@@ -3901,7 +3970,7 @@ private struct IdleListeningInsightsView: View {
                 // 2. Smart Quick Play Buttons
                 quickPlaySection
 
-                // 3. Time of Day Listening Clock (Biorhythm)
+                // 3. Time of Day Listening Clock (Biorhythm) with Ranking
                 timeOfDaySection
 
                 // 4. Heavy Rotation (Top Played Tracks)
@@ -3909,7 +3978,7 @@ private struct IdleListeningInsightsView: View {
                     topTracksSection
                 }
 
-                // 5. Genre Breakdown Bar
+                // 5. Genre Breakdown Bar with Ranking
                 if !insights.topGenres.isEmpty {
                     genreBreakdownSection
                 }
@@ -3926,6 +3995,9 @@ private struct IdleListeningInsightsView: View {
         }
         .onAppear {
             model.loadListeningInsights()
+            if selectedPeriodID == nil {
+                selectedPeriodID = currentPeriodKey
+            }
         }
     }
 
@@ -3977,44 +4049,51 @@ private struct IdleListeningInsightsView: View {
                 HStack(spacing: 8) {
                     Image(systemName: currentPeriodIcon)
                         .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(palette.accent)
+                        .foregroundStyle(.white)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(model.text("\(currentPeriodTitle)の曲を再生", "Play \(currentPeriodTitle)"))
+                        Text(model.text("いまの時間帯の曲を再生", "Play Current Vibe"))
                             .font(.caption.bold())
-                            .foregroundStyle(palette.primaryText)
-                        Text(model.text("今の時間帯に合ったライブラリ曲", "Tracks matching your current vibe"))
-                            .font(.system(size: 10))
-                            .foregroundStyle(palette.secondaryText)
+                            .foregroundStyle(.white)
+                        Text(currentPeriodTitle)
+                            .font(.caption2)
+                            .foregroundStyle(.white.opacity(0.8))
                     }
                     Spacer()
-                    Image(systemName: "play.circle.fill")
-                        .font(.system(size: 18))
-                        .foregroundStyle(palette.accent)
+                    Image(systemName: "play.fill")
+                        .font(.caption.bold())
+                        .foregroundStyle(.white)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 9)
-                .background(palette.elevated, in: RoundedRectangle(cornerRadius: 10))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(palette.accent.opacity(0.4), lineWidth: 1.2)
+                .background(
+                    LinearGradient(
+                        colors: [palette.accent, palette.accent.opacity(0.8)],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    ),
+                    in: RoundedRectangle(cornerRadius: 9)
                 )
+                .shadow(color: palette.accent.opacity(isDark ? 0.35 : 0.2), radius: 4, y: 2)
             }
             .buttonStyle(.plain)
 
-            if !insights.topTracks.isEmpty {
+            if !insights.rediscoveryTracks.isEmpty {
                 Button {
-                    if let randomTop = insights.topTracks.randomElement()?.track {
-                        player.play(randomTop)
+                    if let track = insights.rediscoveryTracks.first {
+                        player.play(track)
                     }
                 } label: {
                     HStack(spacing: 8) {
-                        Image(systemName: "shuffle")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(palette.secondaryText)
-                        Text(model.text("最近のTop曲をシャッフル再生", "Shuffle Recent Top Tracks"))
-                            .font(.caption)
+                        Image(systemName: "sparkles")
+                            .font(.caption.bold())
+                            .foregroundStyle(palette.accent)
+                        Text(model.text("お気に入りリバイバル", "Favorite Revival"))
+                            .font(.caption.bold())
                             .foregroundStyle(palette.primaryText)
                         Spacer()
+                        Text(model.text("最近聴いていない曲", "Not heard recently"))
+                            .font(.caption2)
+                            .foregroundStyle(palette.tertiaryText)
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 7)
@@ -4037,28 +4116,41 @@ private struct IdleListeningInsightsView: View {
                     .font(.caption.bold())
                     .foregroundStyle(palette.secondaryText)
                 Spacer()
+                Text(model.text("タップでランキング表示", "Tap to view rankings"))
+                    .font(.system(size: 10))
+                    .foregroundStyle(palette.tertiaryText)
             }
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
                 ForEach(insights.timeOfDayVibes) { vibe in
                     let isCurrent = vibe.period == currentPeriodKey
+                    let isSelected = (selectedPeriodID ?? currentPeriodKey) == vibe.period
                     let isHovered = hoveredPeriodID == vibe.period
 
                     Button {
-                        if let first = vibe.sampleTracks.first {
-                            player.play(first)
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            if selectedPeriodID == vibe.period {
+                                selectedPeriodID = nil
+                            } else {
+                                selectedPeriodID = vibe.period
+                            }
                         }
                     } label: {
                         VStack(alignment: .leading, spacing: 5) {
                             HStack(spacing: 5) {
                                 Image(systemName: vibe.icon)
                                     .font(.caption)
-                                    .foregroundStyle(isCurrent ? palette.accent : palette.secondaryText)
+                                    .foregroundStyle(isSelected ? palette.accent : (isCurrent ? palette.accent : palette.secondaryText))
                                 Text(vibe.title)
                                     .font(.caption2.bold())
-                                    .foregroundStyle(isCurrent ? palette.accent : palette.primaryText)
+                                    .foregroundStyle(isSelected ? palette.accent : (isCurrent ? palette.accent : palette.primaryText))
                                     .lineLimit(1)
                                 Spacer(minLength: 0)
+                                if isSelected {
+                                    Image(systemName: "chevron.down")
+                                        .font(.system(size: 8, weight: .bold))
+                                        .foregroundStyle(palette.accent)
+                                }
                             }
 
                             HStack {
@@ -4078,20 +4170,139 @@ private struct IdleListeningInsightsView: View {
                         .padding(.vertical, 8)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(
-                            palette.elevated,
+                            isSelected ? palette.accent.opacity(isDark ? 0.15 : 0.08) : palette.elevated,
                             in: RoundedRectangle(cornerRadius: 8)
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 8)
                                 .stroke(
-                                    isCurrent ? palette.accent : (isHovered ? palette.divider.opacity(1.5) : palette.divider),
-                                    lineWidth: isCurrent ? 1.5 : 1
+                                    isSelected ? palette.accent : (isCurrent ? palette.accent.opacity(0.6) : (isHovered ? palette.divider.opacity(1.5) : palette.divider)),
+                                    lineWidth: isSelected ? 1.5 : (isCurrent ? 1.2 : 1)
                                 )
                         )
                     }
                     .buttonStyle(.plain)
+                    .help(model.text("\(vibe.title)に聴いた曲ランキングを表示", "View ranking for \(vibe.title)"))
                     .onHover { h in hoveredPeriodID = h ? vibe.period : nil }
                 }
+            }
+
+            // Period Top Tracks Ranking List
+            if let selectedPeriod = insights.timeOfDayVibes.first(where: { $0.period == (selectedPeriodID ?? currentPeriodKey) }) {
+                periodRankingView(for: selectedPeriod)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func periodRankingView(for vibe: ListeningInsights.TimeOfDayVibe) -> some View {
+        let tracks = vibe.topTracks
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                HStack(spacing: 5) {
+                    Image(systemName: vibe.icon)
+                        .font(.caption.bold())
+                        .foregroundStyle(palette.accent)
+                    Text(model.text("\(vibe.title)のランキング", "\(vibe.title) Rankings"))
+                        .font(.caption.bold())
+                        .foregroundStyle(palette.primaryText)
+                }
+
+                Spacer()
+
+                if !tracks.isEmpty {
+                    Button {
+                        if let first = tracks.first {
+                            player.play(first.track)
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "play.fill")
+                                .font(.system(size: 9))
+                            Text(model.text("全曲再生", "Play All"))
+                                .font(.caption2.bold())
+                        }
+                        .foregroundStyle(palette.accent)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(palette.accent.opacity(0.12), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.top, 4)
+
+            if tracks.isEmpty {
+                Text(model.text("この時間帯の再生履歴はまだありません", "No listening history for this period yet"))
+                    .font(.caption2)
+                    .foregroundStyle(palette.tertiaryText)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .center)
+            } else {
+                VStack(spacing: 3) {
+                    ForEach(Array(tracks.prefix(8).enumerated()), id: \.element.id) { index, item in
+                        let isHovered = hoveredTrackID == item.track.id
+                        Button {
+                            player.play(item.track)
+                        } label: {
+                            HStack(spacing: 8) {
+                                // Rank Number
+                                ZStack {
+                                    if index == 0 {
+                                        Circle().fill(Color.yellow.opacity(0.2)).frame(width: 18, height: 18)
+                                        Text("1").font(.caption2.bold()).foregroundStyle(Color.yellow)
+                                    } else if index == 1 {
+                                        Circle().fill(Color.gray.opacity(0.2)).frame(width: 18, height: 18)
+                                        Text("2").font(.caption2.bold()).foregroundStyle(palette.secondaryText)
+                                    } else if index == 2 {
+                                        Circle().fill(Color.brown.opacity(0.2)).frame(width: 18, height: 18)
+                                        Text("3").font(.caption2.bold()).foregroundStyle(Color.orange)
+                                    } else {
+                                        Text("\(index + 1)")
+                                            .font(.caption2.monospacedDigit())
+                                            .foregroundStyle(palette.tertiaryText)
+                                            .frame(width: 18)
+                                    }
+                                }
+
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(item.track.title)
+                                        .font(.caption.bold())
+                                        .foregroundStyle(isHovered ? palette.accent : palette.primaryText)
+                                        .lineLimit(1)
+                                    Text(item.track.artist)
+                                        .font(.caption2)
+                                        .foregroundStyle(palette.secondaryText)
+                                        .lineLimit(1)
+                                }
+
+                                Spacer(minLength: 0)
+
+                                if isHovered {
+                                    Image(systemName: "play.circle.fill")
+                                        .font(.caption.bold())
+                                        .foregroundStyle(palette.accent)
+                                } else {
+                                    Text(model.text("\(item.playCount)回", "\(item.playCount) plays"))
+                                        .font(.caption2.monospacedDigit())
+                                        .foregroundStyle(palette.tertiaryText)
+                                }
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(
+                                isHovered ? palette.elevated : Color.clear,
+                                in: RoundedRectangle(cornerRadius: 6)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .onHover { h in hoveredTrackID = h ? item.track.id : nil }
+                    }
+                }
+                .padding(6)
+                .background(palette.elevated.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.divider.opacity(0.6), lineWidth: 1))
             }
         }
     }
@@ -4164,10 +4375,13 @@ private struct IdleListeningInsightsView: View {
     private var genreBreakdownSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label(model.text("ジャンル構成比", "Genre Breakdown"), systemImage: "chart.pie.fill")
+                Label(model.text("ジャンル構成比", "Top Genres"), systemImage: "chart.pie.fill")
                     .font(.caption.bold())
                     .foregroundStyle(palette.secondaryText)
                 Spacer()
+                Text(model.text("タップで曲を表示", "Tap to view songs"))
+                    .font(.system(size: 10))
+                    .foregroundStyle(palette.tertiaryText)
             }
 
             VStack(spacing: 8) {
@@ -4176,35 +4390,185 @@ private struct IdleListeningInsightsView: View {
                     HStack(spacing: 2) {
                         ForEach(Array(insights.topGenres.enumerated()), id: \.element.id) { index, slice in
                             let width = max(4, geo.size.width * CGFloat(slice.percentage))
-                            RoundedRectangle(cornerRadius: 3)
-                                .fill(genreColor(index: index))
-                                .frame(width: width, height: 8)
+                            let isSelected = selectedGenre == slice.genre
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    selectedGenre = (selectedGenre == slice.genre) ? nil : slice.genre
+                                }
+                            } label: {
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(genreColor(index: index))
+                                    .opacity(selectedGenre == nil || isSelected ? 1.0 : 0.35)
+                                    .frame(width: width, height: isSelected ? 10 : 8)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                 }
-                .frame(height: 8)
+                .frame(height: 10)
 
                 // Tags
                 FlowLayout(spacing: 6) {
                     ForEach(Array(insights.topGenres.enumerated()), id: \.element.id) { index, slice in
-                        HStack(spacing: 4) {
-                            Circle()
-                                .fill(genreColor(index: index))
-                                .frame(width: 6, height: 6)
-                            Text("\(slice.genre) \(Int((slice.percentage * 100).rounded()))%")
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(palette.primaryText)
+                        let isSelected = selectedGenre == slice.genre
+                        let color = genreColor(index: index)
+
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                selectedGenre = (selectedGenre == slice.genre) ? nil : slice.genre
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(color)
+                                    .frame(width: 6, height: 6)
+                                Text("\(slice.genre) \(Int((slice.percentage * 100).rounded()))%")
+                                    .font(.system(size: 10, weight: isSelected ? .bold : .medium))
+                                    .foregroundStyle(isSelected ? color : palette.primaryText)
+                                if isSelected {
+                                    Image(systemName: "chevron.down")
+                                        .font(.system(size: 8, weight: .bold))
+                                        .foregroundStyle(color)
+                                }
+                            }
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(
+                                isSelected ? color.opacity(isDark ? 0.18 : 0.1) : palette.elevated,
+                                in: RoundedRectangle(cornerRadius: 5)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 5)
+                                    .stroke(isSelected ? color : palette.divider, lineWidth: isSelected ? 1.2 : 0.8)
+                            )
                         }
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(palette.elevated, in: RoundedRectangle(cornerRadius: 5))
-                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(palette.divider, lineWidth: 0.8))
+                        .buttonStyle(.plain)
+                        .help(model.text("\(slice.genre)のよく聴く曲ランキングを表示", "View top tracks for \(slice.genre)"))
                     }
+                }
+
+                // Genre Top Tracks List
+                if let genreName = selectedGenre,
+                   let selectedSlice = insights.topGenres.first(where: { $0.genre == genreName }) {
+                    genreRankingView(for: selectedSlice)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
             .padding(10)
             .background(palette.elevated.opacity(0.6), in: RoundedRectangle(cornerRadius: 9))
             .overlay(RoundedRectangle(cornerRadius: 9).stroke(palette.divider, lineWidth: 1))
+        }
+    }
+
+    @ViewBuilder
+    private func genreRankingView(for slice: ListeningInsights.GenreSlice) -> some View {
+        let tracks = slice.topTracks
+        VStack(alignment: .leading, spacing: 6) {
+            Divider().padding(.vertical, 2)
+
+            HStack {
+                HStack(spacing: 5) {
+                    Image(systemName: "music.note")
+                        .font(.caption.bold())
+                        .foregroundStyle(palette.accent)
+                    Text(model.text("\(slice.genre) の人気曲", "\(slice.genre) Top Tracks"))
+                        .font(.caption.bold())
+                        .foregroundStyle(palette.primaryText)
+                }
+
+                Spacer()
+
+                if !tracks.isEmpty {
+                    Button {
+                        if let first = tracks.first {
+                            player.play(first.track)
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "play.fill")
+                                .font(.system(size: 9))
+                            Text(model.text("全曲再生", "Play All"))
+                                .font(.caption2.bold())
+                        }
+                        .foregroundStyle(palette.accent)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(palette.accent.opacity(0.12), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            if tracks.isEmpty {
+                Text(model.text("このジャンルの曲がありません", "No tracks for this genre"))
+                    .font(.caption2)
+                    .foregroundStyle(palette.tertiaryText)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .center)
+            } else {
+                VStack(spacing: 3) {
+                    ForEach(Array(tracks.prefix(6).enumerated()), id: \.element.id) { index, item in
+                        let isHovered = hoveredTrackID == item.track.id
+                        Button {
+                            player.play(item.track)
+                        } label: {
+                            HStack(spacing: 8) {
+                                // Rank Number
+                                ZStack {
+                                    if index == 0 {
+                                        Circle().fill(Color.yellow.opacity(0.2)).frame(width: 18, height: 18)
+                                        Text("1").font(.caption2.bold()).foregroundStyle(Color.yellow)
+                                    } else if index == 1 {
+                                        Circle().fill(Color.gray.opacity(0.2)).frame(width: 18, height: 18)
+                                        Text("2").font(.caption2.bold()).foregroundStyle(palette.secondaryText)
+                                    } else if index == 2 {
+                                        Circle().fill(Color.brown.opacity(0.2)).frame(width: 18, height: 18)
+                                        Text("3").font(.caption2.bold()).foregroundStyle(Color.orange)
+                                    } else {
+                                        Text("\(index + 1)")
+                                            .font(.caption2.monospacedDigit())
+                                            .foregroundStyle(palette.tertiaryText)
+                                            .frame(width: 18)
+                                    }
+                                }
+
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(item.track.title)
+                                        .font(.caption.bold())
+                                        .foregroundStyle(isHovered ? palette.accent : palette.primaryText)
+                                        .lineLimit(1)
+                                    Text(item.track.artist)
+                                        .font(.caption2)
+                                        .foregroundStyle(palette.secondaryText)
+                                        .lineLimit(1)
+                                }
+
+                                Spacer(minLength: 0)
+
+                                if isHovered {
+                                    Image(systemName: "play.circle.fill")
+                                        .font(.caption.bold())
+                                        .foregroundStyle(palette.accent)
+                                } else {
+                                    Text(model.text("\(item.playCount)回", "\(item.playCount) plays"))
+                                        .font(.caption2.monospacedDigit())
+                                        .foregroundStyle(palette.tertiaryText)
+                                }
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(
+                                isHovered ? palette.elevated : Color.clear,
+                                in: RoundedRectangle(cornerRadius: 6)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .onHover { h in hoveredTrackID = h ? item.track.id : nil }
+                    }
+                }
+                .padding(4)
+                .background(palette.elevated.opacity(0.4), in: RoundedRectangle(cornerRadius: 7))
+            }
         }
     }
 
@@ -6107,6 +6471,89 @@ private struct LibrarySettingsView: View {
                 Button(model.text("Finderでキャッシュを表示", "Show Cache in Finder"), action: model.revealLocalCache)
                 Button(model.text("設定を保存", "Save Settings"), action: model.saveCacheSettings)
             }
+
+            SettingsCard(
+                title: model.text("クラウド共有 (iPhone / iPad 連携)", "Cloud Sharing (iPhone / iPad Sync)"),
+                subtitle: model.text("Macのキャッシュ曲をクラウドに書き出し、iPhoneやiPadの「ファイル」アプリや音楽プレイヤーで再生できます。", "Export cached tracks to cloud storage to listen on iPhone/iPad via Files app or media players."),
+                systemImage: "icloud.fill"
+            ) {
+                Picker(model.text("同期先クラウド", "Destination"), selection: $model.cloudSyncProvider) {
+                    ForEach(CloudSyncProvider.allCases) { provider in
+                        Label(
+                            provider.title(isJapanese: model.language == .japanese),
+                            systemImage: provider.icon
+                        ).tag(provider)
+                    }
+                }
+                .onChange(of: model.cloudSyncProvider) { _, newProvider in
+                    model.saveCloudSyncSettings()
+                    if newProvider == .custom && model.customCloudSyncPath.isEmpty {
+                        model.chooseCustomCloudSyncDirectory()
+                    }
+                }
+
+                if model.cloudSyncProvider == .custom {
+                    HStack {
+                        Text(model.customCloudSyncPath.isEmpty ? model.text("未選択", "Not selected") : model.customCloudSyncPath)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer()
+                        Button(model.text("フォルダを選択…", "Choose Folder…")) {
+                            model.chooseCustomCloudSyncDirectory()
+                        }
+                        .controlSize(.small)
+                    }
+                } else {
+                    LabeledContent(model.text("書き出し先パス", "Export Path")) {
+                        Text(model.resolvedCloudSyncPathDisplay)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                    }
+                }
+
+                Toggle(model.text("プレイリストファイル (.m3u8) も同時に出力", "Generate Playlist File (.m3u8)"), isOn: $model.exportM3UPlaylist)
+                    .onChange(of: model.exportM3UPlaylist) { _, _ in model.saveCloudSyncSettings() }
+
+                Text(model.text(
+                    "💡 iPhone / iPad での聴き方:\n1. 「今すぐクラウドに書き出す」を実行\n2. iPhone/iPad の「ファイル」アプリ > iCloud Drive >「Vibe Music」を開く\n3. そのままタップして再生、または VLC / Evermusic などのプレイヤーでプレイリストを一括読み込み",
+                    "💡 How to listen on iPhone / iPad:\n1. Click 'Export Cache to Cloud Now'\n2. Open Files app on iPhone/iPad > iCloud Drive > 'Vibe Music'\n3. Play directly or import the .m3u8 playlist into VLC, Evermusic, or Documents app."
+                ))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(8)
+                .background(model.appearance.palette.elevated, in: RoundedRectangle(cornerRadius: 6))
+
+                HStack(spacing: 10) {
+                    if model.isCloudSyncing {
+                        ProgressView().controlSize(.small)
+                        Text(model.cloudSyncProgress)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(model.appearance.palette.accent)
+                    } else {
+                        Button(model.text("今すぐクラウドに書き出す", "Export Cache to Cloud Now")) {
+                            model.syncCacheToCloud()
+                        }
+                        .buttonStyle(.borderedProminent)
+
+                        Button(model.text("Finderでクラウドフォルダを開く", "Show in Finder")) {
+                            model.revealCloudSyncDirectory()
+                        }
+                    }
+
+                    Spacer()
+
+                    if let lastSync = model.lastCloudSyncDate {
+                        Text(model.text("最終同期: \(lastSync.formatted(date: .abbreviated, time: .shortened))", "Last synced: \(lastSync.formatted(date: .abbreviated, time: .shortened))"))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
         }
     }
 
@@ -6430,7 +6877,7 @@ private struct InspectorPlayerControls: View {
     @Binding var isMiniPlayer: Bool
 
     var body: some View {
-        UnifiedPlayerControls(player: player, model: model, isMiniPlayer: $isMiniPlayer, isCompact: false)
+        UnifiedPlayerControls(player: player, model: model, isMiniPlayer: $isMiniPlayer, isCompact: true)
     }
 }
 

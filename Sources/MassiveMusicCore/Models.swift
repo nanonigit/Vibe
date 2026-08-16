@@ -1876,14 +1876,24 @@ public struct ListeningInsights: Sendable {
         public let topGenre: String
         public let playCount: Int
         public let sampleTracks: [Track]
+        public let topTracks: [TopTrack]
 
-        public init(period: String, title: String, icon: String, topGenre: String, playCount: Int, sampleTracks: [Track]) {
+        public init(
+            period: String,
+            title: String,
+            icon: String,
+            topGenre: String,
+            playCount: Int,
+            sampleTracks: [Track],
+            topTracks: [TopTrack] = []
+        ) {
             self.period = period
             self.title = title
             self.icon = icon
             self.topGenre = topGenre
             self.playCount = playCount
             self.sampleTracks = sampleTracks
+            self.topTracks = topTracks
         }
     }
 
@@ -1892,11 +1902,13 @@ public struct ListeningInsights: Sendable {
         public let genre: String
         public let count: Int
         public let percentage: Double
+        public let topTracks: [TopTrack]
 
-        public init(genre: String, count: Int, percentage: Double) {
+        public init(genre: String, count: Int, percentage: Double, topTracks: [TopTrack] = []) {
             self.genre = genre
             self.count = count
             self.percentage = percentage
+            self.topTracks = topTracks
         }
     }
 
@@ -1935,5 +1947,32 @@ public struct ListeningInsights: Sendable {
         rediscoveryTracks: [],
         currentVibeTracks: []
     )
+}
+
+public enum CloudSyncProvider: String, CaseIterable, Identifiable, Sendable {
+    case iCloud = "iCloud"
+    case dropbox = "dropbox"
+    case googleDrive = "googleDrive"
+    case custom = "custom"
+
+    public var id: String { rawValue }
+
+    public func title(isJapanese: Bool) -> String {
+        switch self {
+        case .iCloud: return isJapanese ? "iCloud Drive (iPhone / iPad用)" : "iCloud Drive (for iPhone / iPad)"
+        case .dropbox: return "Dropbox"
+        case .googleDrive: return "Google Drive"
+        case .custom: return isJapanese ? "カスタム共有フォルダ…" : "Custom Shared Folder…"
+        }
+    }
+
+    public var icon: String {
+        switch self {
+        case .iCloud: return "icloud.fill"
+        case .dropbox: return "shippingbox.fill"
+        case .googleDrive: return "externaldrive.fill.badge.icloud"
+        case .custom: return "folder.fill"
+        }
+    }
 }
 

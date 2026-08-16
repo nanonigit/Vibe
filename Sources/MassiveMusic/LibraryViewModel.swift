@@ -338,6 +338,15 @@ final class LibraryViewModel: ObservableObject {
     @Published private(set) var listeningInsights: ListeningInsights = .empty
     @Published private(set) var isLoading = false
 
+    // MARK: - Cloud Sharing / Sync for iPhone & iPad
+    @Published var cloudSyncProvider: CloudSyncProvider = .iCloud
+    @Published var customCloudSyncPath: String = ""
+    @Published var autoCloudSyncEnabled: Bool = false
+    @Published var exportM3UPlaylist: Bool = true
+    @Published var isCloudSyncing = false
+    @Published var cloudSyncProgress = ""
+    @Published var lastCloudSyncDate: Date? = nil
+
     var isStorageExternal: Bool {
         StorageTopology.usesSeparateLocalCache(
             primaryPath: storageDestinations.first(where: \.isPrimary)?.path
@@ -524,6 +533,11 @@ final class LibraryViewModel: ObservableObject {
         geminiModel = (try? database.setting(forKey: "gemini.model")) ?? "gemini-3.5-flash"
         cacheEnabled = (try? database.setting(forKey: "cache.enabled")) != "false"
         cacheTrackLimit = Int((try? database.setting(forKey: "cache.trackLimit")) ?? "24") ?? 24
+        let storedCloudProvider = (try? database.setting(forKey: "cloudSync.provider")) ?? "iCloud"
+        cloudSyncProvider = CloudSyncProvider(rawValue: storedCloudProvider) ?? .iCloud
+        customCloudSyncPath = (try? database.setting(forKey: "cloudSync.customPath")) ?? ""
+        autoCloudSyncEnabled = (try? database.setting(forKey: "cloudSync.autoSync")) == "true"
+        exportM3UPlaylist = (try? database.setting(forKey: "cloudSync.exportM3U")) != "false"
         autoFillMusicBrainzTrackNumbers = (try? database.setting(forKey: "musicbrainz.autoFillTrackNumbers")) != "false"
         musicBrainzAutoFillSummary = (try? database.musicBrainzAutoFillSummary()) ?? .empty
         normalizeMetadataCharacterWidths = (try? database.setting(forKey: "metadata.normalizeCharacterWidths")) == "true"
@@ -3561,6 +3575,148 @@ final class LibraryViewModel: ObservableObject {
                 } catch { errorMessage = error.localizedDescription }
             }
         } catch { errorMessage = error.localizedDescription }
+    }
+
+    func saveCloudSyncSettings() {
+        do {
+            try database.setSetting(cloudSyncProvider.rawValue, forKey: "cloudSync.provider")
+            try database.setSetting(customCloudSyncPath, forKey: "cloudSync.customPath")
+            try database.setSetting(autoCloudSyncEnabled ? "true" : "false", forKey: "cloudSync.autoSync")
+            try database.setSetting(exportM3UPlaylist ? "true" : "false", forKey: "cloudSync.exportM3U")
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    func defaultCloudDirectoryURL(for provider: CloudSyncProvider) -> URL? {
+        let fileManager = FileManager.default
+        let home = fileManager.homeDirectoryForCurrentUser
+        switch provider {
+        case .iCloud:
+            let cloudDocs = home.appending(path: "Library/Mobile Documents/com~apple~CloudDocs", directoryHint: .isDirectory)
+            return cloudDocs.appending(path: "Vibe Music", directoryHint: .isDirectory)
+        case .dropbox:
+            return home.appending(path: "Dropbox/Vibe Music", directoryHint: .isDirectory)
+        case .googleDrive:
+            let cloudStorage = home.appending(path: "Library/CloudStorage", directoryHint: .isDirectory)
+            if let contents = try? fileManager.contentsOfDirectory(at: cloudStorage, includingPropertiesForKeys: nil),
+               let gdrive = contents.first(where: { $0.lastPathComponent.localizedCaseInsensitiveContains("GoogleDrive") }) {
+                return gdrive.appending(path: "My Drive/Vibe Music", directoryHint: .isDirectory)
+            }
+            return home.appending(path: "Google Drive/My Drive/Vibe Music", directoryHint: .isDirectory)
+        case .custom:
+            if !customCloudSyncPath.isEmpty {
+                return URL(fileURLWithPath: customCloudSyncPath, isDirectory: true)
+            }
+            return nil
+        }
+    }
+
+    var resolvedCloudSyncDirectoryURL: URL? {
+        defaultCloudDirectoryURL(for: cloudSyncProvider)
+    }
+
+    var resolvedCloudSyncPathDisplay: String {
+        resolvedCloudSyncDirectoryURL?.path ?? text("未設定", "Not set")
+    }
+
+    func syncCacheToCloud() {
+        guard !isCloudSyncing else { return }
+        guard let destURL = resolvedCloudSyncDirectoryURL else {
+            errorMessage = text("有効な同期先フォルダが指定されていません。", "No valid sync destination folder specified.")
+            return
+        }
+
+        saveCloudSyncSettings()
+        isCloudSyncing = true
+        cloudSyncProgress = text("クラウド同期の準備中…", "Preparing cloud sync…")
+
+        Task {
+            do {
+                let fileManager = FileManager.default
+                try fileManager.createDirectory(at: destURL, withIntermediateDirectories: true)
+
+                let cachedIDs = try database.allCachedTrackIDs()
+                guard !cachedIDs.isEmpty else {
+                    await MainActor.run {
+                        self.isCloudSyncing = false
+                        self.cloudSyncProgress = ""
+                        self.errorMessage = self.text("キャッシュに曲がありません。", "No songs in cache.")
+                    }
+                    return
+                }
+
+                var syncedCount = 0
+                var playlistEntries: [String] = []
+
+                for trackID in cachedIDs {
+                    guard let track = try database.track(id: trackID),
+                          let cachePath = try database.cachedPath(trackID: trackID),
+                          fileManager.fileExists(atPath: cachePath) else { continue }
+
+                    let sourceURL = URL(fileURLWithPath: cachePath)
+                    let safeTitle = track.title.replacingOccurrences(of: "/", with: ":")
+                    let safeArtist = track.artist.replacingOccurrences(of: "/", with: ":")
+                    let filename = "\(safeArtist) - \(safeTitle).\(track.format.lowercased())"
+                    let targetURL = destURL.appending(path: filename)
+
+                    if !fileManager.fileExists(atPath: targetURL.path) {
+                        try? fileManager.copyItem(at: sourceURL, to: targetURL)
+                    }
+
+                    playlistEntries.append(filename)
+                    syncedCount += 1
+
+                    let progressMsg = self.text(
+                        "同期中 (\(syncedCount)/\(cachedIDs.count)曲)…",
+                        "Syncing (\(syncedCount)/\(cachedIDs.count) songs)…"
+                    )
+                    await MainActor.run {
+                        self.cloudSyncProgress = progressMsg
+                    }
+                }
+
+                if self.exportM3UPlaylist && !playlistEntries.isEmpty {
+                    let m3uPath = destURL.appending(path: "Vibe_Offline_Playlist.m3u8")
+                    var m3uContent = "#EXTM3U\n"
+                    for entry in playlistEntries {
+                        m3uContent += "\(entry)\n"
+                    }
+                    try? m3uContent.write(to: m3uPath, atomically: true, encoding: .utf8)
+                }
+
+                await MainActor.run {
+                    self.isCloudSyncing = false
+                    self.cloudSyncProgress = ""
+                    self.lastCloudSyncDate = Date()
+                }
+            } catch {
+                await MainActor.run {
+                    self.isCloudSyncing = false
+                    self.cloudSyncProgress = ""
+                    self.errorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    func revealCloudSyncDirectory() {
+        if let destURL = resolvedCloudSyncDirectoryURL {
+            try? FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
+            NSWorkspace.shared.activateFileViewerSelecting([destURL])
+        }
+    }
+
+    func chooseCustomCloudSyncDirectory() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = text("同期先フォルダを選択", "Select Sync Folder")
+        if panel.runModal() == .OK, let url = panel.url {
+            customCloudSyncPath = url.path
+            cloudSyncProvider = .custom
+            saveCloudSyncSettings()
+        }
     }
 
     func saveMusicBrainzSettings() {

@@ -1439,11 +1439,30 @@ public final class LibraryDatabase: @unchecked Sendable {
                 LIMIT 5
             """)
             let totalGenrePlays = max(1, topGenreRows.reduce(0) { $0 + ((try? $1["total_plays"]) ?? 0) })
-            let topGenres = topGenreRows.map { row -> ListeningInsights.GenreSlice in
+            var topGenres: [ListeningInsights.GenreSlice] = []
+            for row in topGenreRows {
                 let genre: String = row["genre"]
                 let plays: Int = row["total_plays"] ?? 0
                 let pct = Double(plays) / Double(totalGenrePlays)
-                return ListeningInsights.GenreSlice(genre: genre, count: plays, percentage: pct)
+
+                let genreTrackRows = try Row.fetchAll(db, sql: """
+                    SELECT * FROM tracks
+                    WHERE is_available = 1 AND genre = ? COLLATE NOCASE
+                    ORDER BY play_count DESC, last_played_at DESC
+                    LIMIT 8
+                """, arguments: [genre])
+                let genreTopTracks = genreTrackRows.map { trRow in
+                    let track = Self.decodeTrack(trRow)
+                    let plays: Int = trRow["play_count"] ?? 1
+                    return ListeningInsights.TopTrack(track: track, playCount: max(1, plays))
+                }
+
+                topGenres.append(ListeningInsights.GenreSlice(
+                    genre: genre,
+                    count: plays,
+                    percentage: pct,
+                    topTracks: genreTopTracks
+                ))
             }
 
             let periods: [(period: String, titleJa: String, titleEn: String, icon: String, hourStart: Int, hourEnd: Int)] = [
@@ -1474,14 +1493,36 @@ public final class LibraryDatabase: @unchecked Sendable {
                       AND \(condition)
                 """) ?? 0
 
-                let sampleRows = try Row.fetchAll(db, sql: """
-                    SELECT * FROM tracks
-                    WHERE is_available = 1 AND last_played_at IS NOT NULL
-                      AND \(condition)
-                    ORDER BY last_played_at DESC
-                    LIMIT 6
+                let rankingRows = try Row.fetchAll(db, sql: """
+                    SELECT t.*, COUNT(*) AS period_play_count
+                    FROM tracks t
+                    INNER JOIN play_events pe ON pe.track_id = t.id
+                    WHERE t.is_available = 1 AND \(condition.replacingOccurrences(of: "last_played_at", with: "pe.played_at"))
+                    GROUP BY t.id
+                    ORDER BY period_play_count DESC, pe.played_at DESC
+                    LIMIT 10
                 """)
-                let samples = sampleRows.map(Self.decodeTrack)
+                
+                var topTracks: [ListeningInsights.TopTrack] = rankingRows.map { row in
+                    let track = Self.decodeTrack(row)
+                    let plays: Int = row["period_play_count"] ?? 1
+                    return ListeningInsights.TopTrack(track: track, playCount: plays)
+                }
+
+                if topTracks.isEmpty {
+                    let fallbackRows = try Row.fetchAll(db, sql: """
+                        SELECT * FROM tracks
+                        WHERE is_available = 1 AND last_played_at IS NOT NULL
+                          AND \(condition)
+                        ORDER BY play_count DESC, last_played_at DESC
+                        LIMIT 10
+                    """)
+                    topTracks = fallbackRows.map { row in
+                        let track = Self.decodeTrack(row)
+                        let plays: Int = row["play_count"] ?? 1
+                        return ListeningInsights.TopTrack(track: track, playCount: max(1, plays))
+                    }
+                }
 
                 timeOfDayVibes.append(ListeningInsights.TimeOfDayVibe(
                     period: p.period,
@@ -1489,7 +1530,8 @@ public final class LibraryDatabase: @unchecked Sendable {
                     icon: p.icon,
                     topGenre: topGenre,
                     playCount: count,
-                    sampleTracks: samples
+                    sampleTracks: topTracks.map(\.track),
+                    topTracks: topTracks
                 ))
             }
 
