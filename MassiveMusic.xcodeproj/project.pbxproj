@@ -681,7 +681,7 @@
 					"@executable_path/../Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.local.MassiveMusic;
-				PRODUCT_NAME = Vibe;
+				PRODUCT_NAME = amp;
 				SDKROOT = macosx;
 			};
 			name = Debug;
@@ -812,7 +812,7 @@
 					"@executable_path/../Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.local.MassiveMusic;
-				PRODUCT_NAME = Vibe;
+				PRODUCT_NAME = amp;
 				SDKROOT = macosx;
 			};
 			name = Release;

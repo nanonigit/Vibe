@@ -2649,6 +2649,21 @@ final class LibraryViewModel: ObservableObject {
         batchMetadataTask?.cancel()
     }
 
+    func clearComment(for track: Track) {
+        var edit = TrackMetadataEdit(track: track)
+        edit.comment = ""
+        Task {
+            _ = await updateMetadataFromEditor(for: track, edit: edit)
+        }
+    }
+
+    func clearCommentsOnCurrentPage() {
+        let tracksWithComment = tracks.filter { !$0.comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        guard !tracksWithComment.isEmpty else { return }
+        let changes = BatchMetadataChanges(comment: "")
+        updateMetadata(for: tracksWithComment, changes: changes)
+    }
+
     /// Repairs existing and newly scanned titles in small keyset pages. Each
     /// source file still goes through AudioMetadataWriter's copy, verify, write,
     /// verify, and rollback path before the database is updated.
@@ -4869,14 +4884,20 @@ final class LibraryViewModel: ObservableObject {
                 var missingNames: [String] = []
                 var missingRootIDs: Set<Int64> = []
                 for root in roots {
-                    let available: Bool
+                    var available = false
                     if let scoped = try? SecurityScopedRoot.resolve(bookmark: root.bookmark) {
-                        available = FileManager.default.fileExists(atPath: scoped.url.path)
-                    } else {
-                        available = false
+                        available = (try? scoped.withAccess { url in
+                            FileManager.default.fileExists(atPath: url.path)
+                        }) ?? FileManager.default.fileExists(atPath: scoped.url.path)
                     }
+                    if !available && !root.lastKnownPath.isEmpty {
+                        available = FileManager.default.fileExists(atPath: root.lastKnownPath)
+                    }
+                    let rootID = root.id
+                    let db = self.database
+                    let isAvail = available
                     try? await Task.detached {
-                        try self.database.setRootAvailability(id: root.id, isAvailable: available)
+                        try db.setRootAvailability(id: rootID, isAvailable: isAvail)
                     }.value
                     if !available {
                         missingNames.append(root.displayName)

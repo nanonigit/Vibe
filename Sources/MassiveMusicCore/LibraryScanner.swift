@@ -184,7 +184,8 @@ public actor LibraryScanner {
                         modifiedAt: modifiedAt,
                         format: ext,
                         bitrate: metadata.bitrate,
-                        hasArtwork: metadata.hasArtwork
+                        hasArtwork: metadata.hasArtwork,
+                        comment: metadata.comment
                     )
                     imports.append(TrackImport(identityKey: identityKey, fileResourceID: resourceID, track: track))
                 }

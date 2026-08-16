@@ -1,14 +1,14 @@
-# Vibe
+# amp
 
 <p align="center">
-  <img src="Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-256.png" width="128" alt="Vibe app icon">
+  <img src="Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-256.png" width="128" alt="amp app icon">
 </p>
 
 <p align="center">
   English | <a href="README.ja.md">日本語</a>
 </p>
 
-Vibe is a macOS music player built for large, carefully maintained local collections. Keep the original library on an external SSD, continue listening from a protected Mac-side cache when the drive is away, and let opt-in metadata automation handle repetitive cleanup without uploading your audio to a streaming service.
+amp is a macOS music player built for large, carefully maintained local collections. Keep the original library on an external SSD, continue listening from a protected Mac-side cache when the drive is away, and let opt-in metadata automation handle repetitive cleanup without uploading your audio to a streaming service.
 
 > The current release supports Apple Silicon. Distributed builds are ad hoc signed and are not notarized by Apple.
 
@@ -16,23 +16,23 @@ Vibe is a macOS music player built for large, carefully maintained local collect
 
 ### External storage can remain the source of truth
 
-Choose an external SSD as the primary home for your music instead of duplicating the whole collection onto your Mac. Vibe remembers the library when the drive is disconnected, shows its connection state clearly, and returns to the original files when the drive reconnects.
+Choose an external SSD as the primary home for your music instead of duplicating the whole collection onto your Mac. amp remembers the library when the drive is disconnected, shows its connection state clearly, and returns to the original files when the drive reconnects.
 
 ### Take the music you care about offline
 
-Vibe automatically keeps playable local copies within a configurable cache limit. Favorites and playlist tracks are protected from routine cache cleanup, so the music you intentionally organized remains available even when the main storage is not connected.
+amp automatically keeps playable local copies within a configurable cache limit. Favorites and playlist tracks are protected from routine cache cleanup, so the music you intentionally organized remains available even when the main storage is not connected.
 
 ### Automate metadata work without giving up control
 
-Enable only the maintenance jobs you want. Vibe can standardize genre names, suggest track and disc numbers through MusicBrainz, look up missing release years, normalize safe text differences, and classify untagged genres through library consensus, local rules, MusicBrainz, then an optional external AI provider. Existing genres are not overwritten by automatic classification, audio is not sent to AI providers, and file edits are validated through a working copy before the original is replaced.
+Enable only the maintenance jobs you want. amp can standardize genre names, suggest track and disc numbers through MusicBrainz, look up missing release years, normalize safe text differences, and classify untagged genres through library consensus, local rules, MusicBrainz, then an optional external AI provider. Existing genres are not overwritten by automatic classification, audio is not sent to AI providers, and file edits are validated through a working copy before the original is replaced.
 
 ```mermaid
 flowchart LR
-    SSD["External SSD\nOriginal library"] -->|Connected| Vibe["Vibe\nSearch, organize, play"]
-    Vibe --> Cache["Mac cache\nOffline-ready tracks"]
-    Cache -->|SSD disconnected| Vibe
+    SSD["External SSD\nOriginal library"] -->|Connected| amp["amp\nSearch, organize, play"]
+    amp --> Cache["Mac cache\nOffline-ready tracks"]
+    Cache -->|SSD disconnected| amp
     Sources["Library consensus\nLocal rules\nMusicBrainz\nOptional AI"] --> Metadata["Safe metadata suggestions"]
-    Metadata --> Vibe
+    Metadata --> amp
 ```
 
 ## Highlights
@@ -49,13 +49,14 @@ flowchart LR
 - Keep keyboard focus during incremental search, with a full-size search field from the first keystroke
 - Start with a concise library sidebar while preserving every saved visibility and ordering choice
 
-### Metadata diagnostics, file repair, and variation standardization
+### Metadata diagnostics, file repair, and batch operations
 
 - Automatically detect and list corrupted or unplayable files (zero-byte files and invalid audio headers)
 - Re-scan and repair missing metadata or durations directly from source files
 - Batch delete and move unrepairable corrupted files to Trash
 - Real-time progress bar, song counters, spinner, and cancel support during batch variation standardization
-- Diagnose duplicates, missing values, mojibake, and embedded URLs
+- Diagnose duplicates, missing values, mojibake, embedded comments, and embedded URLs
+- One-click comment clearing for individual tracks and batch comment removal on current view
 
 ### External SSD workflow and offline playback
 
@@ -101,7 +102,7 @@ flowchart LR
 ### Automatic metadata care and safer editing
 
 - Edit title, artist, album, album artist, genre, and track or disc numbers for MP3, M4A, and WAV files
-- Batch-edit artist, album, album artist, genre, and disc number
+- Batch-edit artist, album, album artist, genre, disc number, and comment
 - Turn each metadata automation on to run it continuously, or turn it off to stop it; no separate start/stop controls are required
 - Standardize Japanese and inconsistent genre spellings to canonical English names, merging differences in case, punctuation, middle dots, and hyphens
 - Look up missing album release years through MusicBrainz and configured Web/AI sources
@@ -109,7 +110,6 @@ flowchart LR
 - Restore the original after a failed edit and move deleted files to the Trash
 - Confirm and safely convert older ID3v2.2 tags to ID3v2.3 before completing an edit
 - Run ID3 migration, character-width normalization, and MusicBrainz number suggestions in the background
-- Diagnose duplicates, missing values, mojibake, and inconsistent naming
 
 ### AI-assisted genre suggestions
 
@@ -119,7 +119,7 @@ flowchart LR
 - Show the active source, live per-genre counts, registered/below-threshold/failed totals, and a retry countdown for temporary provider failures
 - Cache MusicBrainz lookups during a scan and treat missing external metadata as a normal result instead of an error
 - Explain common genre characteristics in the genre list and detail screen
-- Store API keys in Vibe's protected in-app database instead of adding them to Keychain
+- Store API keys in amp's protected in-app database instead of adding them to Keychain
 - Restore only the key registration status at launch without reading the key itself
 
 ### Appearance and workspace
@@ -165,9 +165,9 @@ brew upgrade --cask vibe
 
 ### Direct download
 
-Download `Vibe-v0.18.0-macos-arm64.zip` from [GitHub Releases](https://github.com/nanonigit/Vibe/releases), extract it, and move `Vibe.app` wherever you prefer.
+Download `amp-v0.20.0-macos-arm64.zip` from [GitHub Releases](https://github.com/nanonigit/Vibe/releases), extract it, and move `amp.app` wherever you prefer.
 
-The current build is not notarized. If macOS blocks the first launch, Control-click Vibe in Finder, choose **Open**, review the warning, and confirm that you want to launch it.
+The current build is not notarized. If macOS blocks the first launch, Control-click amp in Finder, choose **Open**, review the warning, and confirm that you want to launch it.
 
 ## Build from source
 
@@ -176,6 +176,7 @@ Swift Package Manager downloads the GRDB dependency automatically.
 ```bash
 git clone https://github.com/nanonigit/Vibe.git
 cd Vibe
+xcodegen generate
 xcodebuild \
   -project MassiveMusic.xcodeproj \
   -scheme MassiveMusic \
@@ -183,7 +184,7 @@ xcodebuild \
   -destination 'platform=macOS' \
   -derivedDataPath .build \
   build
-open .build/Build/Products/Release/Vibe.app
+open .build/Build/Products/Release/amp.app
 ```
 
 ## Test
@@ -200,15 +201,15 @@ See [PERFORMANCE.md](PERFORMANCE.md) for large-library testing instructions.
 
 ## Data and safety
 
-- Vibe stores its library database and offline cache under `Application Support/MassiveMusic`.
-- To preserve compatibility for existing users, the bundle identifier and storage directory still use `MassiveMusic` even though the app is named Vibe.
+- amp stores its library database and offline cache under `Application Support/MassiveMusic`.
+- To preserve compatibility for existing users, the bundle identifier and storage directory still use `MassiveMusic`.
 - Access to music folders is limited to locations you select and is retained with security-scoped bookmarks.
 - Metadata changes use a validated working copy, but you should still keep a separate backup of important audio files.
 - Do not commit API keys, audio file paths, or library databases to this repository.
 
 ## Current limitations
 
-- Vibe can scan and play FLAC files, but direct tag writing is limited to MP3, M4A, and WAV.
+- amp can scan and play FLAC files, but direct tag writing is limited to MP3, M4A, and WAV.
 - Writing artwork to files and editing compilation tags are currently supported only for MP3.
 - Chordify, YouTube, news, and other external content depend on each service's availability and terms.
 - Distributed builds are not notarized by Apple.

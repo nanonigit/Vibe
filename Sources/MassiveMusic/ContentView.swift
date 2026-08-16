@@ -1278,6 +1278,7 @@ struct ContentView: View {
                         durationWidth: $durationColumnWidth,
                         addedDateWidth: $addedDateColumnWidth,
                         showSelectionCheckbox: isDuplicateSelectionMode,
+                        showCommentAction: isCommentDiagnosticMode,
                         columns: orderedVisibleTrackColumns,
                         moveColumn: { source, column in
                             moveTrackColumn(source, before: column)
@@ -1291,6 +1292,18 @@ struct ContentView: View {
                                 HStack(spacing: 8) {
                                 if isDuplicateSelectionMode {
                                     duplicateSelectionCheckbox(track)
+                                }
+                                if isCommentDiagnosticMode {
+                                    Button {
+                                        model.clearComment(for: track)
+                                    } label: {
+                                        Image(systemName: "bubble.left.and.exclamationmark")
+                                            .foregroundStyle(track.comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.secondary.opacity(0.3) : Color.orange)
+                                            .frame(width: 30)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .disabled(track.comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                                    .help(model.text("コメントを消去", "Clear Comment"))
                                 }
                                 Button {
                                     if track.isFavorite {
@@ -2236,61 +2249,24 @@ struct ContentView: View {
 
     private var metadataDiagnosticsView: some View {
         VStack(spacing: 0) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(MetadataIssueKind.allCases) { kind in
-                        Button { model.selectDiagnostic(kind) } label: {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Label(diagnosticTitle(kind), systemImage: diagnosticIcon(kind))
-                                Text(diagnosticCount(kind).formatted())
-                                    .font(.title3.bold()).monospacedDigit()
-                            }
-                            .frame(minWidth: 132, alignment: .leading)
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 7)
-                            .background(model.diagnosticKind == kind ? Color.accentColor.opacity(0.16) : Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 9))
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 6)], spacing: 6) {
+                ForEach(MetadataIssueKind.allCases) { kind in
+                    Button { model.selectDiagnostic(kind) } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Label(diagnosticTitle(kind), systemImage: diagnosticIcon(kind))
+                                .lineLimit(1)
+                            Text(diagnosticCount(kind).formatted())
+                                .font(.title3.bold()).monospacedDigit()
                         }
-                        .buttonStyle(.plain)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 7)
+                        .background(model.diagnosticKind == kind ? Color.accentColor.opacity(0.16) : Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 9))
                     }
-                }
-                .padding(8)
-            }
-            Divider()
-            HStack(spacing: 12) {
-                Toggle(
-                    model.text("ジャンル名を英語・標準表記へ自動マージ", "Standardize genres to English Title Case"),
-                    isOn: $model.autoNormalizeGenresToEnglish
-                )
-                .onChange(of: model.autoNormalizeGenresToEnglish) { _, _ in
-                    model.saveGenreNormalizationSettings()
-                }
-                .controlSize(.small)
-
-                Spacer()
-
-                if model.isNormalizingGenres {
-                    ProgressView().controlSize(.small)
-                    Text(model.genreNormalizationProgress.isEmpty
-                         ? model.text("整理中…", "Normalizing…")
-                         : model.genreNormalizationProgress)
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                } else {
-                    Button {
-                        model.startGenreNormalizationAndMerging(forceResetCursor: true)
-                    } label: {
-                        Label(
-                            model.text("ジャンルをマージ・再整理", "Merge & Standardize Genres"),
-                            systemImage: "arrow.triangle.merge"
-                        )
-                    }
-                    .controlSize(.small)
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(Color.secondary.opacity(0.04))
+            .padding(8)
             Divider()
             if isDuplicateSelectionMode {
                 duplicateSelectionToolbar
@@ -2496,6 +2472,41 @@ struct ContentView: View {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 10)
                     Divider()
+                } else if model.diagnosticKind == .commentInMP3 {
+                    HStack(spacing: 12) {
+                        Button(model.text("このページのコメントを一括消去", "Clear All Comments on This Page")) {
+                            model.clearCommentsOnCurrentPage()
+                        }
+                        .disabled(model.tracks.allSatisfy { $0.comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } || model.batchMetadataProgress.state == .running)
+
+                        if model.batchMetadataProgress.state == .running {
+                            ProgressView(
+                                value: Double(model.batchMetadataProgress.processed),
+                                total: Double(max(1, model.batchMetadataProgress.total))
+                            )
+                            .progressViewStyle(.linear)
+                            .frame(maxWidth: 180)
+
+                            Text(model.text(
+                                "コメントを消去中… \(model.batchMetadataProgress.processed) / \(model.batchMetadataProgress.total)",
+                                "Clearing comments… \(model.batchMetadataProgress.processed) / \(model.batchMetadataProgress.total)"
+                            ))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+
+                        Text(model.text(
+                            "該当曲: \(model.totalCount.formatted())曲",
+                            "Matching: \(model.totalCount.formatted()) songs"
+                        ))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 10)
+                    Divider()
                 }
                 trackTable
             }
@@ -2504,6 +2515,10 @@ struct ContentView: View {
 
     private var isDuplicateSelectionMode: Bool {
         model.section == .diagnostics && model.diagnosticKind == .duplicateTracks
+    }
+
+    private var isCommentDiagnosticMode: Bool {
+        model.section == .diagnostics && model.diagnosticKind == .commentInMP3
     }
 
     private var duplicateSelectionToolbar: some View {
@@ -2778,6 +2793,7 @@ struct ContentView: View {
         case .missingArtist: model.text("不明なアーティスト", "Unknown Artist")
         case .missingAlbum: model.text("アルバム名なし", "Missing Album")
         case .urlInMP3Metadata: model.text("URLを含むMP3", "MP3 Metadata URLs")
+        case .commentInMP3: model.text("💬 コメントを含むMP3", "MP3 Comments")
         case .suspectedMojibake: model.text("文字化け候補", "Garbled Text Candidates")
         case .duplicateTracks: model.text("重複曲", "Duplicate Tracks")
         case .suspectedVariations: model.text("表記ゆれ候補", "Variation Candidates")
@@ -2791,6 +2807,7 @@ struct ContentView: View {
         case .missingArtist: "person.crop.circle.badge.questionmark"
         case .missingAlbum: "square.stack.3d.up.slash"
         case .urlInMP3Metadata: "link.badge.plus"
+        case .commentInMP3: "bubble.left.and.text.bubble.right"
         case .suspectedMojibake: "text.badge.exclamationmark"
         case .duplicateTracks: "square.2.layers.3d"
         case .suspectedVariations: "text.magnifyingglass"
@@ -3040,12 +3057,16 @@ private struct TrackSortHeader: View {
     @Binding var durationWidth: Double
     @Binding var addedDateWidth: Double
     let showSelectionCheckbox: Bool
+    let showCommentAction: Bool
     let columns: [TrackSort]
     let moveColumn: (TrackSort, TrackSort) -> Void
 
     var body: some View {
         HStack(spacing: 8) {
             if showSelectionCheckbox {
+                Color.clear.frame(width: 30)
+            }
+            if showCommentAction {
                 Color.clear.frame(width: 30)
             }
             Color.clear.frame(width: 30)

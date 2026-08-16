@@ -10,4 +10,7 @@ work/
 *.zip
 .agents/
 skills-lock.json
+release_dist/
+build_out/
+Packages/
 

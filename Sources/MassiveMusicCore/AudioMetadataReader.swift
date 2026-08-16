@@ -14,6 +14,7 @@ public struct AudioMetadata: Sendable {
     public var duration: Double
     public var bitrate: Int?
     public var hasArtwork: Bool
+    public var comment: String
 }
 
 public enum AudioMetadataReader {
@@ -31,7 +32,8 @@ public enum AudioMetadataReader {
             trackNumber: nil,
             duration: 0,
             bitrate: nil,
-            hasArtwork: false
+            hasArtwork: false,
+            comment: ""
         )
 
         let asset = AVURLAsset(url: url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: false])
@@ -59,10 +61,22 @@ public enum AudioMetadataReader {
                 if let value = try? await item.load(.stringValue) { result.genre = value }
             case AVMetadataKey.commonKeyCreationDate.rawValue:
                 if let value = try? await item.load(.stringValue) { result.year = value }
+            case AVMetadataKey.commonKeyDescription.rawValue:
+                if let value = try? await item.load(.stringValue) { result.comment = value }
             case AVMetadataKey.commonKeyArtwork.rawValue:
                 if (try? await item.load(.dataValue)) != nil { result.hasArtwork = true }
             default:
                 break
+            }
+        }
+        if let allMetadata = try? await asset.load(.metadata) {
+            for item in allMetadata {
+                let keyStr = item.identifier?.rawValue ?? item.key?.description ?? ""
+                if keyStr.contains("COMM") || keyStr.contains("comment") || keyStr.contains("©cmt") {
+                    if let value = try? await item.load(.stringValue), !value.isEmpty {
+                        result.comment = value
+                    }
+                }
             }
         }
         if url.pathExtension.lowercased() == "mp3",
@@ -72,6 +86,9 @@ public enum AudioMetadataReader {
             result.trackNumber = Self.integerValue(info["track number"]) ?? result.trackNumber
             if let value = info["album artist"] as? String { result.albumArtist = value }
             if let value = info["year"] as? String { result.year = value }
+            if let value = info["comments"] as? String ?? info["comment"] as? String, !value.isEmpty {
+                result.comment = value
+            }
         }
         return result
     }

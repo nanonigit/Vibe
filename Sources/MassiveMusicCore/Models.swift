@@ -148,6 +148,7 @@ public enum MetadataIssueKind: String, CaseIterable, Identifiable, Equatable, Se
     case missingArtist
     case missingAlbum
     case urlInMP3Metadata
+    case commentInMP3
     case suspectedMojibake
     case duplicateTracks
     case suspectedVariations
@@ -406,6 +407,7 @@ public struct Track: Identifiable, Hashable, Sendable {
     public let isAvailable: Bool
     public let addedAt: Date
     public let isFavorite: Bool
+    public let comment: String
 
     public init(
         id: Int64 = 0,
@@ -429,7 +431,8 @@ public struct Track: Identifiable, Hashable, Sendable {
         hasArtwork: Bool = false,
         isAvailable: Bool = true,
         addedAt: Date = Date(),
-        isFavorite: Bool = false
+        isFavorite: Bool = false,
+        comment: String = ""
     ) {
         self.id = id
         self.rootID = rootID
@@ -453,6 +456,7 @@ public struct Track: Identifiable, Hashable, Sendable {
         self.isAvailable = isAvailable
         self.addedAt = addedAt
         self.isFavorite = isFavorite
+        self.comment = comment
     }
 
     /// Matches the artist key used by album grouping in the library database.
@@ -597,6 +601,7 @@ public extension Track {
             album: edit.album,
             albumArtist: edit.albumArtist,
             genre: edit.genre,
+            year: edit.year.isEmpty ? year : edit.year,
             isCompilation: edit.isCompilation,
             discNumber: edit.discNumber,
             trackNumber: edit.trackNumber,
@@ -608,7 +613,8 @@ public extension Track {
             hasArtwork: edit.artworkData != nil || hasArtwork,
             isAvailable: isAvailable,
             addedAt: addedAt,
-            isFavorite: isFavorite
+            isFavorite: isFavorite,
+            comment: edit.comment
         )
     }
 }
@@ -1519,6 +1525,7 @@ public struct BatchMetadataChanges: Equatable, Sendable {
     public var trackNumber: Int?
     public var changesTrackNumber: Bool
     public var incrementsTrackNumber: Bool
+    public var comment: String?
     public var artworkData: Data?
 
     public init(
@@ -1534,6 +1541,7 @@ public struct BatchMetadataChanges: Equatable, Sendable {
         trackNumber: Int? = nil,
         changesTrackNumber: Bool = false,
         incrementsTrackNumber: Bool = false,
+        comment: String? = nil,
         artworkData: Data? = nil
     ) {
         self.title = title
@@ -1548,12 +1556,13 @@ public struct BatchMetadataChanges: Equatable, Sendable {
         self.trackNumber = trackNumber
         self.changesTrackNumber = changesTrackNumber
         self.incrementsTrackNumber = incrementsTrackNumber
+        self.comment = comment
         self.artworkData = artworkData
     }
 
     public var isEmpty: Bool {
         title == nil && artist == nil && album == nil && albumArtist == nil && genre == nil && year == nil && isCompilation == nil &&
-            !changesDiscNumber && !changesTrackNumber && artworkData == nil
+            comment == nil && !changesDiscNumber && !changesTrackNumber && artworkData == nil
     }
 
     public func applying(to track: Track, offset: Int = 0) -> TrackMetadataEdit {
@@ -1565,9 +1574,14 @@ public struct BatchMetadataChanges: Equatable, Sendable {
         if let genre { edit.genre = genre }
         if let year { edit.year = year }
         if let isCompilation { edit.isCompilation = isCompilation }
+        if let comment { edit.comment = comment }
         if changesDiscNumber { edit.discNumber = discNumber }
         if changesTrackNumber {
-            edit.trackNumber = trackNumber.map { $0 + (incrementsTrackNumber ? offset : 0) }
+            if incrementsTrackNumber, let base = trackNumber {
+                edit.trackNumber = base + offset
+            } else {
+                edit.trackNumber = trackNumber
+            }
         }
         if let artworkData { edit.artworkData = artworkData }
         return edit

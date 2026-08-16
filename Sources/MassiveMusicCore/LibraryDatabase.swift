@@ -158,6 +158,19 @@ public final class LibraryDatabase: @unchecked Sendable {
                 arguments: [12, Date().timeIntervalSince1970]
             )
         }
+        migrator.registerMigration("v14_comment_tag") { db in
+            let columns = try Row.fetchAll(db, sql: "PRAGMA table_info(tracks)")
+            let hasComment = columns.contains { row in
+                (row["name"] as? String)?.lowercased() == "comment"
+            }
+            if !hasComment {
+                try db.execute(sql: Schema.commentTag)
+            }
+            try db.execute(
+                sql: "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                arguments: [14, Date().timeIntervalSince1970]
+            )
+        }
         return migrator
     }
 
@@ -546,13 +559,13 @@ public final class LibraryDatabase: @unchecked Sendable {
             try db.execute(
                 sql: """
                     UPDATE tracks SET title = ?, artist = ?, album = ?, album_artist = ?, genre = ?, year = ?, is_compilation = ?,
-                        disc_number = ?, track_number = ?, file_size = ?, modified_at = ?,
+                        disc_number = ?, track_number = ?, comment = ?, file_size = ?, modified_at = ?,
                         has_artwork = CASE WHEN ? THEN 1 ELSE has_artwork END
                     WHERE id = ?
                     """,
                 arguments: [normalizedEdit.title, normalizedEdit.artist, normalizedEdit.album, normalizedEdit.albumArtist,
                             normalizedEdit.genre, normalizedEdit.year, normalizedEdit.isCompilation, normalizedEdit.discNumber,
-                            normalizedEdit.trackNumber, fileSize, modifiedAt.timeIntervalSince1970,
+                            normalizedEdit.trackNumber, normalizedEdit.comment, fileSize, modifiedAt.timeIntervalSince1970,
                             normalizedEdit.artworkData != nil, id]
             )
             if let updated = try Row.fetchOne(db, sql: "SELECT * FROM tracks WHERE id = ?", arguments: [id]) {
@@ -583,13 +596,13 @@ public final class LibraryDatabase: @unchecked Sendable {
             try db.execute(
                 sql: """
                     UPDATE tracks SET title = ?, artist = ?, album = ?, album_artist = ?, genre = ?, year = ?, is_compilation = ?,
-                        disc_number = ?, track_number = ?, file_size = ?, modified_at = ?,
+                        disc_number = ?, track_number = ?, comment = ?, file_size = ?, modified_at = ?,
                         has_artwork = CASE WHEN ? THEN 1 ELSE has_artwork END
                     WHERE id = ?
                     """,
                 arguments: [normalizedEdit.title, normalizedEdit.artist, normalizedEdit.album, normalizedEdit.albumArtist,
                             normalizedEdit.genre, normalizedEdit.year, normalizedEdit.isCompilation,
-                            normalizedEdit.discNumber, normalizedEdit.trackNumber, fileSize, modifiedAt.timeIntervalSince1970,
+                            normalizedEdit.discNumber, normalizedEdit.trackNumber, normalizedEdit.comment, fileSize, modifiedAt.timeIntervalSince1970,
                             normalizedEdit.artworkData != nil, id]
             )
             try db.execute(
@@ -1022,6 +1035,7 @@ public final class LibraryDatabase: @unchecked Sendable {
                     SUM(CASE WHEN \(Self.metadataIssuePredicate(.missingArtist)) THEN 1 ELSE 0 END) AS missing_artist,
                     SUM(CASE WHEN \(Self.metadataIssuePredicate(.missingAlbum)) THEN 1 ELSE 0 END) AS missing_album,
                     SUM(CASE WHEN \(Self.metadataIssuePredicate(.urlInMP3Metadata)) THEN 1 ELSE 0 END) AS url_metadata,
+                    SUM(CASE WHEN \(Self.metadataIssuePredicate(.commentInMP3)) THEN 1 ELSE 0 END) AS comment_count,
                     SUM(CASE WHEN \(Self.metadataIssuePredicate(.suspectedMojibake)) THEN 1 ELSE 0 END) AS mojibake,
                     SUM(CASE WHEN \(Self.metadataIssuePredicate(.corruptedOrEmpty)) THEN 1 ELSE 0 END) AS corrupted_count
                 FROM tracks t
@@ -1032,6 +1046,7 @@ public final class LibraryDatabase: @unchecked Sendable {
                 MetadataIssueSummary(kind: .missingArtist, count: row["missing_artist"] ?? 0),
                 MetadataIssueSummary(kind: .missingAlbum, count: row["missing_album"] ?? 0),
                 MetadataIssueSummary(kind: .urlInMP3Metadata, count: row["url_metadata"] ?? 0),
+                MetadataIssueSummary(kind: .commentInMP3, count: row["comment_count"] ?? 0),
                 MetadataIssueSummary(kind: .suspectedMojibake, count: row["mojibake"] ?? 0),
                 MetadataIssueSummary(kind: .duplicateTracks, count: duplicateCount),
                 MetadataIssueSummary(kind: .corruptedOrEmpty, count: row["corrupted_count"] ?? 0)
@@ -3121,7 +3136,7 @@ public final class LibraryDatabase: @unchecked Sendable {
                             "track-\(index).mp3", "Synthetic Track \(index)", artist, album, artist,
                             genre, "", false, 1, (index % 20) + 1, Double(120 + index % 300), 4_000_000,
                             1_700_000_000 + Double(index), "mp3", 320_000, index % 3 == 0, true,
-                            1_700_000_000 + Double(index), 0
+                            1_700_000_000 + Double(index), 0, ""
                         ]
                     )
                 }
@@ -3293,17 +3308,31 @@ public final class LibraryDatabase: @unchecked Sendable {
         case .artist: "t.artist"
         case .album: "t.album"
         case .genre: "t.genre"
-        case nil: "t.title || ' ' || t.artist || ' ' || t.album || ' ' || t.album_artist || ' ' || t.genre || ' ' || t.filename"
+        case nil: "t.title || ' ' || t.artist || ' ' || t.album || ' ' || t.album_artist || ' ' || t.genre || ' ' || t.comment || ' ' || t.filename || ' ' || t.relative_path"
         }
         return switch kind {
         case .missingTitle: "trim(t.title) = ''"
         case .missingArtist: "trim(t.artist) = ''"
         case .missingAlbum: "trim(t.album) = ''"
+        case .commentInMP3: "lower(t.format) = 'mp3' AND trim(t.comment) != ''"
         case .urlInMP3Metadata:
             """
             lower(t.format) = 'mp3' AND (
-                instr(lower(\(metadataText)), 'http') > 0
+                instr(lower(\(metadataText)), 'http://') > 0
+                OR instr(lower(\(metadataText)), 'https://') > 0
                 OR instr(lower(\(metadataText)), 'www.') > 0
+                OR instr(lower(\(metadataText)), '://') > 0
+                OR instr(lower(\(metadataText)), '.com/') > 0
+                OR instr(lower(\(metadataText)), '.net/') > 0
+                OR instr(lower(\(metadataText)), '.org/') > 0
+                OR instr(lower(\(metadataText)), '.ru/') > 0
+                OR instr(lower(\(metadataText)), '.io/') > 0
+                OR lower(\(metadataText)) LIKE '%.com'
+                OR lower(\(metadataText)) LIKE '%.net'
+                OR lower(\(metadataText)) LIKE '%.org'
+                OR lower(\(metadataText)) LIKE '%.com %'
+                OR lower(\(metadataText)) LIKE '%.net %'
+                OR lower(\(metadataText)) LIKE '%.org %'
             )
             """
         case .suspectedMojibake:
@@ -3614,7 +3643,8 @@ public final class LibraryDatabase: @unchecked Sendable {
             modifiedAt: Date(timeIntervalSince1970: row["modified_at"]), format: row["format"],
             bitrate: row["bitrate"], hasArtwork: row["has_artwork"], isAvailable: row["is_available"],
             addedAt: Date(timeIntervalSince1970: row["added_at"]),
-            isFavorite: row.hasColumn("is_favorite") ? row["is_favorite"] : false
+            isFavorite: row.hasColumn("is_favorite") ? row["is_favorite"] : false,
+            comment: row.hasColumn("comment") ? (row["comment"] ?? "") : ""
         )
     }
 
@@ -3673,7 +3703,8 @@ public final class LibraryDatabase: @unchecked Sendable {
                 track.title, track.artist, track.album, track.albumArtist, GenreNormalizer.normalize(track.genre), track.year, track.isCompilation,
                 track.discNumber, track.trackNumber, track.duration, track.fileSize,
                 track.modifiedAt.timeIntervalSince1970, track.format, track.bitrate,
-                track.hasArtwork, track.isAvailable, track.addedAt.timeIntervalSince1970, sessionID
+                track.hasArtwork, track.isAvailable, track.addedAt.timeIntervalSince1970, sessionID,
+                track.comment
             ]
         )
         let changed = db.changesCount
@@ -3801,8 +3832,8 @@ private enum SQL {
         INSERT INTO tracks(
             root_id, identity_key, file_resource_id, relative_path, filename, title, artist, album,
             album_artist, genre, year, is_compilation, disc_number, track_number, duration, file_size, modified_at, format,
-            bitrate, has_artwork, is_available, added_at, last_seen_session_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            bitrate, has_artwork, is_available, added_at, last_seen_session_id, comment
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(identity_key) DO UPDATE SET
             root_id = excluded.root_id,
             file_resource_id = excluded.file_resource_id,
@@ -3824,7 +3855,8 @@ private enum SQL {
             bitrate = excluded.bitrate,
             has_artwork = excluded.has_artwork,
             is_available = excluded.is_available,
-            last_seen_session_id = excluded.last_seen_session_id
+            last_seen_session_id = excluded.last_seen_session_id,
+            comment = excluded.comment
         """
 }
 
@@ -3876,6 +3908,9 @@ private enum Schema {
         """
     static let yearTag = """
         ALTER TABLE tracks ADD COLUMN year TEXT NOT NULL DEFAULT '';
+        """
+    static let commentTag = """
+        ALTER TABLE tracks ADD COLUMN comment TEXT NOT NULL DEFAULT '';
         """
     static let libraryActivityLog = """
         CREATE TABLE library_activity_log(
