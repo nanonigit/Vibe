@@ -2852,4 +2852,39 @@ private struct TestContext {
             )
         )
     }
+
+    @Test func searchSupportsAndOrNotPhraseAndRegex() throws {
+        let context = try TestContext()
+        let t1 = context.importedTrack(identity: "1", title: "A Cold Kiss", artist: "Darkest Hour", album: "So Sedated, So Secure", filename: "01.mp3")
+        let t2 = context.importedTrack(identity: "2", title: "A Kiss to Remember", artist: "My Dying Bride", album: "Like Gods of the Sun", filename: "02.mp3")
+        let t3 = context.importedTrack(identity: "3", title: "Kiss Me Kiss Me", artist: "The Cure", album: "Kiss Me, Kiss Me, Kiss Me", filename: "03.mp3")
+        let t4 = context.importedTrack(identity: "4", title: "Love Song", artist: "The Cure", album: "Disintegration", filename: "04.mp3")
+        _ = try context.database.upsertTracks([t1, t2, t3, t4], sessionID: 1)
+
+        // 1. AND search: "kiss" AND "cure"
+        let andRes = try context.database.pageTracks(query: "kiss cure")
+        #expect(andRes.totalCount == 1)
+        #expect(andRes.tracks.first?.title == "Kiss Me Kiss Me")
+
+        // 2. OR search: "remember" OR "disintegration"
+        let orRes = try context.database.pageTracks(query: "remember OR disintegration")
+        #expect(orRes.totalCount == 2)
+
+        // 3. NOT / exclude search: "kiss -cure"
+        let notRes = try context.database.pageTracks(query: "kiss -cure")
+        #expect(notRes.totalCount == 2)
+        #expect(!notRes.tracks.contains { $0.artist == "The Cure" })
+
+        // 4. Exact phrase search: "kiss me"
+        let phraseRes = try context.database.pageTracks(query: "\"kiss me\"")
+        #expect(phraseRes.totalCount == 1)
+        #expect(phraseRes.tracks.first?.artist == "The Cure")
+
+        // 5. Regex search: /^A.*Kiss/
+        let regexRes = try context.database.pageTracks(query: "/^A.*Kiss/")
+        #expect(regexRes.totalCount == 2)
+        #expect(regexRes.tracks.contains { $0.title == "A Cold Kiss" })
+        #expect(regexRes.tracks.contains { $0.title == "A Kiss to Remember" })
+    }
 }
+

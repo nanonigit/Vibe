@@ -1842,3 +1842,98 @@ public enum MassiveMusicError: LocalizedError, Sendable {
         return true
     }
 }
+
+public struct ListeningInsights: Sendable {
+    public struct TopTrack: Identifiable, Hashable, Sendable {
+        public var id: Int64 { track.id }
+        public let track: Track
+        public let playCount: Int
+
+        public init(track: Track, playCount: Int) {
+            self.track = track
+            self.playCount = playCount
+        }
+    }
+
+    public struct TopEntity: Identifiable, Hashable, Sendable {
+        public var id: String { name }
+        public let name: String
+        public let count: Int
+        public let subtext: String
+
+        public init(name: String, count: Int, subtext: String) {
+            self.name = name
+            self.count = count
+            self.subtext = subtext
+        }
+    }
+
+    public struct TimeOfDayVibe: Identifiable, Hashable, Sendable {
+        public var id: String { period }
+        public let period: String       // "morning", "afternoon", "evening", "night"
+        public let title: String        // "朝 (06:00〜12:00)", etc.
+        public let icon: String         // "sun.horizon", "sun.max", "moon.stars", "sparkles"
+        public let topGenre: String
+        public let playCount: Int
+        public let sampleTracks: [Track]
+
+        public init(period: String, title: String, icon: String, topGenre: String, playCount: Int, sampleTracks: [Track]) {
+            self.period = period
+            self.title = title
+            self.icon = icon
+            self.topGenre = topGenre
+            self.playCount = playCount
+            self.sampleTracks = sampleTracks
+        }
+    }
+
+    public struct GenreSlice: Identifiable, Hashable, Sendable {
+        public var id: String { genre }
+        public let genre: String
+        public let count: Int
+        public let percentage: Double
+
+        public init(genre: String, count: Int, percentage: Double) {
+            self.genre = genre
+            self.count = count
+            self.percentage = percentage
+        }
+    }
+
+    public let totalPlayedCount: Int
+    public let topTracks: [TopTrack]
+    public let topArtists: [TopEntity]
+    public let topGenres: [GenreSlice]
+    public let timeOfDayVibes: [TimeOfDayVibe]
+    public let rediscoveryTracks: [Track]
+    public let currentVibeTracks: [Track]
+
+    public init(
+        totalPlayedCount: Int,
+        topTracks: [TopTrack],
+        topArtists: [TopEntity],
+        topGenres: [GenreSlice],
+        timeOfDayVibes: [TimeOfDayVibe],
+        rediscoveryTracks: [Track],
+        currentVibeTracks: [Track]
+    ) {
+        self.totalPlayedCount = totalPlayedCount
+        self.topTracks = topTracks
+        self.topArtists = topArtists
+        self.topGenres = topGenres
+        self.timeOfDayVibes = timeOfDayVibes
+        self.rediscoveryTracks = rediscoveryTracks
+        self.currentVibeTracks = currentVibeTracks
+    }
+
+    public static let empty = ListeningInsights(
+        totalPlayedCount: 0,
+        topTracks: [],
+        topArtists: [],
+        topGenres: [],
+        timeOfDayVibes: [],
+        rediscoveryTracks: [],
+        currentVibeTracks: []
+    )
+}
+

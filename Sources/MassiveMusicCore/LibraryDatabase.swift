@@ -23,6 +23,17 @@ public final class LibraryDatabase: @unchecked Sendable {
             try db.execute(sql: "PRAGMA foreign_keys = ON")
             try db.execute(sql: "PRAGMA cache_size = -32768")
             try db.execute(sql: "PRAGMA temp_store = MEMORY")
+            db.add(function: DatabaseFunction("REGEXP", argumentCount: 2, pure: true) { values in
+                guard let pattern = String.fromDatabaseValue(values[0]),
+                      let text = String.fromDatabaseValue(values[1]) else {
+                    return false
+                }
+                guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else {
+                    return false
+                }
+                let range = NSRange(text.startIndex..., in: text)
+                return regex.firstMatch(in: text, options: [], range: range) != nil
+            })
         }
         pool = try DatabasePool(path: url.path, configuration: configuration)
         try pool.writeWithoutTransaction { db in
@@ -891,17 +902,13 @@ public final class LibraryDatabase: @unchecked Sendable {
     ) throws -> TrackPage {
         guard (1...1_000).contains(limit) else { throw MassiveMusicError.invalidPageSize }
         let safeOffset = max(0, offset)
-        let searchPattern = Self.ftsPattern(query)
+        let searchFilter = Self.searchFilter(for: query)
 
         return try pool.read { db in
             var whereParts: [String] = []
             var arguments: StatementArguments = []
             var from = "tracks t"
-            if let searchPattern {
-                from += " JOIN tracks_fts f ON f.rowid = t.id"
-                whereParts.append("tracks_fts MATCH ?")
-                arguments += [searchPattern]
-            }
+            searchFilter?.apply(from: &from, whereParts: &whereParts, arguments: &arguments, tableAlias: "t")
             if availableOnly { whereParts.append("t.is_available = 1") }
             let whereSQL = whereParts.isEmpty ? "" : " WHERE " + whereParts.joined(separator: " AND ")
             let total = try Int.fetchOne(
@@ -1320,17 +1327,13 @@ public final class LibraryDatabase: @unchecked Sendable {
     ) throws -> TrackPage {
         guard (1...1_000).contains(limit) else { throw MassiveMusicError.invalidPageSize }
         let safeOffset = max(0, offset)
-        let searchPattern = Self.ftsPattern(query)
+        let searchFilter = Self.searchFilter(for: query)
 
         return try pool.read { db in
             var whereParts: [String] = ["t.last_played_at IS NOT NULL", "t.is_available = 1"]
             var arguments: StatementArguments = []
             var from = "tracks t"
-            if let searchPattern {
-                from += " JOIN tracks_fts f ON f.rowid = t.id"
-                whereParts.append("tracks_fts MATCH ?")
-                arguments += [searchPattern]
-            }
+            searchFilter?.apply(from: &from, whereParts: &whereParts, arguments: &arguments, tableAlias: "t")
             let whereSQL = whereParts.isEmpty ? "" : " WHERE " + whereParts.joined(separator: " AND ")
             let total = try Int.fetchOne(
                 db,
@@ -1390,6 +1393,148 @@ public final class LibraryDatabase: @unchecked Sendable {
     public func markPlayed(trackID: Int64) throws {
         try pool.write { db in
             try db.execute(sql: "UPDATE tracks SET play_count = play_count + 1, last_played_at = ? WHERE id = ?", arguments: [Date().timeIntervalSince1970, trackID])
+        }
+    }
+
+    public func fetchListeningInsights() throws -> ListeningInsights {
+        return try pool.read { db in
+            let totalPlayed = try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM tracks WHERE last_played_at IS NOT NULL AND is_available = 1"
+            ) ?? 0
+
+            let topTrackRows = try Row.fetchAll(db, sql: """
+                SELECT * FROM tracks
+                WHERE is_available = 1 AND play_count > 0
+                ORDER BY play_count DESC, last_played_at DESC
+                LIMIT 5
+            """)
+            let topTracks = topTrackRows.map { row in
+                let track = Self.decodeTrack(row)
+                let count: Int = row["play_count"] ?? 1
+                return ListeningInsights.TopTrack(track: track, playCount: count)
+            }
+
+            let topArtistRows = try Row.fetchAll(db, sql: """
+                SELECT artist, SUM(play_count) AS total_plays, COUNT(*) as track_count
+                FROM tracks
+                WHERE is_available = 1 AND play_count > 0 AND artist <> ''
+                GROUP BY artist COLLATE NOCASE
+                ORDER BY total_plays DESC, last_played_at DESC
+                LIMIT 5
+            """)
+            let topArtists = topArtistRows.map { row -> ListeningInsights.TopEntity in
+                let artist: String = row["artist"]
+                let plays: Int = row["total_plays"] ?? 0
+                let count: Int = row["track_count"] ?? 0
+                return ListeningInsights.TopEntity(name: artist, count: plays, subtext: "\(count) songs")
+            }
+
+            let topGenreRows = try Row.fetchAll(db, sql: """
+                SELECT genre, SUM(play_count) AS total_plays
+                FROM tracks
+                WHERE is_available = 1 AND play_count > 0 AND genre <> ''
+                GROUP BY genre COLLATE NOCASE
+                ORDER BY total_plays DESC
+                LIMIT 5
+            """)
+            let totalGenrePlays = max(1, topGenreRows.reduce(0) { $0 + ((try? $1["total_plays"]) ?? 0) })
+            let topGenres = topGenreRows.map { row -> ListeningInsights.GenreSlice in
+                let genre: String = row["genre"]
+                let plays: Int = row["total_plays"] ?? 0
+                let pct = Double(plays) / Double(totalGenrePlays)
+                return ListeningInsights.GenreSlice(genre: genre, count: plays, percentage: pct)
+            }
+
+            let periods: [(period: String, titleJa: String, titleEn: String, icon: String, hourStart: Int, hourEnd: Int)] = [
+                ("morning", "朝 (05:00〜12:00)", "Morning (05:00–12:00)", "sun.horizon.fill", 5, 11),
+                ("afternoon", "昼 (12:00〜17:00)", "Afternoon (12:00–17:00)", "sun.max.fill", 12, 16),
+                ("evening", "夕・夜 (17:00〜22:00)", "Evening (17:00–22:00)", "sunset.fill", 17, 21),
+                ("night", "深夜 (22:00〜05:00)", "Night (22:00–05:00)", "moon.stars.fill", 22, 4)
+            ]
+
+            var timeOfDayVibes: [ListeningInsights.TimeOfDayVibe] = []
+            for p in periods {
+                let condition = p.hourStart <= p.hourEnd
+                    ? "CAST(strftime('%H', last_played_at, 'unixepoch', 'localtime') AS INT) BETWEEN \(p.hourStart) AND \(p.hourEnd)"
+                    : "(CAST(strftime('%H', last_played_at, 'unixepoch', 'localtime') AS INT) >= \(p.hourStart) OR CAST(strftime('%H', last_played_at, 'unixepoch', 'localtime') AS INT) <= \(p.hourEnd))"
+
+                let topGenre = try String.fetchOne(db, sql: """
+                    SELECT genre FROM tracks
+                    WHERE is_available = 1 AND last_played_at IS NOT NULL AND genre <> ''
+                      AND \(condition)
+                    GROUP BY genre COLLATE NOCASE
+                    ORDER BY COUNT(*) DESC
+                    LIMIT 1
+                """) ?? "—"
+
+                let count = try Int.fetchOne(db, sql: """
+                    SELECT COUNT(*) FROM tracks
+                    WHERE is_available = 1 AND last_played_at IS NOT NULL
+                      AND \(condition)
+                """) ?? 0
+
+                let sampleRows = try Row.fetchAll(db, sql: """
+                    SELECT * FROM tracks
+                    WHERE is_available = 1 AND last_played_at IS NOT NULL
+                      AND \(condition)
+                    ORDER BY last_played_at DESC
+                    LIMIT 6
+                """)
+                let samples = sampleRows.map(Self.decodeTrack)
+
+                timeOfDayVibes.append(ListeningInsights.TimeOfDayVibe(
+                    period: p.period,
+                    title: p.titleJa,
+                    icon: p.icon,
+                    topGenre: topGenre,
+                    playCount: count,
+                    sampleTracks: samples
+                ))
+            }
+
+            let thirtyDaysAgo = Date().timeIntervalSince1970 - (30 * 24 * 3600)
+            let rediscoveryRows = try Row.fetchAll(db, sql: """
+                SELECT * FROM tracks
+                WHERE is_available = 1 AND (is_favorite = 1 OR play_count >= 1)
+                  AND (last_played_at IS NULL OR last_played_at < ?)
+                ORDER BY last_played_at ASC, RANDOM()
+                LIMIT 5
+            """, arguments: [thirtyDaysAgo])
+            let rediscoveryTracks = rediscoveryRows.map(Self.decodeTrack)
+
+            let currentHour = Calendar.current.component(.hour, from: Date())
+            let currentCondition = (5...11).contains(currentHour) ? "CAST(strftime('%H', last_played_at, 'unixepoch', 'localtime') AS INT) BETWEEN 5 AND 11"
+                : (12...16).contains(currentHour) ? "CAST(strftime('%H', last_played_at, 'unixepoch', 'localtime') AS INT) BETWEEN 12 AND 16"
+                : (17...21).contains(currentHour) ? "CAST(strftime('%H', last_played_at, 'unixepoch', 'localtime') AS INT) BETWEEN 17 AND 21"
+                : "(CAST(strftime('%H', last_played_at, 'unixepoch', 'localtime') AS INT) >= 22 OR CAST(strftime('%H', last_played_at, 'unixepoch', 'localtime') AS INT) <= 4)"
+
+            var vibeRows = try Row.fetchAll(db, sql: """
+                SELECT * FROM tracks
+                WHERE is_available = 1 AND last_played_at IS NOT NULL
+                  AND \(currentCondition)
+                ORDER BY last_played_at DESC
+                LIMIT 20
+            """)
+            if vibeRows.isEmpty {
+                vibeRows = try Row.fetchAll(db, sql: """
+                    SELECT * FROM tracks
+                    WHERE is_available = 1
+                    ORDER BY play_count DESC, is_favorite DESC, RANDOM()
+                    LIMIT 20
+                """)
+            }
+            let currentVibeTracks = vibeRows.map(Self.decodeTrack)
+
+            return ListeningInsights(
+                totalPlayedCount: totalPlayed,
+                topTracks: topTracks,
+                topArtists: topArtists,
+                topGenres: topGenres,
+                timeOfDayVibes: timeOfDayVibes,
+                rediscoveryTracks: rediscoveryTracks,
+                currentVibeTracks: currentVibeTracks
+            )
         }
     }
 
@@ -1634,16 +1779,13 @@ public final class LibraryDatabase: @unchecked Sendable {
     ) throws -> TrackPage {
         guard (1...1_000).contains(limit) else { throw MassiveMusicError.invalidPageSize }
         let safeOffset = max(0, offset)
-        let searchPattern = Self.ftsPattern(query)
+        let searchFilter = Self.searchFilter(for: query)
         return try pool.read { db in
             var from = "local_cache c JOIN tracks t ON t.id = c.track_id"
-            var whereSQL = ""
+            var whereParts: [String] = []
             var arguments: StatementArguments = []
-            if let searchPattern {
-                from += " JOIN tracks_fts f ON f.rowid = t.id"
-                whereSQL = " WHERE tracks_fts MATCH ?"
-                arguments += [searchPattern]
-            }
+            searchFilter?.apply(from: &from, whereParts: &whereParts, arguments: &arguments, tableAlias: "t")
+            let whereSQL = whereParts.isEmpty ? "" : " WHERE " + whereParts.joined(separator: " AND ")
             let total = try Int.fetchOne(
                 db, sql: "SELECT COUNT(*) FROM \(from)\(whereSQL)", arguments: arguments
             ) ?? 0
@@ -1742,16 +1884,12 @@ public final class LibraryDatabase: @unchecked Sendable {
         knownTotal: Int? = nil
     ) throws -> TrackPage {
         guard (1...1_000).contains(limit) else { throw MassiveMusicError.invalidPageSize }
-        let searchPattern = Self.ftsPattern(query)
+        let searchFilter = Self.searchFilter(for: query)
         return try pool.read { db in
             var baseWhere: [String] = []
             var baseArguments: StatementArguments = []
             var from = "tracks t"
-            if let searchPattern {
-                from += " JOIN tracks_fts f ON f.rowid = t.id"
-                baseWhere.append("tracks_fts MATCH ?")
-                baseArguments += [searchPattern]
-            }
+            searchFilter?.apply(from: &from, whereParts: &baseWhere, arguments: &baseArguments, tableAlias: "t")
             if availableOnly { baseWhere.append("t.is_available = 1") }
             let countWhere = baseWhere.isEmpty ? "" : " WHERE " + baseWhere.joined(separator: " AND ")
             let total: Int
@@ -2856,24 +2994,12 @@ public final class LibraryDatabase: @unchecked Sendable {
 
             switch context.scope {
             case let .library(query):
-                if let pattern = Self.ftsPattern(query) {
-                    from += " JOIN tracks_fts f ON f.rowid = t.id"
-                    predicates.append("tracks_fts MATCH ?")
-                    arguments += [pattern]
-                }
+                Self.searchFilter(for: query)?.apply(from: &from, whereParts: &predicates, arguments: &arguments, tableAlias: "t")
             case let .recentlyAdded(query):
-                if let pattern = Self.ftsPattern(query) {
-                    from += " JOIN tracks_fts f ON f.rowid = t.id"
-                    predicates.append("tracks_fts MATCH ?")
-                    arguments += [pattern]
-                }
+                Self.searchFilter(for: query)?.apply(from: &from, whereParts: &predicates, arguments: &arguments, tableAlias: "t")
             case let .history(query):
                 predicates.append("t.last_played_at IS NOT NULL")
-                if let pattern = Self.ftsPattern(query) {
-                    from += " JOIN tracks_fts f ON f.rowid = t.id"
-                    predicates.append("tracks_fts MATCH ?")
-                    arguments += [pattern]
-                }
+                Self.searchFilter(for: query)?.apply(from: &from, whereParts: &predicates, arguments: &arguments, tableAlias: "t")
             case let .album(name, artist):
                 predicates += [
                     "t.is_available = 1",
@@ -2892,11 +3018,7 @@ public final class LibraryDatabase: @unchecked Sendable {
                 predicates.append("t.is_favorite = 1")
             case let .cache(query):
                 from = "local_cache c JOIN tracks t ON t.id = c.track_id"
-                if let pattern = Self.ftsPattern(query) {
-                    from += " JOIN tracks_fts f ON f.rowid = t.id"
-                    predicates.append("tracks_fts MATCH ?")
-                    arguments += [pattern]
-                }
+                Self.searchFilter(for: query)?.apply(from: &from, whereParts: &predicates, arguments: &arguments, tableAlias: "t")
             case let .playlist(id):
                 from = "playlist_items i JOIN tracks t ON t.id = i.track_id"
                 predicates.append("i.playlist_id = ?")
@@ -3221,13 +3343,166 @@ public final class LibraryDatabase: @unchecked Sendable {
         switch field { case .title: "title"; case .artist: "artist"; case .album: "album"; case .genre: "genre" }
     }
 
+    public struct SearchFilter: Sendable {
+        public enum MatchKind: Sendable {
+            case fts(pattern: String)
+            case regex(pattern: String)
+        }
+        public let kind: MatchKind
+
+        public func apply(
+            from: inout String,
+            whereParts: inout [String],
+            arguments: inout StatementArguments,
+            tableAlias: String = "t"
+        ) {
+            switch kind {
+            case .fts(let pattern):
+                from += " JOIN tracks_fts f ON f.rowid = \(tableAlias).id"
+                whereParts.append("tracks_fts MATCH ?")
+                arguments += [pattern]
+            case .regex(let pattern):
+                whereParts.append("(\(tableAlias).title REGEXP ? OR \(tableAlias).artist REGEXP ? OR \(tableAlias).album REGEXP ? OR \(tableAlias).genre REGEXP ? OR \(tableAlias).filename REGEXP ?)")
+                arguments += [pattern, pattern, pattern, pattern, pattern]
+            }
+        }
+    }
+
+    public static func searchFilter(for query: String) -> SearchFilter? {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        if trimmed.hasPrefix("/") && trimmed.hasSuffix("/") && trimmed.count >= 2 {
+            let pattern = String(trimmed.dropFirst().dropLast())
+            if (try? NSRegularExpression(pattern: pattern, options: .caseInsensitive)) != nil {
+                return SearchFilter(kind: .regex(pattern: pattern))
+            }
+        } else if trimmed.lowercased().hasPrefix("regex:") {
+            let pattern = String(trimmed.dropFirst(6)).trimmingCharacters(in: .whitespaces)
+            if (try? NSRegularExpression(pattern: pattern, options: .caseInsensitive)) != nil {
+                return SearchFilter(kind: .regex(pattern: pattern))
+            }
+        } else if trimmed.lowercased().hasPrefix("r:") {
+            let pattern = String(trimmed.dropFirst(2)).trimmingCharacters(in: .whitespaces)
+            if (try? NSRegularExpression(pattern: pattern, options: .caseInsensitive)) != nil {
+                return SearchFilter(kind: .regex(pattern: pattern))
+            }
+        }
+
+        guard let fts = parseFTSQuery(trimmed) else { return nil }
+        return SearchFilter(kind: .fts(pattern: fts))
+    }
+
+    private static func parseFTSQuery(_ query: String) -> String? {
+        var tokens: [String] = []
+        var current = ""
+        var inQuotes = false
+
+        for char in query {
+            if char == "\"" || char == "“" || char == "”" {
+                inQuotes.toggle()
+                current.append("\"")
+            } else if char.isWhitespace && !inQuotes {
+                if !current.isEmpty {
+                    tokens.append(current)
+                    current = ""
+                }
+            } else {
+                current.append(char)
+            }
+        }
+        if !current.isEmpty {
+            if inQuotes { current.append("\"") }
+            tokens.append(current)
+        }
+
+        guard !tokens.isEmpty else { return nil }
+
+        var clauses: [String] = []
+        var nextOp: String? = nil
+
+        for rawToken in tokens {
+            let upper = rawToken.uppercased()
+            if upper == "OR" || rawToken == "|" {
+                nextOp = "OR"
+                continue
+            }
+            if upper == "AND" || rawToken == "&" {
+                nextOp = "AND"
+                continue
+            }
+            if upper == "NOT" {
+                nextOp = "NOT"
+                continue
+            }
+
+            var isNot = false
+            var token = rawToken
+            if token.hasPrefix("-") && token.count > 1 {
+                isNot = true
+                token = String(token.dropFirst())
+            }
+
+            var columnPrefix = ""
+            let lower = token.lowercased()
+            if lower.hasPrefix("artist:") || lower.hasPrefix("a:") {
+                let split = token.split(separator: ":", maxSplits: 1)
+                if split.count == 2 {
+                    columnPrefix = "artist:"
+                    token = String(split[1])
+                }
+            } else if lower.hasPrefix("album:") || lower.hasPrefix("al:") {
+                let split = token.split(separator: ":", maxSplits: 1)
+                if split.count == 2 {
+                    columnPrefix = "album:"
+                    token = String(split[1])
+                }
+            } else if lower.hasPrefix("title:") || lower.hasPrefix("t:") {
+                let split = token.split(separator: ":", maxSplits: 1)
+                if split.count == 2 {
+                    columnPrefix = "title:"
+                    token = String(split[1])
+                }
+            } else if lower.hasPrefix("genre:") || lower.hasPrefix("g:") {
+                let split = token.split(separator: ":", maxSplits: 1)
+                if split.count == 2 {
+                    columnPrefix = "genre:"
+                    token = String(split[1])
+                }
+            }
+
+            guard !token.isEmpty else { continue }
+
+            let clause: String
+            if token.hasPrefix("\"") && token.hasSuffix("\"") && token.count >= 2 {
+                let inner = token.dropFirst().dropLast().replacingOccurrences(of: "\"", with: "\"\"")
+                clause = columnPrefix.isEmpty ? "\"\(inner)\"" : "\(columnPrefix)\"\(inner)\""
+            } else {
+                let clean = token.replacingOccurrences(of: "\"", with: "\"\"")
+                clause = columnPrefix.isEmpty ? "\"\(clean)\"*" : "\(columnPrefix)\"\(clean)\"*"
+            }
+
+            if clauses.isEmpty {
+                if isNot || nextOp == "NOT" {
+                    clauses.append("NOT \(clause)")
+                } else {
+                    clauses.append(clause)
+                }
+            } else {
+                let op = nextOp ?? (isNot ? "NOT" : "AND")
+                clauses.append("\(op) \(clause)")
+            }
+            nextOp = nil
+        }
+
+        guard !clauses.isEmpty else { return nil }
+        return clauses.joined(separator: " ")
+    }
+
     private static func ftsPattern(_ query: String) -> String? {
-        let terms = query
-            .split(whereSeparator: { $0.isWhitespace })
-            .map { $0.replacingOccurrences(of: "\"", with: "\"\"") }
-            .filter { !$0.isEmpty }
-        guard !terms.isEmpty else { return nil }
-        return terms.map { "\"\($0)\"*" }.joined(separator: " AND ")
+        guard let filter = searchFilter(for: query) else { return nil }
+        if case .fts(let pattern) = filter.kind { return pattern }
+        return nil
     }
 
     private static func cursorPredicate(sort: TrackSort, direction: SortDirection, cursor: Track) -> (sql: String, arguments: StatementArguments) {

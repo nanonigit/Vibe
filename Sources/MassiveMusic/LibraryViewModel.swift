@@ -335,6 +335,7 @@ final class LibraryViewModel: ObservableObject {
     @Published private(set) var libraryFolderCount = 0
     @Published private(set) var cachedTrackCount = 0
     @Published private(set) var cachedStorageBytes: Int64 = 0
+    @Published private(set) var listeningInsights: ListeningInsights = .empty
     @Published private(set) var isLoading = false
 
     var isStorageExternal: Bool {
@@ -4689,6 +4690,18 @@ final class LibraryViewModel: ObservableObject {
                 cachedStorageBytes = library.cachedBytes
             }
             refreshPlaylists()
+            loadListeningInsights()
+        }
+    }
+
+    func loadListeningInsights() {
+        Task {
+            let insights = await Task.detached {
+                (try? self.database.fetchListeningInsights()) ?? .empty
+            }.value
+            await MainActor.run {
+                self.listeningInsights = insights
+            }
         }
     }
 
