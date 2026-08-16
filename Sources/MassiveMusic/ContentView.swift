@@ -3371,60 +3371,34 @@ private struct NowPlayingInspector: View {
         if player.currentTrack == nil {
             idleDiscovery
         } else {
-            VStack(spacing: 12) {
-                HStack(spacing: 8) {
-                    Picker("情報", selection: $tab) {
-                        Text(model.text("情報", "Info")).tag(0)
-                        Text(model.text("歌詞", "Lyrics")).tag(1)
-                        Text(model.text("発見", "Discover")).tag(2)
-                        Text(model.text("練習", "Practice")).tag(3)
-                        Text("TAB").tag(4)
-                        Text(model.text("コード", "Chords")).tag(5)
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .disabled(showStatsView)
+            GeometryReader { geo in
+                VStack(spacing: 10) {
+                    inspectorTabBar(availableWidth: geo.size.width)
 
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.16)) {
-                            showStatsView.toggle()
+                    Group {
+                        if showStatsView {
+                            idleDiscovery
+                        } else if model.isEnriching {
+                            ProgressView(model.text("情報を取得中…", "Loading information…"))
+                        } else if tab == 0 {
+                            information
+                        } else if tab == 1 {
+                            lyrics
+                        } else if tab == 2 {
+                            discovery
+                        } else if tab == 3 {
+                            practice
+                        } else if tab == 4 {
+                            tabSearch
+                        } else {
+                            ProgressView(model.text("コードを検索中…", "Searching for chords…"))
                         }
-                    } label: {
-                        Image(systemName: showStatsView ? "chart.bar.xaxis" : "chart.bar.xaxis")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(showStatsView ? Color.white : Color.secondary)
-                            .frame(width: 28, height: 22)
-                            .background(
-                                showStatsView ? Color.accentColor : Color.secondary.opacity(0.12),
-                                in: RoundedRectangle(cornerRadius: 6)
-                            )
                     }
-                    .buttonStyle(.plain)
-                    .help(model.text("リスニング統計・バイオリズムを表示", "Show Listening Insights & Stats"))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
-
-                Group {
-                    if showStatsView {
-                        idleDiscovery
-                    } else if model.isEnriching {
-                        ProgressView(model.text("情報を取得中…", "Loading information…"))
-                    } else if tab == 0 {
-                        information
-                    } else if tab == 1 {
-                        lyrics
-                    } else if tab == 2 {
-                        discovery
-                    } else if tab == 3 {
-                        practice
-                    } else if tab == 4 {
-                        tabSearch
-                    } else {
-                        ProgressView(model.text("コードを検索中…", "Searching for chords…"))
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 10)
             }
-            .padding(16)
             .onChange(of: tab) { _, newTab in
                 if newTab == 5 {
                     browserURL = chordifySearchURL
@@ -3440,6 +3414,84 @@ private struct NowPlayingInspector: View {
                 }
             }
         }
+    }
+
+    private func inspectorTabBar(availableWidth: CGFloat) -> some View {
+        let isNarrow = availableWidth < 360
+        let currentSelection: Int = showStatsView ? 6 : tab
+
+        return VStack(spacing: 3) {
+            if isNarrow {
+                // 2段レイアウト（上段: 4項目 / 下段: 3項目）
+                HStack(spacing: 3) {
+                    tabItemButton(index: 0, current: currentSelection)
+                    tabItemButton(index: 1, current: currentSelection)
+                    tabItemButton(index: 2, current: currentSelection)
+                    tabItemButton(index: 3, current: currentSelection)
+                }
+                HStack(spacing: 3) {
+                    tabItemButton(index: 4, current: currentSelection)
+                    tabItemButton(index: 5, current: currentSelection)
+                    tabItemButton(index: 6, current: currentSelection)
+                }
+            } else {
+                // 1段レイアウト
+                HStack(spacing: 3) {
+                    tabItemButton(index: 0, current: currentSelection)
+                    tabItemButton(index: 1, current: currentSelection)
+                    tabItemButton(index: 2, current: currentSelection)
+                    tabItemButton(index: 3, current: currentSelection)
+                    tabItemButton(index: 4, current: currentSelection)
+                    tabItemButton(index: 5, current: currentSelection)
+                    tabItemButton(index: 6, current: currentSelection, isIconOnly: true)
+                }
+            }
+        }
+        .padding(3)
+        .background(model.appearance.palette.elevated, in: RoundedRectangle(cornerRadius: 7))
+        .overlay(RoundedRectangle(cornerRadius: 7).stroke(model.appearance.palette.divider, lineWidth: 1))
+    }
+
+    @ViewBuilder
+    private func tabItemButton(index: Int, current: Int, isIconOnly: Bool = false) -> some View {
+        let isSelected = current == index
+        Button {
+            withAnimation(.easeInOut(duration: 0.14)) {
+                if index == 6 {
+                    showStatsView = true
+                } else {
+                    showStatsView = false
+                    tab = index
+                }
+            }
+        } label: {
+            Group {
+                if isIconOnly {
+                    Text("📊")
+                } else {
+                    switch index {
+                    case 0: Text(model.text("情報", "Info")).tag(0)
+                    case 1: Text(model.text("歌詞", "Lyrics")).tag(1)
+                    case 2: Text(model.text("発見", "Discover")).tag(2)
+                    case 3: Text(model.text("練習", "Practice")).tag(3)
+                    case 4: Text("TAB").tag(4)
+                    case 5: Text(model.text("コード", "Chords")).tag(5)
+                    default: Text(model.text("📊 統計", "📊 Stats")).tag(6)
+                    }
+                }
+            }
+            .font(.system(size: 11, weight: isSelected ? .bold : .medium))
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .foregroundStyle(isSelected ? Color.white : model.appearance.palette.secondaryText)
+            .frame(maxWidth: isIconOnly ? 32 : .infinity)
+            .frame(height: 22)
+            .background(
+                isSelected ? model.appearance.palette.accent : Color.clear,
+                in: RoundedRectangle(cornerRadius: 5)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private var chordifySearchURL: URL? {

@@ -1494,34 +1494,16 @@ public final class LibraryDatabase: @unchecked Sendable {
                 """) ?? 0
 
                 let rankingRows = try Row.fetchAll(db, sql: """
-                    SELECT t.*, COUNT(*) AS period_play_count
-                    FROM tracks t
-                    INNER JOIN play_events pe ON pe.track_id = t.id
-                    WHERE t.is_available = 1 AND \(condition.replacingOccurrences(of: "last_played_at", with: "pe.played_at"))
-                    GROUP BY t.id
-                    ORDER BY period_play_count DESC, pe.played_at DESC
+                    SELECT * FROM tracks
+                    WHERE is_available = 1 AND last_played_at IS NOT NULL
+                      AND \(condition)
+                    ORDER BY play_count DESC, last_played_at DESC
                     LIMIT 10
                 """)
-                
-                var topTracks: [ListeningInsights.TopTrack] = rankingRows.map { row in
+                let topTracks: [ListeningInsights.TopTrack] = rankingRows.map { row in
                     let track = Self.decodeTrack(row)
-                    let plays: Int = row["period_play_count"] ?? 1
-                    return ListeningInsights.TopTrack(track: track, playCount: plays)
-                }
-
-                if topTracks.isEmpty {
-                    let fallbackRows = try Row.fetchAll(db, sql: """
-                        SELECT * FROM tracks
-                        WHERE is_available = 1 AND last_played_at IS NOT NULL
-                          AND \(condition)
-                        ORDER BY play_count DESC, last_played_at DESC
-                        LIMIT 10
-                    """)
-                    topTracks = fallbackRows.map { row in
-                        let track = Self.decodeTrack(row)
-                        let plays: Int = row["play_count"] ?? 1
-                        return ListeningInsights.TopTrack(track: track, playCount: max(1, plays))
-                    }
+                    let plays: Int = row["play_count"] ?? 1
+                    return ListeningInsights.TopTrack(track: track, playCount: max(1, plays))
                 }
 
                 timeOfDayVibes.append(ListeningInsights.TimeOfDayVibe(
