@@ -1051,6 +1051,7 @@ final class LibraryViewModel: ObservableObject {
                 case .artist: BatchMetadataChanges(artist: chosenValue)
                 case .album: BatchMetadataChanges(album: chosenValue)
                 case .genre: BatchMetadataChanges(genre: chosenValue)
+                case .comment: BatchMetadataChanges(comment: chosenValue)
                 }
                 updateMetadata(for: tracks, changes: changes)
             } catch {

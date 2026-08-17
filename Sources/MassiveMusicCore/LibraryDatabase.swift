@@ -960,6 +960,7 @@ public final class LibraryDatabase: @unchecked Sendable {
         case .artist: "artist"
         case .album: "album"
         case .genre: "genre"
+        case .comment: "comment"
         }
         return try pool.read { db in
             let total = try Int.fetchOne(
@@ -1034,6 +1035,7 @@ public final class LibraryDatabase: @unchecked Sendable {
                     SUM(CASE WHEN \(Self.metadataIssuePredicate(.missingTitle)) THEN 1 ELSE 0 END) AS missing_title,
                     SUM(CASE WHEN \(Self.metadataIssuePredicate(.missingArtist)) THEN 1 ELSE 0 END) AS missing_artist,
                     SUM(CASE WHEN \(Self.metadataIssuePredicate(.missingAlbum)) THEN 1 ELSE 0 END) AS missing_album,
+                    SUM(CASE WHEN \(Self.metadataIssuePredicate(.missingYear)) THEN 1 ELSE 0 END) AS missing_year,
                     SUM(CASE WHEN \(Self.metadataIssuePredicate(.urlInMP3Metadata)) THEN 1 ELSE 0 END) AS url_metadata,
                     SUM(CASE WHEN \(Self.metadataIssuePredicate(.commentInMP3)) THEN 1 ELSE 0 END) AS comment_count,
                     SUM(CASE WHEN \(Self.metadataIssuePredicate(.suspectedMojibake)) THEN 1 ELSE 0 END) AS mojibake,
@@ -1045,6 +1047,7 @@ public final class LibraryDatabase: @unchecked Sendable {
                 MetadataIssueSummary(kind: .missingTitle, count: row["missing_title"] ?? 0),
                 MetadataIssueSummary(kind: .missingArtist, count: row["missing_artist"] ?? 0),
                 MetadataIssueSummary(kind: .missingAlbum, count: row["missing_album"] ?? 0),
+                MetadataIssueSummary(kind: .missingYear, count: row["missing_year"] ?? 0),
                 MetadataIssueSummary(kind: .urlInMP3Metadata, count: row["url_metadata"] ?? 0),
                 MetadataIssueSummary(kind: .commentInMP3, count: row["comment_count"] ?? 0),
                 MetadataIssueSummary(kind: .suspectedMojibake, count: row["mojibake"] ?? 0),
@@ -1282,7 +1285,7 @@ public final class LibraryDatabase: @unchecked Sendable {
 
     private static func refreshMetadataVariationCandidates(db: Database, previous: Row?, updated: Row) throws {
         guard let previous else { return }
-        for field in MetadataField.allCases {
+        for field in MetadataField.variationFields {
             let column = metadataColumn(field)
             let oldValue: String = previous[column]
             let newValue: String = updated[column]
@@ -3071,6 +3074,7 @@ public final class LibraryDatabase: @unchecked Sendable {
                 case .artist: "artist"
                 case .album: "album"
                 case .genre: "genre"
+                case .comment: "comment"
                 }
                 predicates.append("t.\(column) = ?")
                 arguments += [value]
@@ -3308,12 +3312,14 @@ public final class LibraryDatabase: @unchecked Sendable {
         case .artist: "t.artist"
         case .album: "t.album"
         case .genre: "t.genre"
+        case .comment: "t.comment"
         case nil: "t.title || ' ' || t.artist || ' ' || t.album || ' ' || t.album_artist || ' ' || t.genre || ' ' || t.comment || ' ' || t.filename || ' ' || t.relative_path"
         }
         return switch kind {
         case .missingTitle: "trim(t.title) = ''"
         case .missingArtist: "trim(t.artist) = ''"
         case .missingAlbum: "trim(t.album) = ''"
+        case .missingYear: "trim(t.year) = ''"
         case .commentInMP3: "lower(t.format) = 'mp3' AND trim(t.comment) != ''"
         case .urlInMP3Metadata:
             """
@@ -3393,7 +3399,13 @@ public final class LibraryDatabase: @unchecked Sendable {
         """
 
     private static func metadataColumn(_ field: MetadataField) -> String {
-        switch field { case .title: "title"; case .artist: "artist"; case .album: "album"; case .genre: "genre" }
+        switch field {
+        case .title: "title"
+        case .artist: "artist"
+        case .album: "album"
+        case .genre: "genre"
+        case .comment: "comment"
+        }
     }
 
     public struct SearchFilter: Sendable {

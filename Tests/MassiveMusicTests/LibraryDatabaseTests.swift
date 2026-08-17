@@ -1425,7 +1425,7 @@ struct LibraryDatabaseTests {
         #expect(!variationSearch.contains("changeSection(.tracks"))
         #expect(model.contains("var isInDetail: Bool {"))
         #expect(model.contains("|| !browseReturnStack.isEmpty"))
-        #expect(content.contains(".scrollPosition(id: $model.trackScrollPosition, anchor: .top)"))
+        #expect(content.contains("restoreTrackScrollIfNeeded(using: trackScrollProxy)"))
         #expect(content.contains(".scrollPosition(id: $model.variationScrollPosition, anchor: .top)"))
         #expect(model.contains("needsBrowseScrollRestoration = state.trackScrollPosition != nil"))
         #expect(content.contains("restorePendingBrowseScrollPositionIfNeeded()"))
@@ -2412,8 +2412,10 @@ struct LibraryDatabaseTests {
         #expect(summaries.first(where: { $0.kind == .missingTitle })?.count == 1)
         #expect(summaries.first(where: { $0.kind == .missingArtist })?.count == 1)
         #expect(summaries.first(where: { $0.kind == .missingAlbum })?.count == 1)
+        #expect(summaries.first(where: { $0.kind == .missingYear })?.count == 4)
         #expect(summaries.first(where: { $0.kind == .urlInMP3Metadata })?.count == 1)
         #expect(summaries.first(where: { $0.kind == .suspectedMojibake })?.count == 1)
+        #expect(try context.database.pageMetadataIssues(kind: .missingYear).totalCount == 4)
         #expect(try context.database.pageMetadataIssues(kind: .urlInMP3Metadata).tracks.first?.filename == "url.mp3")
         #expect(try context.database.pageMetadataIssues(kind: .suspectedMojibake).tracks.first?.filename == "garbled.mp3")
     }
@@ -2727,6 +2729,29 @@ struct LibraryDatabaseTests {
         #expect(model.contains("let requestedFieldFilter = [.urlInMP3Metadata, .suspectedMojibake]"))
         #expect(model.contains("field: requestedFieldFilter"))
         #expect(model.contains("if requestedFieldFilter == nil"))
+    }
+
+    @Test func urlPatternDetectionIdentifiesTargetFields() throws {
+        let sampleTrack = Track(
+            id: 10,
+            rootID: 1,
+            relativePath: "test/01.mp3",
+            filename: "01.mp3",
+            title: "Song Title",
+            artist: "Artist Name",
+            album: "Album https://promo.example.com",
+            genre: "Rock",
+            fileSize: 1024,
+            modifiedAt: Date(),
+            format: "mp3",
+            comment: "Downloaded from www.freemusic.org"
+        )
+        let locations = sampleTrack.urlMatchLocations(isJapanese: true)
+        let fieldNames = Set(locations.map(\.fieldName))
+        #expect(fieldNames.contains("アルバム"))
+        #expect(fieldNames.contains("コメント"))
+        #expect(!fieldNames.contains("曲名"))
+        #expect(!fieldNames.contains("アーティスト"))
     }
 
     @Test func failedTransactionRollsBack() throws {

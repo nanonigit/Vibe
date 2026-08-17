@@ -45,7 +45,7 @@ public actor MetadataDiagnosticsAnalyzer {
         var processed = 0
         var candidateCount = 0
 
-        for field in MetadataField.allCases {
+        for field in MetadataField.variationFields {
             var cursor: String?
             while true {
                 try Task.checkCancellation()
@@ -67,7 +67,7 @@ public actor MetadataDiagnosticsAnalyzer {
         }
 
         candidateCount += try database.generateNormalizationCandidates()
-        for field in MetadataField.allCases {
+        for field in MetadataField.variationFields {
             var cursorPrefix: String?
             var cursorID: Int64?
             var activePrefix: String?

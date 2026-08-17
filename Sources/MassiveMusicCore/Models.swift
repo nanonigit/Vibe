@@ -147,6 +147,7 @@ public enum MetadataIssueKind: String, CaseIterable, Identifiable, Equatable, Se
     case missingTitle
     case missingArtist
     case missingAlbum
+    case missingYear
     case urlInMP3Metadata
     case commentInMP3
     case suspectedMojibake
@@ -161,7 +162,12 @@ public enum MetadataField: String, CaseIterable, Identifiable, Hashable, Sendabl
     case artist
     case album
     case genre
+    case comment
     public var id: String { rawValue }
+
+    public static var variationFields: [MetadataField] {
+        [.title, .artist, .album, .genre]
+    }
 }
 
 public struct ExactMetadataFilter: Hashable, Sendable {
@@ -464,6 +470,102 @@ public struct Track: Identifiable, Hashable, Sendable {
         let normalizedAlbumArtist = albumArtist.trimmingCharacters(in: .whitespacesAndNewlines)
         if !normalizedAlbumArtist.isEmpty { return normalizedAlbumArtist }
         return artist.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    public struct MetadataMatchLocation: Identifiable, Hashable, Sendable {
+        public var id: String { fieldName }
+        public let fieldName: String
+        public let value: String
+
+        public init(fieldName: String, value: String) {
+            self.fieldName = fieldName
+            self.value = value
+        }
+    }
+
+    public func urlMatchLocations(isJapanese: Bool) -> [MetadataMatchLocation] {
+        var locations: [MetadataMatchLocation] = []
+        if title.containsURLPattern {
+            locations.append(MetadataMatchLocation(fieldName: isJapanese ? "曲名" : "Title", value: title))
+        }
+        if artist.containsURLPattern {
+            locations.append(MetadataMatchLocation(fieldName: isJapanese ? "アーティスト" : "Artist", value: artist))
+        }
+        if album.containsURLPattern {
+            locations.append(MetadataMatchLocation(fieldName: isJapanese ? "アルバム" : "Album", value: album))
+        }
+        if albumArtist.containsURLPattern {
+            locations.append(MetadataMatchLocation(fieldName: isJapanese ? "アルバムアーティスト" : "Album Artist", value: albumArtist))
+        }
+        if genre.containsURLPattern {
+            locations.append(MetadataMatchLocation(fieldName: isJapanese ? "ジャンル" : "Genre", value: genre))
+        }
+        if comment.containsURLPattern {
+            locations.append(MetadataMatchLocation(fieldName: isJapanese ? "コメント" : "Comment", value: comment))
+        }
+        if filename.containsURLPattern {
+            locations.append(MetadataMatchLocation(fieldName: isJapanese ? "ファイル名" : "Filename", value: filename))
+        }
+        return locations
+    }
+
+    public func mojibakeMatchLocations(isJapanese: Bool) -> [MetadataMatchLocation] {
+        var locations: [MetadataMatchLocation] = []
+        if title.containsMojibakePattern {
+            locations.append(MetadataMatchLocation(fieldName: isJapanese ? "曲名" : "Title", value: title))
+        }
+        if artist.containsMojibakePattern {
+            locations.append(MetadataMatchLocation(fieldName: isJapanese ? "アーティスト" : "Artist", value: artist))
+        }
+        if album.containsMojibakePattern {
+            locations.append(MetadataMatchLocation(fieldName: isJapanese ? "アルバム" : "Album", value: album))
+        }
+        if albumArtist.containsMojibakePattern {
+            locations.append(MetadataMatchLocation(fieldName: isJapanese ? "アルバムアーティスト" : "Album Artist", value: albumArtist))
+        }
+        if genre.containsMojibakePattern {
+            locations.append(MetadataMatchLocation(fieldName: isJapanese ? "ジャンル" : "Genre", value: genre))
+        }
+        if comment.containsMojibakePattern {
+            locations.append(MetadataMatchLocation(fieldName: isJapanese ? "コメント" : "Comment", value: comment))
+        }
+        if filename.containsMojibakePattern {
+            locations.append(MetadataMatchLocation(fieldName: isJapanese ? "ファイル名" : "Filename", value: filename))
+        }
+        return locations
+    }
+}
+
+public extension String {
+    var containsURLPattern: Bool {
+        let lower = self.lowercased()
+        return lower.contains("http://")
+            || lower.contains("https://")
+            || lower.contains("www.")
+            || lower.contains("://")
+            || lower.contains(".com/")
+            || lower.contains(".net/")
+            || lower.contains(".org/")
+            || lower.contains(".ru/")
+            || lower.contains(".io/")
+            || lower.hasSuffix(".com")
+            || lower.hasSuffix(".net")
+            || lower.hasSuffix(".org")
+            || lower.contains(".com ")
+            || lower.contains(".net ")
+            || lower.contains(".org ")
+    }
+
+    var containsMojibakePattern: Bool {
+        self.contains("")
+            || self.contains("Ã")
+            || self.contains("Â")
+            || self.contains("â€")
+            || self.contains("ÔÌ")
+            || self.contains("¼")
+            || self.contains("縺")
+            || self.contains("繧")
+            || self.contains("譁")
     }
 }
 

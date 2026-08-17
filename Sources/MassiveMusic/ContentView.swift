@@ -1361,10 +1361,16 @@ struct ContentView: View {
                                     .id(track.id)
                                 }
                             }
-                            .scrollTargetLayout()
                         }
-                        .scrollPosition(id: $model.trackScrollPosition, anchor: .top)
                         .frame(width: contentWidth, height: max(0, geometry.size.height - 32), alignment: .top)
+                        .onAppear {
+                            restoreTrackScrollIfNeeded(using: trackScrollProxy)
+                        }
+                        .onChange(of: model.trackScrollPosition) { _, newPosition in
+                            if let newPosition {
+                                trackScrollProxy.scrollTo(newPosition, anchor: .top)
+                            }
+                        }
                     }
                 }
                 .frame(width: contentWidth, height: geometry.size.height, alignment: .topLeading)
@@ -1453,11 +1459,19 @@ struct ContentView: View {
                 helpText: isPlayable ? "" : model.text(
                     "元ファイルが見つからず、ローカルキャッシュもありません",
                     "Original file is missing and no local cache is available"
-                )
+                ),
+                diagnosticKind: model.section == .diagnostics ? model.diagnosticKind : nil,
+                isJapanese: model.language == .japanese
             )
             .frame(width: titleColumnWidth, alignment: .leading)
         case .artist:
-            TrackNavigationCell(title: model.displayArtist(track.artist), width: artistColumnWidth) {
+            let isDiag = model.section == .diagnostics
+            TrackNavigationCell(
+                title: model.displayArtist(track.artist),
+                width: artistColumnWidth,
+                hasURL: isDiag && model.diagnosticKind == .urlInMP3Metadata && track.artist.containsURLPattern,
+                hasMojibake: isDiag && model.diagnosticKind == .suspectedMojibake && track.artist.containsMojibakePattern
+            ) {
                 isTrackTableFocused = true
                 if hasSelectionModifier {
                     handleTrackSelection(track, at: index)
@@ -1466,7 +1480,13 @@ struct ContentView: View {
                 }
             }
         case .album:
-            TrackNavigationCell(title: track.album, width: albumColumnWidth) {
+            let isDiag = model.section == .diagnostics
+            TrackNavigationCell(
+                title: track.album,
+                width: albumColumnWidth,
+                hasURL: isDiag && model.diagnosticKind == .urlInMP3Metadata && track.album.containsURLPattern,
+                hasMojibake: isDiag && model.diagnosticKind == .suspectedMojibake && track.album.containsMojibakePattern
+            ) {
                 isTrackTableFocused = true
                 if hasSelectionModifier {
                     handleTrackSelection(track, at: index)
@@ -1910,18 +1930,20 @@ struct ContentView: View {
         }
     }
 
-    private func restorePendingBrowseScrollPositionIfNeeded() {
-        guard model.needsBrowseScrollRestoration else { return }
-        let trackPosition = model.trackScrollPosition
-        guard trackPosition != nil else { return }
-        Task { @MainActor in
-            await Task.yield()
-            try? await Task.sleep(nanoseconds: 50_000_000)
-            if model.needsBrowseScrollRestoration {
-                model.trackScrollPosition = trackPosition
-                model.completeBrowseScrollRestoration()
+    private func restoreTrackScrollIfNeeded(using proxy: ScrollViewProxy) {
+        guard model.needsBrowseScrollRestoration, let targetID = model.trackScrollPosition else { return }
+        for delay in [0.01, 0.05, 0.12] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                proxy.scrollTo(targetID, anchor: .top)
             }
         }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            model.completeBrowseScrollRestoration()
+        }
+    }
+
+    private func restorePendingBrowseScrollPositionIfNeeded() {
+        // Handled via ScrollViewReader restoreTrackScrollIfNeeded
     }
 
     private func restoreVariationScroll(using proxy: ScrollViewProxy) {
@@ -2464,10 +2486,11 @@ struct ContentView: View {
                             Text(model.text("曲名", "Title")).tag(MetadataField?.some(.title))
                             Text(model.text("アルバム名", "Album")).tag(MetadataField?.some(.album))
                             Text(model.text("アーティスト名", "Artist")).tag(MetadataField?.some(.artist))
+                            Text(model.text("コメント", "Comment")).tag(MetadataField?.some(.comment))
                         }
                         .pickerStyle(.segmented)
                         .controlSize(.small)
-                        .frame(maxWidth: 520)
+                        .frame(maxWidth: 600)
                         Spacer()
                         Text(model.text(
                             "該当曲: \(model.totalCount.formatted())曲",
@@ -2799,6 +2822,7 @@ struct ContentView: View {
         case .missingTitle: model.text("曲名なし", "Missing Title")
         case .missingArtist: model.text("不明なアーティスト", "Unknown Artist")
         case .missingAlbum: model.text("アルバム名なし", "Missing Album")
+        case .missingYear: model.text("リリース年なし", "Missing Release Year")
         case .urlInMP3Metadata: model.text("URLを含むMP3", "MP3 Metadata URLs")
         case .commentInMP3: model.text("💬 コメントを含むMP3", "MP3 Comments")
         case .suspectedMojibake: model.text("文字化け候補", "Garbled Text Candidates")
@@ -2813,6 +2837,7 @@ struct ContentView: View {
         case .missingTitle: "music.note"
         case .missingArtist: "person.crop.circle.badge.questionmark"
         case .missingAlbum: "square.stack.3d.up.slash"
+        case .missingYear: "calendar.badge.exclamationmark"
         case .urlInMP3Metadata: "link.badge.plus"
         case .commentInMP3: "bubble.left.and.text.bubble.right"
         case .suspectedMojibake: "text.badge.exclamationmark"
@@ -2864,6 +2889,7 @@ struct ContentView: View {
         case .artist: model.text("アーティスト", "Artist")
         case .album: model.text("アルバム", "Album")
         case .genre: model.text("ジャンル", "Genre")
+        case .comment: model.text("コメント", "Comment")
         }
     }
 
@@ -6937,6 +6963,8 @@ private struct TrackTitleCell: View {
     let isPlayable: Bool
     let isCurrent: Bool
     let helpText: String
+    var diagnosticKind: MetadataIssueKind? = nil
+    var isJapanese: Bool = true
     @State private var isHovered = false
 
     var body: some View {
@@ -6944,6 +6972,14 @@ private struct TrackTitleCell: View {
             if isCurrent {
                 Image(systemName: "speaker.wave.2.fill")
                     .foregroundStyle(Color.accentColor)
+            } else if diagnosticKind == .urlInMP3Metadata && track.title.containsURLPattern {
+                Image(systemName: "link")
+                    .foregroundStyle(Color.accentColor)
+                    .help(isJapanese ? "曲名にURLが含まれています" : "Title contains a URL")
+            } else if diagnosticKind == .suspectedMojibake && track.title.containsMojibakePattern {
+                Image(systemName: "character.badge.exclamationmark")
+                    .foregroundStyle(Color.orange)
+                    .help(isJapanese ? "曲名に文字化けが含まれています" : "Title contains suspected mojibake")
             } else if isPlayable {
                 Image(systemName: "music.note")
                     .foregroundStyle(Color.secondary)
@@ -6968,6 +7004,40 @@ private struct TrackTitleCell: View {
             Text(track.title)
                 .lineLimit(1)
                 .fontWeight(isCurrent ? .semibold : .regular)
+
+            if diagnosticKind == .urlInMP3Metadata {
+                let locations = track.urlMatchLocations(isJapanese: isJapanese)
+                let extraLocations = locations.filter { $0.fieldName != (isJapanese ? "曲名" : "Title") }
+                ForEach(extraLocations) { loc in
+                    HStack(spacing: 3) {
+                        Image(systemName: "link")
+                            .font(.system(size: 9))
+                        Text(loc.fieldName)
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Color.accentColor.opacity(0.16), in: RoundedRectangle(cornerRadius: 4))
+                    .foregroundStyle(Color.accentColor)
+                    .help("\(loc.fieldName): \(loc.value)")
+                }
+            } else if diagnosticKind == .suspectedMojibake {
+                let locations = track.mojibakeMatchLocations(isJapanese: isJapanese)
+                let extraLocations = locations.filter { $0.fieldName != (isJapanese ? "曲名" : "Title") }
+                ForEach(extraLocations) { loc in
+                    HStack(spacing: 3) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 9))
+                        Text(loc.fieldName)
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Color.orange.opacity(0.16), in: RoundedRectangle(cornerRadius: 4))
+                    .foregroundStyle(Color.orange)
+                    .help("\(loc.fieldName): \(loc.value)")
+                }
+            }
         }
     }
 }
@@ -6975,14 +7045,27 @@ private struct TrackTitleCell: View {
 private struct TrackNavigationCell: View {
     let title: String
     let width: CGFloat
+    var hasURL: Bool = false
+    var hasMojibake: Bool = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Text(title)
-                .lineLimit(1)
-                .frame(width: width, height: 32, alignment: .leading)
-                .contentShape(Rectangle())
+            HStack(spacing: 4) {
+                if hasURL {
+                    Image(systemName: "link")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.accentColor)
+                } else if hasMojibake {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.orange)
+                }
+                Text(title)
+                    .lineLimit(1)
+            }
+            .frame(width: width, height: 32, alignment: .leading)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
