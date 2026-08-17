@@ -156,19 +156,20 @@ flowchart LR
 ### Homebrew
 
 ```bash
-brew install --cask nanonigit/vibe/vibe
+brew tap nanonigit/amp
+brew install --cask amp
 ```
 
 既存のHomebrew環境を更新する場合:
 
 ```bash
 brew update
-brew upgrade --cask vibe
+brew upgrade --cask amp
 ```
 
 ### 直接ダウンロード
 
-[GitHub Releases](https://github.com/nanonigit/Vibe/releases) から `amp-v0.20.0-macos-arm64.zip` をダウンロード・展開し、`amp.app` を任意の場所に配置してください。
+[GitHub Releases](https://github.com/nanonigit/amp/releases) から `amp-v0.21.0-macos-arm64.zip` をダウンロード・展開し、`amp.app` を任意の場所に配置してください。
 
 ※本アプリはAppleの公証を受けていません。初回起動時にブロックされた場合は、Finderで「amp」を副ボタン（右）クリックして「開く」を選択し、確認ダイアログで「開く」をクリックしてください。
 
@@ -177,8 +178,8 @@ brew upgrade --cask vibe
 依存パッケージ（GRDB）はSwift Package Managerによって自動取得されます。
 
 ```bash
-git clone https://github.com/nanonigit/Vibe.git
-cd Vibe
+git clone https://github.com/nanonigit/amp.git
+cd amp
 xcodegen generate
 xcodebuild \
   -project MassiveMusic.xcodeproj \

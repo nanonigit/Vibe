@@ -156,19 +156,20 @@ Background analysis and ID3 migration progress appear at the bottom of the sideb
 ### Homebrew
 
 ```bash
-brew install --cask nanonigit/vibe/vibe
+brew tap nanonigit/amp
+brew install --cask amp
 ```
 
 To upgrade an existing Homebrew installation:
 
 ```bash
 brew update
-brew upgrade --cask vibe
+brew upgrade --cask amp
 ```
 
 ### Direct download
 
-Download `amp-v0.20.0-macos-arm64.zip` from [GitHub Releases](https://github.com/nanonigit/Vibe/releases), extract it, and move `amp.app` wherever you prefer.
+Download `amp-v0.21.0-macos-arm64.zip` from [GitHub Releases](https://github.com/nanonigit/amp/releases), extract it, and move `amp.app` wherever you prefer.
 
 The current build is not notarized. If macOS blocks the first launch, Control-click amp in Finder, choose **Open**, review the warning, and confirm that you want to launch it.
 
@@ -177,8 +178,8 @@ The current build is not notarized. If macOS blocks the first launch, Control-cl
 Swift Package Manager downloads the GRDB dependency automatically.
 
 ```bash
-git clone https://github.com/nanonigit/Vibe.git
-cd Vibe
+git clone https://github.com/nanonigit/amp.git
+cd amp
 xcodegen generate
 xcodebuild \
   -project MassiveMusic.xcodeproj \
