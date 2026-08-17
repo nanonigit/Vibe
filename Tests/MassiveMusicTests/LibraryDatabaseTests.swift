@@ -2930,8 +2930,8 @@ private struct TestContext {
         try context.database.setFavorite(trackID: id1, isFavorite: true)
 
         // id2をプレイリストに追加
-        let playlist = try context.database.createPlaylist(name: "My Playlist")
-        try context.database.addTracksToPlaylist(playlistID: playlist.id, trackIDs: [id2])
+        let playlistID = try context.database.createPlaylist(name: "My Playlist")
+        _ = try context.database.addTracks([id2], toPlaylist: playlistID)
 
         // 4曲すべてキャッシュに登録
         try context.database.recordCachedTrack(trackID: id1, path: "/cache/01.mp3", fileSize: 1000)

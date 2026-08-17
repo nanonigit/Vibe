@@ -44,7 +44,9 @@ flowchart LR
 - Scan and play MP3, M4A, WAV, and FLAC files
 - Browse by track, album, artist, genre, folder, favorites, or recently added
 - Show optional release-year columns for tracks and albums, and a representative genre for each artist
-- Drag-and-drop column reordering, visibility toggles, and persistent column widths for track and artist tables
+- Drag-and-drop column reordering, visibility toggles, and persistent column widths for track, album, and artist tables
+- Seamless Shazam integration: play a track and activate Mac's Shazam app in listening mode with one click
+- Real-time background status indicators in sidebar footer for automatic genre classification and release year fetching
 - Restore your scroll position when returning to the artist list
 - Keep keyboard focus during incremental search, with a full-size search field from the first keystroke
 - Start with a concise library sidebar while preserving every saved visibility and ordering choice
@@ -56,6 +58,7 @@ flowchart LR
 - Batch delete and move unrepairable corrupted files to Trash
 - Real-time progress bar, song counters, spinner, and cancel support during batch variation standardization
 - Diagnose duplicates, missing values, mojibake, embedded comments, and embedded URLs
+- Fast audio playback with Shazam listening trigger to easily identify mojibake songs
 - One-click comment clearing for individual tracks and batch comment removal on current view
 
 ### External SSD workflow and offline playback

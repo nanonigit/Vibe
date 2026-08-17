@@ -161,6 +161,7 @@ struct ContentView: View {
     @AppStorage("columns.artistView.albums.width") private var artistViewAlbumsWidth = 100.0
     @AppStorage("columns.artistView.songs.width") private var artistViewSongsWidth = 100.0
     @AppStorage("columns.artistView.order.v1") private var artistColumnOrderStorage = ""
+    @AppStorage("columns.albumView.order.v1") private var albumColumnOrderStorage = ""
     @AppStorage("albums.presentation") private var albumPresentation = SummaryPresentation.list.rawValue
     @AppStorage("artists.presentation") private var artistPresentation = SummaryPresentation.list.rawValue
 
@@ -257,6 +258,9 @@ struct ContentView: View {
         }
         .sheet(item: $batchMetadataEditRequest, onDismiss: model.resetBatchMetadataProgress) { request in
             BatchTrackMetadataEditor(model: model, tracks: request.tracks)
+        }
+        .sheet(item: $model.shazamRecognitionResult) { result in
+            ShazamResultSheet(model: model, result: result)
         }
         .confirmationDialog(
             model.text("表記を統一", "Standardize Spelling"),
@@ -638,7 +642,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private var sidebarBackgroundStatus: some View {
-        if model.driveMessage != nil || model.isBulkAutoFilling || model.isID3Migrating || model.isScanningAutomaticGenres || model.isTrimmingWhitespace || model.isNormalizingGenres {
+        if model.driveMessage != nil || model.isBulkAutoFilling || model.isID3Migrating || model.isScanningAutomaticGenres || model.isScanningAutomaticAlbumYears || model.isTrimmingWhitespace || model.isNormalizingGenres {
             VStack(spacing: 0) {
                 if let message = model.driveMessage {
                     Label(message, systemImage: "externaldrive.badge.exclamationmark")
@@ -661,6 +665,9 @@ struct ContentView: View {
                 }
                 if model.isScanningAutomaticGenres {
                     sidebarAutomaticGenreProgress
+                }
+                if model.isScanningAutomaticAlbumYears {
+                    sidebarAutomaticAlbumYearProgress
                 }
             }
             .font(.caption)
@@ -712,6 +719,28 @@ struct ContentView: View {
             ))
             .foregroundStyle(.secondary)
             .monospacedDigit()
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var sidebarAutomaticAlbumYearProgress: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.mini)
+                Text(model.text("リリース年を自動取得中", "Fetching release years"))
+                    .fontWeight(.semibold)
+                Spacer(minLength: 0)
+            }
+            let current = model.automaticAlbumYearProcessedCount
+            let total = model.automaticAlbumYearTotalCount
+            let percent = total > 0 ? Int((Double(current) / Double(total) * 100).rounded()) : 0
+            Text("\(current.formatted()) / \(total.formatted()) 曲 (\(percent)%)")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
@@ -1641,6 +1670,23 @@ struct ContentView: View {
             }
         }
         Divider()
+        Button {
+            player.play(track)
+            model.openAndListenWithShazam()
+        } label: {
+            Label(model.text("Shazamで再生して聴かせる", "Play & Listen with Shazam"), systemImage: "waveform.badge.mic")
+        }
+        Button {
+            Task { await model.recognizeTrackWithShazam(for: track) }
+        } label: {
+            Label(model.text("Shazamで曲情報を特定・修復…", "Identify & Repair with Shazam…"), systemImage: "waveform.and.magnifyingglass")
+        }
+        Button {
+            model.openShazamApp()
+        } label: {
+            Label(model.text("Shazamアプリを開く", "Open Shazam App"), systemImage: "arrow.up.forward.app")
+        }
+        Divider()
         if model.selectedTrackIDs.contains(track.id), selectedTracksOnPage.count > 1 {
             Button(model.text(
                 "選択した\(selectedTracksOnPage.count)曲を一括編集…",
@@ -1675,76 +1721,138 @@ struct ContentView: View {
         }
     }
 
+    private let defaultAlbumColumnOrder: [AlbumSort] = [.name, .artist, .year, .trackCount]
+
+    private var orderedAlbumColumns: [AlbumSort] {
+        var seen = Set<String>()
+        let stored = albumColumnOrderStorage
+            .split(separator: ",")
+            .compactMap { AlbumSort(rawValue: String($0)) }
+            .filter { defaultAlbumColumnOrder.contains($0) && seen.insert($0.rawValue).inserted }
+        return stored + defaultAlbumColumnOrder.filter { !seen.contains($0.rawValue) }
+    }
+
+    private var orderedVisibleAlbumColumns: [AlbumSort] {
+        orderedAlbumColumns.filter(isAlbumColumnVisible)
+    }
+
+    private func isAlbumColumnVisible(_ column: AlbumSort) -> Bool {
+        switch column {
+        case .name: true
+        case .artist: isAlbumViewArtistVisible
+        case .year: isAlbumViewYearVisible
+        case .trackCount: isAlbumViewSongsVisible
+        }
+    }
+
+    private func moveAlbumColumn(_ source: AlbumSort, before destination: AlbumSort) {
+        guard source != destination else { return }
+        var order = orderedAlbumColumns
+        guard let sourceIndex = order.firstIndex(of: source) else { return }
+        order.remove(at: sourceIndex)
+        guard let destinationIndex = order.firstIndex(of: destination) else { return }
+        order.insert(source, at: destinationIndex)
+        albumColumnOrderStorage = order.map(\.rawValue).joined(separator: ",")
+    }
+
+    @ViewBuilder
+    private func albumColumnHeader(_ column: AlbumSort) -> some View {
+        switch column {
+        case .name:
+            albumHeaderButton(.name, title: model.text("アルバム", "Album"))
+                .frame(width: albumViewAlbumWidth, alignment: .leading)
+                .overlay(alignment: .trailing) {
+                    ColumnResizeHandle(width: $albumViewAlbumWidth, range: 140...900)
+                }
+        case .artist:
+            albumHeaderButton(.artist, title: model.text("アーティスト", "Artist"))
+                .frame(width: albumViewArtistWidth, alignment: .leading)
+                .overlay(alignment: .trailing) {
+                    ColumnResizeHandle(width: $albumViewArtistWidth, range: 100...600)
+                }
+        case .year:
+            albumHeaderButton(.year, title: model.text("リリース年", "Release Year"))
+                .frame(width: albumViewYearWidth, alignment: .trailing)
+                .overlay(alignment: .trailing) {
+                    ColumnResizeHandle(width: $albumViewYearWidth, range: 60...200)
+                }
+        case .trackCount:
+            albumHeaderButton(.trackCount, title: model.text("曲数", "Songs"))
+                .frame(width: albumViewSongsWidth, alignment: .trailing)
+                .overlay(alignment: .trailing) {
+                    ColumnResizeHandle(width: $albumViewSongsWidth, range: 55...180)
+                }
+        }
+    }
+
+    @ViewBuilder
+    private func albumColumnCell(_ column: AlbumSort, album: AlbumSummary) -> some View {
+        switch column {
+        case .name:
+            Button { model.openAlbum(album) } label: {
+                Label(album.name, systemImage: "square.stack")
+                    .frame(width: albumViewAlbumWidth, alignment: .leading)
+                    .lineLimit(1)
+            }
+            .buttonStyle(.plain)
+        case .artist:
+            Button { model.openArtist(named: album.artist) } label: {
+                Text(model.displayArtist(album.artist))
+                    .foregroundStyle(.primary)
+                    .frame(width: albumViewArtistWidth, alignment: .leading)
+                    .lineLimit(1)
+            }
+            .buttonStyle(.plain)
+        case .year:
+            Text(album.year.isEmpty ? "-" : album.year)
+                .foregroundStyle(album.year.isEmpty ? .secondary : .primary)
+                .frame(width: albumViewYearWidth, alignment: .trailing)
+                .monospacedDigit()
+                .lineLimit(1)
+        case .trackCount:
+            Text(album.trackCount.formatted())
+                .frame(width: albumViewSongsWidth, alignment: .trailing)
+                .monospacedDigit()
+                .lineLimit(1)
+        }
+    }
+
     private var albumSummaryTable: some View {
         GeometryReader { geometry in
             ScrollView(.horizontal, showsIndicators: true) {
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                albumHeaderButton(.name, title: model.text("アルバム", "Album"))
-                    .frame(width: albumViewAlbumWidth, alignment: .leading)
-                    .overlay(alignment: .trailing) {
-                        ColumnResizeHandle(width: $albumViewAlbumWidth, range: 140...900)
-                    }
-                    .tableColumnDivider()
-                if isAlbumViewArtistVisible {
-                    albumHeaderButton(.artist, title: model.text("アーティスト", "Artist"))
-                        .frame(width: albumViewArtistWidth, alignment: .leading)
-                        .overlay(alignment: .trailing) {
-                            ColumnResizeHandle(width: $albumViewArtistWidth, range: 100...600)
+                VStack(spacing: 0) {
+                    HStack(spacing: 8) {
+                        ForEach(orderedVisibleAlbumColumns) { column in
+                            albumColumnHeader(column)
+                                .tableColumnDivider()
+                                .draggable(column.rawValue)
+                                .dropDestination(for: String.self) { values, _ in
+                                    guard let rawValue = values.first,
+                                          let source = AlbumSort(rawValue: rawValue),
+                                          orderedVisibleAlbumColumns.contains(source) else { return false }
+                                    moveAlbumColumn(source, before: column)
+                                    return true
+                                }
                         }
-                        .tableColumnDivider()
+                        Spacer().frame(width: 28)
+                    }
+                    .font(.caption.bold())
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(.bar)
+                    Divider()
+                    List(model.albumSummaries) { album in
+                        HStack(spacing: 8) {
+                            ForEach(orderedVisibleAlbumColumns) { column in
+                                albumColumnCell(column, album: album)
+                                    .tableColumnDivider()
+                            }
+                            Image(systemName: "chevron.right").foregroundStyle(.tertiary).frame(width: 20)
+                        }
+                        .padding(.vertical, 3)
+                    }
                 }
-                if isAlbumViewYearVisible {
-                    albumHeaderButton(.year, title: model.text("リリース年", "Release Year"))
-                        .frame(width: albumViewYearWidth, alignment: .trailing)
-                        .overlay(alignment: .trailing) {
-                            ColumnResizeHandle(width: $albumViewYearWidth, range: 60...200)
-                        }
-                        .tableColumnDivider()
-                }
-                if isAlbumViewSongsVisible {
-                    albumHeaderButton(.trackCount, title: model.text("曲数", "Songs"))
-                        .frame(width: albumViewSongsWidth, alignment: .trailing)
-                        .overlay(alignment: .trailing) {
-                            ColumnResizeHandle(width: $albumViewSongsWidth, range: 55...180)
-                        }
-                        .tableColumnDivider()
-                }
-                Spacer().frame(width: 28)
-            }
-            .font(.caption.bold())
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(.bar)
-            Divider()
-            List(model.albumSummaries) { album in
-                HStack {
-                    Button { model.openAlbum(album) } label: { Label(album.name, systemImage: "square.stack").frame(width: albumViewAlbumWidth, alignment: .leading) }.buttonStyle(.plain).tableColumnDivider()
-                    if isAlbumViewArtistVisible {
-                        Button { model.openArtist(named: album.artist) } label: {
-                            Text(model.displayArtist(album.artist))
-                                .foregroundStyle(.primary)
-                                .frame(width: albumViewArtistWidth, alignment: .leading)
-                                .lineLimit(1)
-                        }
-                        .buttonStyle(.plain)
-                        .tableColumnDivider()
-                    }
-                    if isAlbumViewYearVisible {
-                        Text(album.year.isEmpty ? "-" : album.year)
-                            .foregroundStyle(album.year.isEmpty ? .secondary : .primary)
-                            .frame(width: albumViewYearWidth, alignment: .trailing)
-                            .monospacedDigit()
-                            .tableColumnDivider()
-                    }
-                    if isAlbumViewSongsVisible {
-                        Text(album.trackCount.formatted()).frame(width: albumViewSongsWidth, alignment: .trailing).monospacedDigit().tableColumnDivider()
-                    }
-                    Image(systemName: "chevron.right").foregroundStyle(.tertiary).frame(width: 20)
-                }.padding(.vertical, 3)
-            }
-        }
-        .frame(width: max(geometry.size.width, albumSummaryContentWidth), height: geometry.size.height)
+                .frame(width: max(geometry.size.width, albumSummaryContentWidth), height: geometry.size.height)
             }
         }
     }
@@ -2511,7 +2619,7 @@ struct ContentView: View {
                     }
                     Divider()
                 } else if [.urlInMP3Metadata, .suspectedMojibake].contains(model.diagnosticKind) {
-                    HStack(spacing: 10) {
+                    HStack(spacing: 8) {
                         Picker(model.text("表示対象", "Show"), selection: Binding(
                             get: { model.metadataIssueFieldFilter },
                             set: { model.setMetadataIssueFieldFilter($0) }
@@ -2524,14 +2632,59 @@ struct ContentView: View {
                         }
                         .pickerStyle(.segmented)
                         .controlSize(.small)
-                        .frame(maxWidth: 600)
-                        Spacer()
+                        .frame(maxWidth: 320)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                        if model.diagnosticKind == .suspectedMojibake {
+                            if model.isRecognizingWithShazam {
+                                HStack(spacing: 6) {
+                                    ProgressView().controlSize(.small)
+                                    if let progress = model.shazamRecognitionProgress {
+                                        Text(progress)
+                                            .font(.caption.monospacedDigit().bold())
+                                            .foregroundStyle(model.appearance.palette.accent)
+                                            .lineLimit(1)
+                                    }
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(model.appearance.palette.accent.opacity(0.12), in: Capsule())
+                            } else {
+                                Button {
+                                    Task { await model.batchRecognizeMojibakeWithShazam() }
+                                } label: {
+                                    Label(
+                                        model.text("Shazam一括修復", "Auto-Repair"),
+                                        systemImage: "waveform.and.magnifyingglass"
+                                    )
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+                                .disabled(model.tracks.isEmpty)
+
+                                Button {
+                                    model.openShazamApp()
+                                } label: {
+                                    Label(
+                                        model.text("Shazam", "Shazam"),
+                                        systemImage: "arrow.up.forward.app"
+                                    )
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                            }
+                        }
+
+                        Spacer(minLength: 12)
+
                         Text(model.text(
                             "該当曲: \(model.totalCount.formatted())曲",
                             "Matching: \(model.totalCount.formatted()) songs"
                         ))
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .fixedSize()
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 10)
@@ -5312,6 +5465,7 @@ private struct TrackMetadataEditor: View {
     @State private var metadataCandidates: [MusicMetadataCandidate] = []
     @State private var selectedCandidateID: String?
     @State private var isLookingUpMetadata = false
+    @State private var isRecognizingShazam = false
     @State private var metadataLookupMessage: String?
     @State private var isSaving = false
 
@@ -5376,13 +5530,25 @@ private struct TrackMetadataEditor: View {
                     Toggle(model.text("コンピレーションアルバム (TCMP)", "Compilation Album (TCMP)"), isOn: $edit.isCompilation)
                         .disabled(track.format.lowercased() != "mp3")
 
-                    LabeledContent(model.text("Web情報", "Web Metadata")) {
+                    LabeledContent(model.text("自動特定", "Auto Identify")) {
                         HStack(spacing: 10) {
-                            Button(model.text("MusicBrainzから候補を検索", "Find Suggestions on MusicBrainz"), action: lookUpMetadata)
+                            Button {
+                                recognizeWithShazam()
+                            } label: {
+                                Label(
+                                    model.text("Shazamで音声から曲情報を認識", "Identify with Shazam"),
+                                    systemImage: "waveform.and.magnifyingglass"
+                                )
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(isRecognizingShazam)
+
+                            Button(model.text("MusicBrainz検索", "MusicBrainz"), action: lookUpMetadata)
                                 .disabled(isLookingUpMetadata || edit.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                            if isLookingUpMetadata {
+
+                            if isRecognizingShazam || isLookingUpMetadata {
                                 ProgressView().controlSize(.small)
-                                Text(model.text("検索中…", "Searching…"))
+                                Text(isRecognizingShazam ? model.text("Shazam照合中…", "Matching on Shazam…") : model.text("検索中…", "Searching…"))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -5656,6 +5822,49 @@ private struct TrackMetadataEditor: View {
                 )
             }
             if track.id == requestedTrackID { isLookingUpMetadata = false }
+        }
+    }
+
+    private func recognizeWithShazam() {
+        guard !isRecognizingShazam else { return }
+        isRecognizingShazam = true
+        metadataLookupMessage = nil
+        let requestedTrackID = track.id
+        Task {
+            do {
+                let (scope, audioURL) = try await model.resolveAudioURL(for: track)
+                let result: ShazamRecognizedMetadata?
+                if let scope {
+                    result = try await scope.withAccess { _ in
+                        try await ShazamService.shared.recognizeTrack(fileURL: audioURL)
+                    }
+                } else {
+                    result = try await ShazamService.shared.recognizeTrack(fileURL: audioURL)
+                }
+                guard track.id == requestedTrackID else { return }
+                if let result {
+                    if !result.title.isEmpty { edit.title = result.title }
+                    if !result.artist.isEmpty { edit.artist = result.artist }
+                    if let album = result.album, !album.isEmpty { edit.album = album }
+                    if let genre = result.genre, !genre.isEmpty { edit.genre = genre }
+                    metadataLookupMessage = model.text(
+                        "Shazamで曲情報を取得・反映しました（\(result.title) / \(result.artist)）",
+                        "Shazam recognized: \(result.title) by \(result.artist)"
+                    )
+                } else {
+                    metadataLookupMessage = model.text(
+                        "Shazamで曲を特定できませんでした。",
+                        "No match found on Shazam."
+                    )
+                }
+            } catch {
+                guard track.id == requestedTrackID else { return }
+                metadataLookupMessage = model.text(
+                    "Shazam認識に失敗しました: \(error.localizedDescription)",
+                    "Shazam recognition failed: \(error.localizedDescription)"
+                )
+            }
+            if track.id == requestedTrackID { isRecognizingShazam = false }
         }
     }
 
@@ -7526,5 +7735,62 @@ struct MiniPlayerView: View {
         .background(WindowAppearanceSynchronizer(mode: model.appearance).frame(width: 0, height: 0))
         .onAppear { model.enrich(player.currentTrack) }
         .onChange(of: player.currentTrack) { _, track in model.enrich(track) }
+    }
+}
+
+private struct ShazamResultSheet: View {
+    @ObservedObject var model: LibraryViewModel
+    let result: ShazamRecognitionResult
+
+    var body: some View {
+        VStack(spacing: 16) {
+            HStack(spacing: 8) {
+                Image(systemName: "waveform.and.magnifyingglass")
+                    .font(.title2)
+                    .foregroundStyle(model.appearance.palette.accent)
+                Text(model.text("Shazamで楽曲を特定しました", "Identified by Shazam"))
+                    .font(.headline)
+                Spacer()
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text(model.text("曲名:", "Title:")).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
+                    Text(result.metadata.title).bold()
+                }
+                HStack {
+                    Text(model.text("アーティスト:", "Artist:")).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
+                    Text(result.metadata.artist).bold()
+                }
+                if let album = result.metadata.album, !album.isEmpty {
+                    HStack {
+                        Text(model.text("アルバム:", "Album:")).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
+                        Text(album)
+                    }
+                }
+                if let genre = result.metadata.genre, !genre.isEmpty {
+                    HStack {
+                        Text(model.text("ジャンル:", "Genre:")).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
+                        Text(genre)
+                    }
+                }
+            }
+            .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+
+            HStack {
+                Button(model.text("キャンセル", "Cancel")) {
+                    model.shazamRecognitionResult = nil
+                }
+                Spacer()
+                Button(model.text("この情報で更新", "Apply Metadata")) {
+                    Task { await model.applyShazamMetadata(for: result.track, metadata: result.metadata) }
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(20)
+        .frame(width: 440)
     }
 }

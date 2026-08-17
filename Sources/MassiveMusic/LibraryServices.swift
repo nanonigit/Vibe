@@ -118,6 +118,18 @@ actor TrackFileCoordinator {
         _ = try database.removeTrackFromLibrary(id: track.id, fileWasTrashed: false)
     }
 
+    func resolveLocalAudioURL(for track: Track) throws -> (SecurityScopedRoot?, URL) {
+        if let cachedPath = try? database.cachedPath(trackID: track.id), fileManager.fileExists(atPath: cachedPath) {
+            return (nil, URL(filePath: cachedPath))
+        }
+        let (scope, sourceURL) = try scopedSource(for: track, authorizedRoot: nil)
+        let exists = try scope.withAccess { _ in
+            fileManager.fileExists(atPath: sourceURL.path)
+        }
+        guard exists else { throw MassiveMusicError.trackUnavailable }
+        return (scope, sourceURL)
+    }
+
     func moveFileToTrash(track: Track, authorizedRoot: SecurityScopedRoot? = nil) throws {
         let cachedPath = try? database.cachedPath(trackID: track.id)
         

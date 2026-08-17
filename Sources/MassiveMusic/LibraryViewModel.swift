@@ -337,6 +337,9 @@ final class LibraryViewModel: ObservableObject {
     @Published private(set) var cachedStorageBytes: Int64 = 0
     @Published private(set) var listeningInsights: ListeningInsights = .empty
     @Published private(set) var isLoading = false
+    @Published var isRecognizingWithShazam = false
+    @Published var shazamRecognitionProgress: String? = nil
+    @Published var shazamRecognitionResult: ShazamRecognitionResult? = nil
 
     // MARK: - Cloud Sharing / Sync for iPhone & iPad
     @Published var cloudSyncProvider: CloudSyncProvider = .iCloud
@@ -2519,6 +2522,140 @@ final class LibraryViewModel: ObservableObject {
         if edit.artworkData != nil { refreshEnrichmentIfNeeded(updatedTrackIDs: [track.id]) }
         refreshMetadataDiagnostics()
         refreshSidebarCounts()
+    }
+
+    // MARK: - Shazam Audio Recognition
+
+    func resolveAudioURL(for track: Track) async throws -> (SecurityScopedRoot?, URL) {
+        try await trackFiles.resolveLocalAudioURL(for: track)
+    }
+
+    func recognizeTrackWithShazam(for track: Track) async {
+        isRecognizingWithShazam = true
+        shazamRecognitionProgress = text("Shazamで照合中…", "Matching with Shazam…")
+        defer {
+            isRecognizingWithShazam = false
+            shazamRecognitionProgress = nil
+        }
+        do {
+            let (scope, audioURL) = try await trackFiles.resolveLocalAudioURL(for: track)
+            let result: ShazamRecognizedMetadata?
+            if let scope {
+                result = try await scope.withAccess { _ in
+                    try await ShazamService.shared.recognizeTrack(fileURL: audioURL)
+                }
+            } else {
+                result = try await ShazamService.shared.recognizeTrack(fileURL: audioURL)
+            }
+            if let result {
+                shazamRecognitionResult = ShazamRecognitionResult(track: track, metadata: result)
+            } else {
+                errorMessage = text("Shazamで曲を特定できませんでした。", "No match found on Shazam.")
+            }
+        } catch {
+            errorMessage = text("Shazamで曲を特定できませんでした（音声の認識に失敗しました）。", "Could not identify this track on Shazam.")
+        }
+    }
+
+    func applyShazamMetadata(for track: Track, metadata: ShazamRecognizedMetadata) async {
+        var edit = TrackMetadataEdit(track: track)
+        if !metadata.title.isEmpty { edit.title = metadata.title }
+        if !metadata.artist.isEmpty { edit.artist = metadata.artist }
+        if let album = metadata.album, !album.isEmpty { edit.album = album }
+        if let genre = metadata.genre, !genre.isEmpty { edit.genre = genre }
+        
+        _ = await updateMetadataFromEditor(for: track, edit: edit)
+        shazamRecognitionResult = nil
+    }
+
+    func batchRecognizeMojibakeWithShazam() async {
+        guard !isRecognizingWithShazam else { return }
+        isRecognizingWithShazam = true
+        defer {
+            isRecognizingWithShazam = false
+            shazamRecognitionProgress = nil
+        }
+
+        let targetTracks = tracks.filter { track in
+            track.title.containsMojibakePattern || track.artist.containsMojibakePattern || track.album.containsMojibakePattern
+        }
+        guard !targetTracks.isEmpty else {
+            errorMessage = text("文字化けしている曲が見つかりませんでした。", "No mojibake tracks found on this page.")
+            return
+        }
+
+        var matchedCount = 0
+        for (index, track) in targetTracks.enumerated() {
+            shazamRecognitionProgress = text(
+                "Shazam照合中 (\(index + 1)/\(targetTracks.count))・特定: \(matchedCount)曲",
+                "Shazam matching (\(index + 1)/\(targetTracks.count)) · Identified: \(matchedCount)"
+            )
+            do {
+                let (scope, audioURL) = try await trackFiles.resolveLocalAudioURL(for: track)
+                let result: ShazamRecognizedMetadata?
+                if let scope {
+                    result = try await scope.withAccess { _ in
+                        try await ShazamService.shared.recognizeTrack(fileURL: audioURL)
+                    }
+                } else {
+                    result = try await ShazamService.shared.recognizeTrack(fileURL: audioURL)
+                }
+                if let result {
+                    var edit = TrackMetadataEdit(track: track)
+                    if !result.title.isEmpty { edit.title = result.title }
+                    if !result.artist.isEmpty { edit.artist = result.artist }
+                    if let album = result.album, !album.isEmpty { edit.album = album }
+                    if let genre = result.genre, !genre.isEmpty { edit.genre = genre }
+                    _ = await updateMetadataFromEditor(for: track, edit: edit)
+                    matchedCount += 1
+                    refreshMetadataDiagnostics()
+                }
+            } catch {
+                continue
+            }
+        }
+        loadCurrentPage(reset: false)
+        refreshMetadataDiagnostics()
+        if matchedCount > 0 {
+            errorMessage = text(
+                "\(matchedCount)曲のメタデータをShazamから特定・修復しました。",
+                "Successfully identified and repaired \(matchedCount) songs using Shazam."
+            )
+        }
+    }
+
+    func openAndListenWithShazam() {
+        openShazamApp()
+        Task {
+            try? await Task.sleep(for: .milliseconds(500))
+            let script = """
+            tell application "System Events"
+                if exists (process "Shazam") then
+                    tell process "Shazam"
+                        if (count of menu bars) >= 2 then
+                            if (count of menu bar items of menu bar 2) >= 1 then
+                                tell menu bar item 1 of menu bar 2 to click
+                            end if
+                        end if
+                    end tell
+                end if
+            end tell
+            """
+            var error: NSDictionary?
+            if let appleScript = NSAppleScript(source: script) {
+                appleScript.executeAndReturnError(&error)
+            }
+        }
+    }
+
+    func openShazamApp() {
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.shazam.mac.Shazam") {
+            NSWorkspace.shared.openApplication(at: url, configuration: .init())
+        } else if let shortcutURL = URL(string: "shortcuts://run-shortcut?name=Shazam") {
+            NSWorkspace.shared.open(shortcutURL)
+        } else {
+            errorMessage = text("Shazamアプリが見つかりません。", "Shazam app not found.")
+        }
     }
 
     func confirmMetadataRepair() {

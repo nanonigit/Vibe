@@ -34,13 +34,13 @@ public struct SecurityScopedRoot: Sendable {
         return SecurityScopedRoot(url: url, bookmark: bookmark, isStale: stale)
     }
 
-    public func withAccess<T>(_ operation: (URL) throws -> T) throws -> T {
+    public func withAccess<T: Sendable>(_ operation: (URL) throws -> T) throws -> T {
         let didStart = url.startAccessingSecurityScopedResource()
         defer { if didStart { url.stopAccessingSecurityScopedResource() } }
         return try operation(url)
     }
 
-    public func withAccess<T>(_ operation: (URL) async throws -> T) async throws -> T {
+    public func withAccess<T: Sendable>(_ operation: @Sendable (URL) async throws -> T) async throws -> T {
         let didStart = url.startAccessingSecurityScopedResource()
         defer { if didStart { url.stopAccessingSecurityScopedResource() } }
         return try await operation(url)

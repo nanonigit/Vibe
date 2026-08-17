@@ -1,70 +1,75 @@
 @preconcurrency import AVFoundation
 import Foundation
 import MassiveMusicCore
+import ShazamKit
 
-private func runSmokeTest() async {
+private func runShazamTest() async {
+    let arguments = CommandLine.arguments.dropFirst()
+    
+    // 引数にファイルパスが指定されている場合
+    if let filePath = arguments.first {
+        let fileURL = URL(fileURLWithPath: filePath)
+        print("🔍 Testing Shazam recognition for: \(fileURL.path)")
+        do {
+            let result = try await ShazamService.shared.recognizeTrack(fileURL: fileURL)
+            if let result {
+                print("========================================")
+                print("🎉 SUCCESS! SHAZAM IDENTIFIED SONG:")
+                print("   Title:  \(result.title)")
+                print("   Artist: \(result.artist)")
+                print("   Album:  \(result.album ?? "N/A")")
+                print("   Genre:  \(result.genre ?? "N/A")")
+                print("========================================")
+                exit(0)
+            } else {
+                print("❌ Shazam returned no match for this audio file.")
+                exit(1)
+            }
+        } catch {
+            print("🚨 ShazamService threw error: \(error)")
+            exit(1)
+        }
+    }
+
+    // 引数がない場合、library.db から曲を取得してテスト
+    let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+    let dbURL = appSupport.appendingPathComponent("MassiveMusic/library.db")
+    guard FileManager.default.fileExists(atPath: dbURL.path) else {
+        print("library.db not found at \(dbURL.path)")
+        exit(1)
+    }
+
     do {
-            guard let rootPath = CommandLine.arguments.dropFirst().first else {
-                throw SmokeError.missingFolder
+        let database = try LibraryDatabase(url: dbURL)
+        let roots = try database.scanRoots()
+        print("Found \(roots.count) scan roots.")
+
+        let tracks = try database.pageTracks(limit: 10).tracks
+        for track in tracks {
+            print("\n----------------------------------------")
+            print("Testing track [\(track.id)]: \(track.title) / \(track.artist)")
+            print("Relative path: \(track.relativePath)")
+            guard let root = roots.first(where: { $0.id == track.rootID }) else {
+                print("Scan root \(track.rootID) not found.")
+                continue
             }
-            let rootURL = URL(filePath: rootPath, directoryHint: .isDirectory)
-            let working = FileManager.default.temporaryDirectory
-                .appending(path: "MassiveMusicSmoke-\(UUID().uuidString)", directoryHint: .isDirectory)
-            let database = try LibraryDatabase(url: working.appending(path: "smoke.sqlite"))
-            let rootID = try database.addScanRoot(
-                displayName: rootURL.lastPathComponent,
-                bookmark: Data(),
-                volumeUUID: "smoke",
-                path: rootURL.path
-            )
-            let scanner = LibraryScanner(database: database)
-            try await scanner.scan(
-                root: SecurityScopedRoot(url: rootURL, bookmark: Data()),
-                rootID: rootID
-            )
-            guard let track = try database.pageTracks(limit: 1, availableOnly: true).tracks.first else {
-                throw SmokeError.noTrack
+
+            let scope = try SecurityScopedRoot.resolve(bookmark: root.bookmark)
+            let audioURL = scope.url.appendingPathComponent(track.relativePath)
+            let result = try await scope.withAccess { _ in
+                try await ShazamService.shared.recognizeTrack(fileURL: audioURL)
             }
-            let audioURL = rootURL.appending(path: track.relativePath)
-            let player = AVPlayer(url: audioURL)
-            player.play()
-            try await Task.sleep(for: .milliseconds(1_500))
-            let elapsed = player.currentTime().seconds
-            guard elapsed.isFinite, elapsed > 0.05, player.error == nil else {
-                throw SmokeError.playbackDidNotAdvance(elapsed)
+            if let result {
+                print("🎉 MATCHED: \(result.title) by \(result.artist) (Album: \(result.album ?? ""))")
+            } else {
+                print("❌ No match")
             }
-            player.pause()
-            let result: [String: Any] = [
-                "scannedTracks": try database.trackCount(),
-                "track": track.filename,
-                "durationSeconds": track.duration,
-                "playbackAdvancedSeconds": elapsed,
-                "format": track.format,
-                "status": "passed"
-            ]
-            let data = try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
-            FileHandle.standardOutput.write(data)
-            FileHandle.standardOutput.write(Data("\n".utf8))
-            exit(0)
+        }
     } catch {
-        FileHandle.standardError.write(Data("Smoke test failed: \(error.localizedDescription)\n".utf8))
+        print("Database error: \(error)")
         exit(1)
     }
 }
 
-Task { await runSmokeTest() }
+Task { await runShazamTest() }
 dispatchMain()
-
-private enum SmokeError: LocalizedError {
-    case missingFolder
-    case noTrack
-    case playbackDidNotAdvance(Double)
-
-    var errorDescription: String? {
-        switch self {
-        case .missingFolder: "Usage: MassiveMusicSmoke <audio-folder>"
-        case .noTrack: "The scanner did not register an audio track."
-        case let .playbackDidNotAdvance(seconds): "AVPlayer did not advance (\(seconds) seconds)."
-        }
-    }
-}
