@@ -4001,19 +4001,24 @@ private struct IdleListeningInsightsView: View {
     @State private var hoveredPeriodID: String? = nil
     @State private var selectedPeriodID: String? = nil
     @State private var selectedGenre: String? = nil
+    @State private var currentTime = Date()
 
     private var insights: ListeningInsights { model.listeningInsights }
     private var palette: AppearancePalette { model.appearance.palette }
     private var isDark: Bool { model.appearance.isDark }
 
     private var currentPeriodKey: String {
-        let hour = Calendar.current.component(.hour, from: Date())
+        let hour = Calendar.current.component(.hour, from: currentTime)
         switch hour {
         case 5...11: return "morning"
         case 12...16: return "afternoon"
         case 17...21: return "evening"
         default: return "night"
         }
+    }
+
+    private var activePeriodID: String {
+        selectedPeriodID ?? currentPeriodKey
     }
 
     private var currentPeriodTitle: String {
@@ -4067,10 +4072,24 @@ private struct IdleListeningInsightsView: View {
             .padding(.vertical, 12)
         }
         .onAppear {
+            currentTime = Date()
             model.loadListeningInsights()
-            if selectedPeriodID == nil {
-                selectedPeriodID = currentPeriodKey
+        }
+        .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { newDate in
+            let oldKey = currentPeriodKey
+            currentTime = newDate
+            if oldKey != currentPeriodKey {
+                model.loadListeningInsights()
             }
+        }
+    }
+
+    private func vibeDisplayTitle(_ period: String) -> String {
+        switch period {
+        case "morning": return model.text("朝 (05:00〜12:00)", "Morning (05:00–12:00)")
+        case "afternoon": return model.text("昼 (12:00〜17:00)", "Afternoon (12:00–17:00)")
+        case "evening": return model.text("夕・夜 (17:00〜22:00)", "Evening (17:00–22:00)")
+        default: return model.text("深夜 (22:00〜05:00)", "Night (22:00–05:00)")
         }
     }
 
@@ -4189,20 +4208,35 @@ private struct IdleListeningInsightsView: View {
                     .font(.caption.bold())
                     .foregroundStyle(palette.secondaryText)
                 Spacer()
-                Text(model.text("タップでランキング表示", "Tap to view rankings"))
-                    .font(.system(size: 10))
-                    .foregroundStyle(palette.tertiaryText)
+                if selectedPeriodID != nil {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            selectedPeriodID = nil
+                        }
+                    } label: {
+                        Text(model.text("現在に戻す", "Reset to Now"))
+                            .font(.system(size: 10))
+                            .foregroundStyle(palette.accent)
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Text(model.text("タップで時間帯を切替", "Tap to switch"))
+                        .font(.system(size: 10))
+                        .foregroundStyle(palette.tertiaryText)
+                }
             }
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
                 ForEach(insights.timeOfDayVibes) { vibe in
                     let isCurrent = vibe.period == currentPeriodKey
-                    let isSelected = (selectedPeriodID ?? currentPeriodKey) == vibe.period
+                    let isSelected = activePeriodID == vibe.period
                     let isHovered = hoveredPeriodID == vibe.period
 
                     Button {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             if selectedPeriodID == vibe.period {
+                                selectedPeriodID = nil
+                            } else if vibe.period == currentPeriodKey {
                                 selectedPeriodID = nil
                             } else {
                                 selectedPeriodID = vibe.period
@@ -4214,15 +4248,18 @@ private struct IdleListeningInsightsView: View {
                                 Image(systemName: vibe.icon)
                                     .font(.caption)
                                     .foregroundStyle(isSelected ? palette.accent : (isCurrent ? palette.accent : palette.secondaryText))
-                                Text(vibe.title)
+                                Text(vibeDisplayTitle(vibe.period))
                                     .font(.caption2.bold())
                                     .foregroundStyle(isSelected ? palette.accent : (isCurrent ? palette.accent : palette.primaryText))
                                     .lineLimit(1)
                                 Spacer(minLength: 0)
-                                if isSelected {
-                                    Image(systemName: "chevron.down")
+                                if isCurrent {
+                                    Text(model.text("現在", "Now"))
                                         .font(.system(size: 8, weight: .bold))
                                         .foregroundStyle(palette.accent)
+                                        .padding(.horizontal, 4)
+                                        .padding(.vertical, 1)
+                                        .background(palette.accent.opacity(0.15), in: Capsule())
                                 }
                             }
 
@@ -4255,13 +4292,13 @@ private struct IdleListeningInsightsView: View {
                         )
                     }
                     .buttonStyle(.plain)
-                    .help(model.text("\(vibe.title)に聴いた曲ランキングを表示", "View ranking for \(vibe.title)"))
+                    .help(model.text("\(vibeDisplayTitle(vibe.period))に聴いた曲ランキングを表示", "View ranking for \(vibeDisplayTitle(vibe.period))"))
                     .onHover { h in hoveredPeriodID = h ? vibe.period : nil }
                 }
             }
 
             // Period Top Tracks Ranking List
-            if let selectedPeriod = insights.timeOfDayVibes.first(where: { $0.period == (selectedPeriodID ?? currentPeriodKey) }) {
+            if let selectedPeriod = insights.timeOfDayVibes.first(where: { $0.period == activePeriodID }) {
                 periodRankingView(for: selectedPeriod)
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
@@ -4277,7 +4314,7 @@ private struct IdleListeningInsightsView: View {
                     Image(systemName: vibe.icon)
                         .font(.caption.bold())
                         .foregroundStyle(palette.accent)
-                    Text(model.text("\(vibe.title)のランキング", "\(vibe.title) Rankings"))
+                    Text(model.text("\(vibeDisplayTitle(vibe.period))のランキング", "\(vibeDisplayTitle(vibe.period)) Rankings"))
                         .font(.caption.bold())
                         .foregroundStyle(palette.primaryText)
                 }
