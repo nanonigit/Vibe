@@ -1286,84 +1286,86 @@ struct ContentView: View {
                     )
                     .frame(width: contentWidth, alignment: .leading)
                     Divider()
-                    ScrollView(.vertical) {
-                        LazyVStack(spacing: 0) {
-                            ForEach(Array(model.tracks.enumerated()), id: \.element.id) { index, track in
-                                HStack(spacing: 8) {
-                                if isDuplicateSelectionMode {
-                                    duplicateSelectionCheckbox(track)
-                                }
-                                if isCommentDiagnosticMode {
-                                    Button {
-                                        model.clearComment(for: track)
-                                    } label: {
-                                        Image(systemName: "bubble.left.and.exclamationmark")
-                                            .foregroundStyle(track.comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.secondary.opacity(0.3) : Color.orange)
-                                            .frame(width: 30)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .disabled(track.comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                                    .help(model.text("コメントを消去", "Clear Comment"))
-                                }
-                                Button {
-                                    if track.isFavorite {
-                                        model.setFavorite(track, isFavorite: false)
-                                    } else {
-                                        model.setFavorite(track, isFavorite: true)
-                                    }
-                                } label: {
-                                    Image(systemName: track.isFavorite ? "star.fill" : "star")
-                                        .foregroundStyle(track.isFavorite ? .yellow : .secondary)
-                                        .frame(width: 30)
-                                }
-                                .buttonStyle(.plain)
-                                .help(track.isFavorite ? model.text("お気に入りから外す", "Remove from Favorites") : model.text("お気に入りに追加", "Add to Favorites"))
-                                ForEach(orderedVisibleTrackColumns) { column in
-                                    trackColumnCell(column, track: track, index: index)
-                                        .tableColumnDivider()
-                                }
-                                }
-                                .padding(.horizontal, 8)
-                                .frame(width: contentWidth, height: 32, alignment: .leading)
-                                .background(trackRowBackground(track: track, index: index, isCurrent: player.currentTrack?.id == track.id))
-                                .overlay(alignment: .leading) {
-                                    if player.currentTrack?.id == track.id {
-                                        Rectangle()
-                                            .fill(Color.accentColor)
-                                            .frame(width: 3)
-                                    }
-                                }
-                                .contentShape(Rectangle())
-                                .onTapGesture(count: 2) {
-                                    isTrackTableFocused = true
-                                    if hasSelectionModifier {
-                                        handleTrackSelection(track, at: index)
-                                    } else {
-                                        model.selectedTrackIDs = [track.id]
-                                        selectionAnchorID = track.id
-                                        if let context = model.trackPlaybackContext {
-                                            player.playFromList(track, context: context)
-                                        } else {
-                                            player.play(track)
+                    ScrollViewReader { trackScrollProxy in
+                        ScrollView(.vertical) {
+                            LazyVStack(spacing: 0) {
+                                ForEach(Array(model.tracks.enumerated()), id: \.element.id) { index, track in
+                                    HStack(spacing: 8) {
+                                        if isDuplicateSelectionMode {
+                                            duplicateSelectionCheckbox(track)
+                                        }
+                                        if isCommentDiagnosticMode {
+                                            Button {
+                                                model.clearComment(for: track)
+                                            } label: {
+                                                Image(systemName: "bubble.left.and.exclamationmark")
+                                                    .foregroundStyle(track.comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.secondary.opacity(0.3) : Color.orange)
+                                                    .frame(width: 30)
+                                            }
+                                            .buttonStyle(.plain)
+                                            .disabled(track.comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                                            .help(model.text("コメントを消去", "Clear Comment"))
+                                        }
+                                        Button {
+                                            if track.isFavorite {
+                                                model.setFavorite(track, isFavorite: false)
+                                            } else {
+                                                model.setFavorite(track, isFavorite: true)
+                                            }
+                                        } label: {
+                                            Image(systemName: track.isFavorite ? "star.fill" : "star")
+                                                .foregroundStyle(track.isFavorite ? .yellow : .secondary)
+                                                .frame(width: 30)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .help(track.isFavorite ? model.text("お気に入りから外す", "Remove from Favorites") : model.text("お気に入りに追加", "Add to Favorites"))
+                                        ForEach(orderedVisibleTrackColumns) { column in
+                                            trackColumnCell(column, track: track, index: index)
+                                                .tableColumnDivider()
                                         }
                                     }
-                                }
-                                .simultaneousGesture(
+                                    .padding(.horizontal, 8)
+                                    .frame(width: contentWidth, height: 32, alignment: .leading)
+                                    .background(trackRowBackground(track: track, index: index, isCurrent: player.currentTrack?.id == track.id))
+                                    .overlay(alignment: .leading) {
+                                        if player.currentTrack?.id == track.id {
+                                            Rectangle()
+                                                .fill(Color.accentColor)
+                                                .frame(width: 3)
+                                        }
+                                    }
+                                    .contentShape(Rectangle())
+                                    .onTapGesture(count: 2) {
+                                        isTrackTableFocused = true
+                                        if hasSelectionModifier {
+                                            handleTrackSelection(track, at: index)
+                                        } else {
+                                            model.selectedTrackIDs = [track.id]
+                                            selectionAnchorID = track.id
+                                            if let context = model.trackPlaybackContext {
+                                                player.playFromList(track, context: context)
+                                            } else {
+                                                player.play(track)
+                                            }
+                                        }
+                                    }
+                                    .simultaneousGesture(
                                     TapGesture(count: 1)
                                         .onEnded {
                                             isTrackTableFocused = true
                                             handleTrackSelection(track, at: index)
                                         }
-                                )
-                                .draggable(trackDragPayload(for: track))
-                                .contextMenu { trackContextMenu(track) }
-                                .id(track.id)
+                                    )
+                                    .draggable(trackDragPayload(for: track))
+                                    .contextMenu { trackContextMenu(track) }
+                                    .id(track.id)
+                                }
                             }
+                            .scrollTargetLayout()
                         }
-                        .scrollTargetLayout()
+                        .scrollPosition(id: $model.trackScrollPosition, anchor: .top)
+                        .frame(width: contentWidth, height: max(0, geometry.size.height - 32), alignment: .top)
                     }
-                    .scrollPosition(id: $model.trackScrollPosition, anchor: .top)
-                    .frame(width: contentWidth, height: max(0, geometry.size.height - 32), alignment: .top)
                 }
                 .frame(width: contentWidth, height: geometry.size.height, alignment: .topLeading)
             }
@@ -1532,7 +1534,9 @@ struct ContentView: View {
             model.selectedAlbum.map { "\($0.artist)|\($0.name)" } ?? "",
             model.selectedArtist?.name ?? "",
             model.selectedGenre ?? "",
-            model.genreDetailMode.rawValue
+            model.genreDetailMode.rawValue,
+            model.diagnosticKind.rawValue,
+            model.metadataIssueFieldFilter?.rawValue ?? ""
         ].joined(separator: "::")
     }
 
@@ -1909,11 +1913,14 @@ struct ContentView: View {
     private func restorePendingBrowseScrollPositionIfNeeded() {
         guard model.needsBrowseScrollRestoration else { return }
         let trackPosition = model.trackScrollPosition
-        model.trackScrollPosition = nil
+        guard trackPosition != nil else { return }
         Task { @MainActor in
             await Task.yield()
             try? await Task.sleep(nanoseconds: 50_000_000)
-            model.trackScrollPosition = trackPosition
+            if model.needsBrowseScrollRestoration {
+                model.trackScrollPosition = trackPosition
+                model.completeBrowseScrollRestoration()
+            }
         }
     }
 
