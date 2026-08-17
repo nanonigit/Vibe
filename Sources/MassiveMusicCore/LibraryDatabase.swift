@@ -907,6 +907,7 @@ public final class LibraryDatabase: @unchecked Sendable {
 
     public func pageTracks(
         query: String = "",
+        defaultSearchField: MetadataField? = nil,
         sort: TrackSort = .title,
         direction: SortDirection = .ascending,
         offset: Int = 0,
@@ -915,7 +916,7 @@ public final class LibraryDatabase: @unchecked Sendable {
     ) throws -> TrackPage {
         guard (1...1_000).contains(limit) else { throw MassiveMusicError.invalidPageSize }
         let safeOffset = max(0, offset)
-        let searchFilter = Self.searchFilter(for: query)
+        let searchFilter = Self.searchFilter(for: query, defaultField: defaultSearchField)
 
         return try pool.read { db in
             var whereParts: [String] = []
@@ -1870,10 +1871,38 @@ public final class LibraryDatabase: @unchecked Sendable {
 
     public func cachedTracksBeyondLimit(_ limit: Int) throws -> [(Int64, String)] {
         try pool.read { db in
-            let totalCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM local_cache") ?? 0
             let targetLimit = max(0, limit)
-            let excess = totalCount - targetLimit
-            guard excess > 0 else { return [] }
+
+            // 保護されていない通常の再生キャッシュ曲数
+            let evictableCount = try Int.fetchOne(
+                db,
+                sql: """
+                    SELECT COUNT(*)
+                    FROM local_cache c
+                    LEFT JOIN tracks t ON t.id = c.track_id
+                    WHERE (c.is_pinned IS NULL OR c.is_pinned = 0)
+                      AND (t.is_favorite IS NULL OR t.is_favorite = 0)
+                      AND NOT EXISTS (SELECT 1 FROM playlist_items i WHERE i.track_id = c.track_id)
+                    """
+            ) ?? 0
+
+            // お気に入り、プレイリスト、明示的ピン留めされている保護曲数
+            let protectedCount = try Int.fetchOne(
+                db,
+                sql: """
+                    SELECT COUNT(*)
+                    FROM local_cache c
+                    LEFT JOIN tracks t ON t.id = c.track_id
+                    WHERE (c.is_pinned = 1)
+                       OR (t.is_favorite = 1)
+                       OR EXISTS (SELECT 1 FROM playlist_items i WHERE i.track_id = c.track_id)
+                    """
+            ) ?? 0
+
+            let allowedEvictable = max(0, targetLimit - protectedCount)
+            let excess = evictableCount - allowedEvictable
+            let deleteCount = max(0, excess)
+            guard deleteCount > 0 else { return [] }
 
             return try Row.fetchAll(
                 db,
@@ -1887,7 +1916,7 @@ public final class LibraryDatabase: @unchecked Sendable {
                     ORDER BY c.last_accessed_at ASC
                     LIMIT ?
                     """,
-                arguments: [excess]
+                arguments: [deleteCount]
             ).map { ($0["track_id"], $0["local_path"]) }
         }
     }
@@ -1917,6 +1946,7 @@ public final class LibraryDatabase: @unchecked Sendable {
 
     public func pageTracksAfter(
         query: String = "",
+        defaultSearchField: MetadataField? = nil,
         sort: TrackSort = .title,
         direction: SortDirection = .ascending,
         after cursor: Track?,
@@ -1926,7 +1956,7 @@ public final class LibraryDatabase: @unchecked Sendable {
         knownTotal: Int? = nil
     ) throws -> TrackPage {
         guard (1...1_000).contains(limit) else { throw MassiveMusicError.invalidPageSize }
-        let searchFilter = Self.searchFilter(for: query)
+        let searchFilter = Self.searchFilter(for: query, defaultField: defaultSearchField)
         return try pool.read { db in
             var baseWhere: [String] = []
             var baseArguments: StatementArguments = []
@@ -3296,6 +3326,7 @@ public final class LibraryDatabase: @unchecked Sendable {
         case .title: "t.title COLLATE NOCASE \(order), t.id \(order)"
         case .artist: "t.artist COLLATE NOCASE \(order), t.album COLLATE NOCASE \(order), t.disc_number \(order), t.track_number \(order), t.id \(order)"
         case .album: "t.album COLLATE NOCASE \(order), t.disc_number \(order), t.track_number \(order), t.id \(order)"
+        case .genre: "t.genre COLLATE NOCASE \(order), t.title COLLATE NOCASE \(order), t.id \(order)"
         case .year: "t.year COLLATE NOCASE \(order), t.title COLLATE NOCASE \(order), t.id \(order)"
         case .discNumber: "COALESCE(t.disc_number, -1) \(order), COALESCE(t.track_number, -1) \(order), t.id \(order)"
         case .trackNumber: "COALESCE(t.track_number, -1) \(order), COALESCE(t.disc_number, -1) \(order), t.id \(order)"
@@ -3433,7 +3464,7 @@ public final class LibraryDatabase: @unchecked Sendable {
         }
     }
 
-    public static func searchFilter(for query: String) -> SearchFilter? {
+    public static func searchFilter(for query: String, defaultField: MetadataField? = nil) -> SearchFilter? {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
@@ -3454,11 +3485,11 @@ public final class LibraryDatabase: @unchecked Sendable {
             }
         }
 
-        guard let fts = parseFTSQuery(trimmed) else { return nil }
+        guard let fts = parseFTSQuery(trimmed, defaultField: defaultField) else { return nil }
         return SearchFilter(kind: .fts(pattern: fts))
     }
 
-    private static func parseFTSQuery(_ query: String) -> String? {
+    private static func parseFTSQuery(_ query: String, defaultField: MetadataField? = nil) -> String? {
         var tokens: [String] = []
         var current = ""
         var inQuotes = false
@@ -3483,6 +3514,15 @@ public final class LibraryDatabase: @unchecked Sendable {
 
         guard !tokens.isEmpty else { return nil }
 
+        let defaultPrefix: String = switch defaultField {
+        case .title: "title:"
+        case .artist: "artist:"
+        case .album: "album:"
+        case .genre: "genre:"
+        case .comment: "comment:"
+        case .none: ""
+        }
+
         // 単純な複数単語（クォートなし、演算子なし）の場合、フレーズ検索または同一フィールドANDを優先
         let hasOperators = tokens.contains { t in
             let u = t.uppercased()
@@ -3494,6 +3534,9 @@ public final class LibraryDatabase: @unchecked Sendable {
             let terms = tokens.map { $0.replacingOccurrences(of: "\"", with: "\"\"") }
             let exactPhrase = terms.map { "\"\($0)\"" }.joined(separator: " ")
             let andTerms = terms.map { "\"\($0)\"" }.joined(separator: " AND ")
+            if !defaultPrefix.isEmpty {
+                return "(\(defaultPrefix)\"\(terms.joined(separator: " "))\" OR (\(defaultPrefix)(\(exactPhrase))) OR (\(defaultPrefix)(\(andTerms))))"
+            }
             return "(\"\(terms.joined(separator: " "))\" OR (title: \(exactPhrase)) OR (album: \(exactPhrase)) OR (artist: \(exactPhrase)) OR (\(andTerms)))"
         }
 
@@ -3522,7 +3565,7 @@ public final class LibraryDatabase: @unchecked Sendable {
                 token = String(token.dropFirst())
             }
 
-            var columnPrefix = ""
+            var columnPrefix = defaultPrefix
             let lower = token.lowercased()
             if lower.hasPrefix("artist:") || lower.hasPrefix("a:") {
                 let split = token.split(separator: ":", maxSplits: 1)
@@ -3610,6 +3653,11 @@ public final class LibraryDatabase: @unchecked Sendable {
                 \(comparison) (? COLLATE NOCASE, ?, ?, ?)
                 """,
                 [cursor.album, cursor.discNumber ?? -1, cursor.trackNumber ?? -1, cursor.id]
+            )
+        case .genre:
+            return (
+                "(t.genre COLLATE NOCASE, t.title COLLATE NOCASE, t.id) \(comparison) (? COLLATE NOCASE, ? COLLATE NOCASE, ?)",
+                [cursor.genre, cursor.title, cursor.id]
             )
         case .year:
             return (

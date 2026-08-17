@@ -671,6 +671,7 @@ final class LibraryViewModel: ObservableObject {
         case .title: text("タイトル", "Title")
         case .artist: text("アーティスト", "Artist")
         case .album: text("アルバム", "Album")
+        case .genre: text("ジャンル", "Genre")
         case .year: text("リリース年", "Release Year")
         case .discNumber: text("ディスク番号", "Disc Number")
         case .trackNumber: text("トラック番号", "Track Number")
@@ -2109,17 +2110,18 @@ final class LibraryViewModel: ObservableObject {
                     totalCount = page.totalCount
                 } else {
                     let page: TrackPage
+                    let defaultField: MetadataField? = requestedSection == .tracks ? .title : nil
                     if usesDirectOffsetPaging {
                         page = try await Task.detached(priority: .userInitiated) {
                             try self.database.pageTracks(
-                                query: requestedQuery, sort: requestedSort, direction: requestedDirection,
+                                query: requestedQuery, defaultSearchField: defaultField, sort: requestedSort, direction: requestedDirection,
                                 offset: requestedOffset, limit: self.pageSize
                             )
                         }.value
                     } else {
                         page = try await Task.detached(priority: .userInitiated) {
                             try self.database.pageTracksAfter(
-                                query: requestedQuery, sort: requestedSort, direction: requestedDirection, after: pageCursor,
+                                query: requestedQuery, defaultSearchField: defaultField, sort: requestedSort, direction: requestedDirection, after: pageCursor,
                                 logicalOffset: requestedOffset, limit: self.pageSize,
                                 knownTotal: knownTotal
                             )

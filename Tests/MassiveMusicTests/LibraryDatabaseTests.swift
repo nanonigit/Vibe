@@ -2911,5 +2911,41 @@ private struct TestContext {
         #expect(regexRes.tracks.contains { $0.title == "A Cold Kiss" })
         #expect(regexRes.tracks.contains { $0.title == "A Kiss to Remember" })
     }
+
+    @Test func cachedTracksInPlaylistsAndFavoritesAreProtectedFromEviction() throws {
+        let context = try TestContext()
+        let t1 = context.importedTrack(identity: "1", title: "Favorite Song", artist: "Artist A", album: "Album A", filename: "01.mp3")
+        let t2 = context.importedTrack(identity: "2", title: "Playlist Song", artist: "Artist B", album: "Album B", filename: "02.mp3")
+        let t3 = context.importedTrack(identity: "3", title: "Normal Cached 1", artist: "Artist C", album: "Album C", filename: "03.mp3")
+        let t4 = context.importedTrack(identity: "4", title: "Normal Cached 2", artist: "Artist D", album: "Album D", filename: "04.mp3")
+        _ = try context.database.upsertTracks([t1, t2, t3, t4], sessionID: 1)
+
+        let tracks = try context.database.pageTracks(limit: 10).tracks
+        let id1 = tracks[0].id
+        let id2 = tracks[1].id
+        let id3 = tracks[2].id
+        let id4 = tracks[3].id
+
+        // id1をお気に入りに設定
+        try context.database.setFavorite(trackID: id1, isFavorite: true)
+
+        // id2をプレイリストに追加
+        let playlist = try context.database.createPlaylist(name: "My Playlist")
+        try context.database.addTracksToPlaylist(playlistID: playlist.id, trackIDs: [id2])
+
+        // 4曲すべてキャッシュに登録
+        try context.database.recordCachedTrack(trackID: id1, path: "/cache/01.mp3", fileSize: 1000)
+        try context.database.recordCachedTrack(trackID: id2, path: "/cache/02.mp3", fileSize: 1000)
+        try context.database.recordCachedTrack(trackID: id3, path: "/cache/03.mp3", fileSize: 1000)
+        try context.database.recordCachedTrack(trackID: id4, path: "/cache/04.mp3", fileSize: 1000)
+
+        // limit = 2 の場合、保護されていない通常曲 (id3, id4) のうち古いものが削除対象になるが、
+        // 保護曲 (id1, id2) は絶対に削除対象にならないことを確認
+        let evictions = try context.database.cachedTracksBeyondLimit(2)
+        let evictedIDs = evictions.map(\.0)
+        #expect(!evictedIDs.contains(id1))
+        #expect(!evictedIDs.contains(id2))
+    }
 }
+
 

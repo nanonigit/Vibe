@@ -129,6 +129,7 @@ struct ContentView: View {
     @AppStorage("columns.title.width") private var titleColumnWidth = 150.0
     @AppStorage("columns.artist.width") private var artistColumnWidth = 150.0
     @AppStorage("columns.album.width") private var albumColumnWidth = 180.0
+    @AppStorage("columns.genre.width") private var genreColumnWidth = 110.0
     @AppStorage("columns.year.width") private var yearColumnWidth = 85.0
     @AppStorage("columns.discNumber.width") private var discNumberColumnWidth = 82.0
     @AppStorage("columns.trackNumber.width") private var trackNumberColumnWidth = 90.0
@@ -138,6 +139,7 @@ struct ContentView: View {
     @AppStorage("columns.title.visible") private var isTitleColumnVisible = true
     @AppStorage("columns.artist.visible") private var isArtistColumnVisible = true
     @AppStorage("columns.album.visible") private var isAlbumColumnVisible = true
+    @AppStorage("columns.genre.visible") private var isGenreColumnVisible = true
     @AppStorage("columns.year.visible") private var isYearColumnVisible = true
     @AppStorage("columns.discNumber.visible") private var isDiscNumberColumnVisible = true
     @AppStorage("columns.trackNumber.visible") private var isTrackNumberColumnVisible = true
@@ -811,10 +813,12 @@ struct ContentView: View {
         HStack(spacing: 12) {
             detailHeaderArtwork
             headerIdentity
-                .layoutPriority(1)
-            Spacer(minLength: 8)
+            Spacer(minLength: 4)
             if model.section != .upNext && model.section != .settings {
-                headerControls
+                ViewThatFits(in: .horizontal) {
+                    headerControls
+                    compactHeaderControls
+                }
             }
         }
         .padding(.leading, 24)
@@ -998,12 +1002,24 @@ struct ContentView: View {
     }
 
     private var cacheHeaderControls: some View {
-        HStack(spacing: 12) {
-            Toggle(model.text("再生時に保存", "Save When Played"), isOn: $model.cacheEnabled)
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .font(.caption)
-                .onChange(of: model.cacheEnabled) { _, _ in model.saveCacheSettings() }
+        HStack(spacing: 8) {
+            Button {
+                model.cacheEnabled.toggle()
+                model.saveCacheSettings()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: model.cacheEnabled ? "arrow.down.circle.fill" : "arrow.down.circle")
+                        .foregroundStyle(model.cacheEnabled ? model.appearance.palette.accent : Color.secondary)
+                    Text(model.text("再生時保存", "Auto-Cache"))
+                        .font(.caption)
+                }
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(model.cacheEnabled ? model.appearance.palette.accent.opacity(0.14) : Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+            }
+            .buttonStyle(.plain)
+            .help(model.text("曲を再生した際に自動的にオフラインキャッシュへ保存します", "Automatically save played songs to offline cache"))
+
             CacheTrackLimitControl(
                 value: $model.cacheTrackLimit,
                 label: model.text("保持:", "Keep:"),
@@ -1015,7 +1031,7 @@ struct ContentView: View {
             Divider().frame(height: 16)
 
             // Cloud Sync Menu / Button for iPhone & iPad
-            HStack(spacing: 6) {
+            HStack(spacing: 4) {
                 if model.isCloudSyncing {
                     HStack(spacing: 5) {
                         ProgressView().controlSize(.small)
@@ -1031,7 +1047,7 @@ struct ContentView: View {
                         model.syncCacheToCloud()
                     } label: {
                         Label(
-                            model.text("クラウドへ書き出し", "Export to Cloud"),
+                            model.text("クラウド書き出し", "Cloud Export"),
                             systemImage: "icloud.and.arrow.up"
                         )
                     }
@@ -1074,11 +1090,10 @@ struct ContentView: View {
                         Image(systemName: "ellipsis.circle")
                     }
                     .menuStyle(.borderlessButton)
-                    .frame(width: 24)
+                    .frame(width: 20)
                 }
             }
         }
-        .fixedSize(horizontal: true, vertical: false)
     }
 
     private var nonCacheHeaderControls: some View {
@@ -1154,6 +1169,7 @@ struct ContentView: View {
                         columnVisibilityButton(model.text("タイトル", "Title"), isVisible: $isTitleColumnVisible)
                         columnVisibilityButton(model.text("アーティスト", "Artist"), isVisible: $isArtistColumnVisible)
                         columnVisibilityButton(model.text("アルバム", "Album"), isVisible: $isAlbumColumnVisible)
+                        columnVisibilityButton(model.text("ジャンル", "Genre"), isVisible: $isGenreColumnVisible)
                         columnVisibilityButton(model.text("リリース年", "Release Year"), isVisible: $isYearColumnVisible)
                         columnVisibilityButton(model.text("ディスク番号", "Disc Number"), isVisible: $isDiscNumberColumnVisible)
                         columnVisibilityButton(model.text("トラック番号", "Track Number"), isVisible: $isTrackNumberColumnVisible)
@@ -1221,7 +1237,7 @@ struct ContentView: View {
     }
 
     private var defaultTrackColumnOrder: [TrackSort] {
-        [.title, .artist, .album, .year, .discNumber, .trackNumber, .duration, .format, .dateAdded]
+        [.title, .artist, .album, .genre, .year, .discNumber, .trackNumber, .duration, .format, .dateAdded]
     }
 
     private var orderedTrackColumns: [TrackSort] {
@@ -1242,6 +1258,7 @@ struct ContentView: View {
         case .title: isTitleColumnVisible
         case .artist: isArtistColumnVisible
         case .album: isAlbumColumnVisible
+        case .genre: isGenreColumnVisible
         case .year: isYearColumnVisible
         case .discNumber: isDiscNumberColumnVisible
         case .trackNumber: isTrackNumberColumnVisible
@@ -1272,6 +1289,7 @@ struct ContentView: View {
                         titleWidth: $titleColumnWidth,
                         artistWidth: $artistColumnWidth,
                         albumWidth: $albumColumnWidth,
+                        genreWidth: $genreColumnWidth,
                         yearWidth: $yearColumnWidth,
                         discNumberWidth: $discNumberColumnWidth,
                         trackNumberWidth: $trackNumberColumnWidth,
@@ -1495,6 +1513,22 @@ struct ContentView: View {
                 }
             }
             .disabled(track.album.isEmpty)
+        case .genre:
+            let isDiag = model.section == .diagnostics
+            TrackNavigationCell(
+                title: track.genre.isEmpty ? "—" : track.genre,
+                width: genreColumnWidth,
+                hasURL: isDiag && model.diagnosticKind == .urlInMP3Metadata && track.genre.containsURLPattern,
+                hasMojibake: isDiag && model.diagnosticKind == .suspectedMojibake && track.genre.containsMojibakePattern
+            ) {
+                isTrackTableFocused = true
+                if hasSelectionModifier {
+                    handleTrackSelection(track, at: index)
+                } else if !track.genre.isEmpty {
+                    model.openGenre(track.genre)
+                }
+            }
+            .disabled(track.genre.isEmpty)
         case .year:
             Text(track.year.isEmpty ? "—" : track.year)
                 .monospacedDigit()
@@ -2866,6 +2900,7 @@ struct ContentView: View {
         if isTitleColumnVisible { width += titleColumnWidth; visibleColumns += 1 }
         if isArtistColumnVisible { width += artistColumnWidth; visibleColumns += 1 }
         if isAlbumColumnVisible { width += albumColumnWidth; visibleColumns += 1 }
+        if isGenreColumnVisible { width += genreColumnWidth; visibleColumns += 1 }
         if isYearColumnVisible { width += yearColumnWidth; visibleColumns += 1 }
         if isDiscNumberColumnVisible { width += discNumberColumnWidth; visibleColumns += 1 }
         if isTrackNumberColumnVisible { width += trackNumberColumnWidth; visibleColumns += 1 }
@@ -3026,12 +3061,21 @@ private struct LibrarySearchField: View {
                 .foregroundStyle(isSearching ? accent : Color.secondary)
                 .font(.system(size: 13, weight: isSearching ? .bold : .regular))
                 .accessibilityHidden(true)
+            let searchPlaceholder = switch model.section {
+            case .tracks: model.text("曲名を検索…", "Search song titles…")
+            case .albums: model.text("アルバムを検索…", "Search albums…")
+            case .artists: model.text("アーティストを検索…", "Search artists…")
+            case .genres: model.text("ジャンルを検索…", "Search genres…")
+            case .cache: model.text("キャッシュ内を検索…", "Search cache…")
+            default: model.text("検索…", "Search…")
+            }
             TextField(
-                model.text("検索（AND / OR / -除外 / \"フレーズ\" / /正規表現/）", "Search (AND / OR / -exclude / \"phrase\" / /regex/)"),
+                searchPlaceholder,
                 text: $model.searchText
             )
             .textFieldStyle(.plain)
             .focused($isFocused)
+            .help(model.text("検索（AND / OR / -除外 / \"フレーズ\" / /正規表現/）", "Search (AND / OR / -exclude / \"phrase\" / /regex/)"))
             .onChange(of: model.searchText) { _, _ in model.searchChanged() }
 
             ProgressView()
@@ -3084,6 +3128,7 @@ private struct TrackSortHeader: View {
     @Binding var titleWidth: Double
     @Binding var artistWidth: Double
     @Binding var albumWidth: Double
+    @Binding var genreWidth: Double
     @Binding var yearWidth: Double
     @Binding var discNumberWidth: Double
     @Binding var trackNumberWidth: Double
@@ -3133,6 +3178,9 @@ private struct TrackSortHeader: View {
         case .album:
             header(.album).frame(width: albumWidth, alignment: .leading)
                 .overlay(alignment: .trailing) { ColumnResizeHandle(width: $albumWidth, range: 80...500) }
+        case .genre:
+            header(.genre).frame(width: genreWidth, alignment: .leading)
+                .overlay(alignment: .trailing) { ColumnResizeHandle(width: $genreWidth, range: 70...300) }
         case .year:
             header(.year).frame(width: yearWidth, alignment: .leading)
                 .overlay(alignment: .trailing) { ColumnResizeHandle(width: $yearWidth, range: 68...140) }

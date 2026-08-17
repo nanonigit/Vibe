@@ -331,6 +331,7 @@ public enum TrackSort: String, CaseIterable, Identifiable, Equatable, Sendable {
     case title = "タイトル"
     case artist = "アーティスト"
     case album = "アルバム"
+    case genre = "ジャンル"
     case year = "リリース年"
     case discNumber = "ディスク番号"
     case trackNumber = "トラック番号"
