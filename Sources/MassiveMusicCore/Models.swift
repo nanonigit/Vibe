@@ -1625,9 +1625,22 @@ public struct BatchMetadataChanges: Equatable, Sendable {
     public var isCompilation: Bool?
     public var discNumber: Int?
     public var changesDiscNumber: Bool
+    public var totalDiscs: Int?
+    public var changesTotalDiscs: Bool
     public var trackNumber: Int?
     public var changesTrackNumber: Bool
     public var incrementsTrackNumber: Bool
+    public var totalTracks: Int?
+    public var changesTotalTracks: Bool
+    public var composer: String?
+    public var lyricist: String?
+    public var arranger: String?
+    public var conductor: String?
+    public var publisher: String?
+    public var bpm: String?
+    public var grouping: String?
+    public var copyright: String?
+    public var url: String?
     public var comment: String?
     public var artworkData: Data?
 
@@ -1641,9 +1654,22 @@ public struct BatchMetadataChanges: Equatable, Sendable {
         isCompilation: Bool? = nil,
         discNumber: Int? = nil,
         changesDiscNumber: Bool = false,
+        totalDiscs: Int? = nil,
+        changesTotalDiscs: Bool = false,
         trackNumber: Int? = nil,
         changesTrackNumber: Bool = false,
         incrementsTrackNumber: Bool = false,
+        totalTracks: Int? = nil,
+        changesTotalTracks: Bool = false,
+        composer: String? = nil,
+        lyricist: String? = nil,
+        arranger: String? = nil,
+        conductor: String? = nil,
+        publisher: String? = nil,
+        bpm: String? = nil,
+        grouping: String? = nil,
+        copyright: String? = nil,
+        url: String? = nil,
         comment: String? = nil,
         artworkData: Data? = nil
     ) {
@@ -1656,16 +1682,31 @@ public struct BatchMetadataChanges: Equatable, Sendable {
         self.isCompilation = isCompilation
         self.discNumber = discNumber
         self.changesDiscNumber = changesDiscNumber
+        self.totalDiscs = totalDiscs
+        self.changesTotalDiscs = changesTotalDiscs
         self.trackNumber = trackNumber
         self.changesTrackNumber = changesTrackNumber
         self.incrementsTrackNumber = incrementsTrackNumber
+        self.totalTracks = totalTracks
+        self.changesTotalTracks = changesTotalTracks
+        self.composer = composer
+        self.lyricist = lyricist
+        self.arranger = arranger
+        self.conductor = conductor
+        self.publisher = publisher
+        self.bpm = bpm
+        self.grouping = grouping
+        self.copyright = copyright
+        self.url = url
         self.comment = comment
         self.artworkData = artworkData
     }
 
     public var isEmpty: Bool {
         title == nil && artist == nil && album == nil && albumArtist == nil && genre == nil && year == nil && isCompilation == nil &&
-            comment == nil && !changesDiscNumber && !changesTrackNumber && artworkData == nil
+            comment == nil && !changesDiscNumber && !changesTotalDiscs && !changesTrackNumber && !changesTotalTracks &&
+            composer == nil && lyricist == nil && arranger == nil && conductor == nil && publisher == nil &&
+            bpm == nil && grouping == nil && copyright == nil && url == nil && artworkData == nil
     }
 
     public func applying(to track: Track, offset: Int = 0) -> TrackMetadataEdit {
@@ -1677,8 +1718,18 @@ public struct BatchMetadataChanges: Equatable, Sendable {
         if let genre { edit.genre = genre }
         if let year { edit.year = year }
         if let isCompilation { edit.isCompilation = isCompilation }
+        if let composer { edit.composer = composer }
+        if let lyricist { edit.lyricist = lyricist }
+        if let arranger { edit.arranger = arranger }
+        if let conductor { edit.conductor = conductor }
+        if let publisher { edit.publisher = publisher }
+        if let bpm { edit.bpm = bpm }
+        if let grouping { edit.grouping = grouping }
+        if let copyright { edit.copyright = copyright }
+        if let url { edit.url = url }
         if let comment { edit.comment = comment }
         if changesDiscNumber { edit.discNumber = discNumber }
+        if changesTotalDiscs { edit.totalDiscs = totalDiscs }
         if changesTrackNumber {
             if incrementsTrackNumber, let base = trackNumber {
                 edit.trackNumber = base + offset
@@ -1686,6 +1737,7 @@ public struct BatchMetadataChanges: Equatable, Sendable {
                 edit.trackNumber = trackNumber
             }
         }
+        if changesTotalTracks { edit.totalTracks = totalTracks }
         if let artworkData { edit.artworkData = artworkData }
         return edit
     }

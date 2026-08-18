@@ -59,6 +59,8 @@ flowchart LR
 - Real-time progress bar, song counters, spinner, and cancel support during batch variation standardization
 - Diagnose duplicates, missing values, mojibake, embedded comments, and embedded URLs
 - Fast audio playback with Shazam listening trigger to easily identify mojibake songs
+- Comprehensive bulk metadata editor with Apple Music-style tabs (Details, Credits, Options/Work, Comments), disc fractions (X of Y), and total tracks setting
+- Auto-save on next/previous track navigation in single track metadata editor
 - One-click comment clearing for individual tracks and batch comment removal on current view
 
 ### External SSD workflow and offline playback
@@ -68,14 +70,18 @@ flowchart LR
 - Cache played tracks on your Mac automatically, using the original file when connected and the cached copy when offline
 - Protect favorites and playlist tracks from LRU cache cleanup
 - Store imports temporarily on your Mac while the SSD is disconnected, then move them when it reconnects
-- Manage cache, storage differences, locations, and import status from one screen
+- Manage cache limits, diff review, primary storage paths, and import destinations in Settings
 
 ### Playback and guitar practice
 
-- Keep playback controls available at the top of the inspector
-- Jump to the current album from its artwork or title, or to the artist page from the artist name; album links prefer album-artist metadata and preserve the surrounding browse context
-- Use shuffle, repeat-one, and album or playlist repeat; shuffle the connected library or the playable cache when storage is offline
-- Choose playback speeds from 60% to 95% in 5% steps, or play at 100%
+- Persistent playback controls anchored to the top of the right pane
+- Jump to the current album from artwork or title, and to the artist page from the artist line. Album jumps prefer album artists and maintain your browsing context
+- Shuffle, repeat one, and repeat album/playlist. Shuffles across the whole library when connected and all playable cached tracks when offline
+- Playback speeds from 60% to 95% in 5% increments, plus 100%
+- Persistent volume slider with a full 0% to 100% range, plus mute/unmute
+- In-app guitar chords, scales, metronome, and tuner
+- Direct chord charts and video lookups for the current track via Chordify and YouTube
+- Keep track lists interactive during long file scans
 - Shift pitch down a semitone, play at the original pitch, or shift up a semitone without changing speed
 - Save up to three A–B repeat loops per track
 - Restore practice settings and loops after relaunching the app
@@ -169,7 +175,7 @@ brew upgrade --cask amp
 
 ### Direct download
 
-Download `amp-v0.21.0-macos-arm64.zip` from [GitHub Releases](https://github.com/nanonigit/amp/releases), extract it, and move `amp.app` wherever you prefer.
+Download `amp-v0.22.0-macos-arm64.zip` from [GitHub Releases](https://github.com/nanonigit/amp/releases), extract it, and move `amp.app` wherever you prefer.
 
 The current build is not notarized. If macOS blocks the first launch, Control-click amp in Finder, choose **Open**, review the warning, and confirm that you want to launch it.
 

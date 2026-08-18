@@ -5468,15 +5468,26 @@ private struct TrackMetadataEditor: View {
     @State private var isRecognizingShazam = false
     @State private var metadataLookupMessage: String?
     @State private var isSaving = false
+    @State private var initialEdit: TrackMetadataEdit
+    @State private var initialTrackNumber: String
+    @State private var initialDiscNumber: String
+    @State private var initialTotalTracks: String = ""
+    @State private var initialTotalDiscs: String = ""
 
     init(model: LibraryViewModel, track: Track, navigationTracks: [Track]) {
         self.model = model
         let sequence = navigationTracks.contains(where: { $0.id == track.id }) ? navigationTracks : [track]
         _navigationTracks = State(initialValue: sequence)
         _track = State(initialValue: track)
-        _edit = State(initialValue: TrackMetadataEdit(track: track))
-        _discNumber = State(initialValue: track.discNumber.map(String.init) ?? "")
-        _trackNumber = State(initialValue: track.trackNumber.map(String.init) ?? "")
+        let initialMetadataEdit = TrackMetadataEdit(track: track)
+        _edit = State(initialValue: initialMetadataEdit)
+        _initialEdit = State(initialValue: initialMetadataEdit)
+        let discStr = track.discNumber.map(String.init) ?? ""
+        _discNumber = State(initialValue: discStr)
+        _initialDiscNumber = State(initialValue: discStr)
+        let trkStr = track.trackNumber.map(String.init) ?? ""
+        _trackNumber = State(initialValue: trkStr)
+        _initialTrackNumber = State(initialValue: trkStr)
     }
 
     var body: some View {
@@ -5633,8 +5644,8 @@ private struct TrackMetadataEditor: View {
                     Label(model.text("前へ", "Previous"), systemImage: "chevron.left")
                 }
                 .keyboardShortcut("[", modifiers: .command)
-                .help(model.text("保存して前の曲へ（⌘[）", "Save and go to the previous song (⌘[)"))
-                .disabled(previousTrack == nil || !canSave)
+                .help(model.text("変更を保存して前の曲へ（⌘[）", "Save changes and go to the previous song (⌘[)"))
+                .disabled(previousTrack == nil || isSaving)
 
                 Button {
                     saveAndNavigate(by: 1)
@@ -5642,8 +5653,8 @@ private struct TrackMetadataEditor: View {
                     Label(model.text("次へ", "Next"), systemImage: "chevron.right")
                 }
                 .keyboardShortcut("]", modifiers: .command)
-                .help(model.text("保存して次の曲へ（⌘]）", "Save and go to the next song (⌘])"))
-                .disabled(nextTrack == nil || !canSave)
+                .help(model.text("変更を保存して次の曲へ（⌘]）", "Save changes and go to the next song (⌘])"))
+                .disabled(nextTrack == nil || isSaving)
 
                 Text(positionLabel)
                     .font(.caption)
@@ -5670,33 +5681,33 @@ private struct TrackMetadataEditor: View {
 
     private func loadExtendedID3Async(for targetTrack: Track) async {
         let fields = await model.readExtendedID3(for: targetTrack)
-        if let val = fields["TCOM"] { edit.composer = val }
-        if let val = fields["TEXT"] { edit.lyricist = val }
-        if let val = fields["TPE4"] { edit.arranger = val }
-        if let val = fields["TPE3"] { edit.conductor = val }
-        if let val = fields["TPUB"] { edit.publisher = val }
-        if let val = fields["TYER"] ?? fields["TDRC"] { edit.year = val }
-        if let val = fields["TBPM"] { edit.bpm = val }
-        if let val = fields["TKEY"] { edit.initialKey = val }
-        if let val = fields["TSRC"] { edit.isrc = val }
-        if let val = fields["TCOP"] { edit.copyright = val }
-        if let val = fields["TIT1"] { edit.grouping = val }
-        if let val = fields["TIT3"] { edit.subtitle = val }
-        if let val = fields["TOAL"] { edit.originalAlbum = val }
-        if let val = fields["TOPE"] { edit.originalArtist = val }
-        if let val = fields["COMM"] { edit.comment = val }
-        if let val = fields["USLT"] { edit.lyrics = val }
-        if let val = fields["WXXX"] ?? fields["WOAR"] ?? fields["WCOM"] { edit.url = val }
+        if let val = fields["TCOM"] { edit.composer = val; initialEdit.composer = val }
+        if let val = fields["TEXT"] { edit.lyricist = val; initialEdit.lyricist = val }
+        if let val = fields["TPE4"] { edit.arranger = val; initialEdit.arranger = val }
+        if let val = fields["TPE3"] { edit.conductor = val; initialEdit.conductor = val }
+        if let val = fields["TPUB"] { edit.publisher = val; initialEdit.publisher = val }
+        if let val = fields["TYER"] ?? fields["TDRC"] { edit.year = val; initialEdit.year = val }
+        if let val = fields["TBPM"] { edit.bpm = val; initialEdit.bpm = val }
+        if let val = fields["TKEY"] { edit.initialKey = val; initialEdit.initialKey = val }
+        if let val = fields["TSRC"] { edit.isrc = val; initialEdit.isrc = val }
+        if let val = fields["TCOP"] { edit.copyright = val; initialEdit.copyright = val }
+        if let val = fields["TIT1"] { edit.grouping = val; initialEdit.grouping = val }
+        if let val = fields["TIT3"] { edit.subtitle = val; initialEdit.subtitle = val }
+        if let val = fields["TOAL"] { edit.originalAlbum = val; initialEdit.originalAlbum = val }
+        if let val = fields["TOPE"] { edit.originalArtist = val; initialEdit.originalArtist = val }
+        if let val = fields["COMM"] { edit.comment = val; initialEdit.comment = val }
+        if let val = fields["USLT"] { edit.lyrics = val; initialEdit.lyrics = val }
+        if let val = fields["WXXX"] ?? fields["WOAR"] ?? fields["WCOM"] { edit.url = val; initialEdit.url = val }
         if let trkStr = fields["TRCK"] {
             if trkStr.contains("/") {
                 let parts = trkStr.components(separatedBy: "/")
-                if parts.count >= 2 { totalTracks = parts[1] }
+                if parts.count >= 2 { totalTracks = parts[1]; initialTotalTracks = parts[1] }
             }
         }
         if let dscStr = fields["TPOS"] {
             if dscStr.contains("/") {
                 let parts = dscStr.components(separatedBy: "/")
-                if parts.count >= 2 { totalDiscs = parts[1] }
+                if parts.count >= 2 { totalDiscs = parts[1]; initialTotalDiscs = parts[1] }
             }
         }
     }
@@ -5726,6 +5737,14 @@ private struct TrackMetadataEditor: View {
         return "\(currentIndex + 1) / \(navigationTracks.count)"
     }
 
+    private var hasChanges: Bool {
+        edit != initialEdit
+            || trackNumber != initialTrackNumber
+            || discNumber != initialDiscNumber
+            || totalTracks != initialTotalTracks
+            || totalDiscs != initialTotalDiscs
+    }
+
     private var canSave: Bool {
         !isSaving
             && !edit.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -5734,9 +5753,12 @@ private struct TrackMetadataEditor: View {
 
     private func saveAndNavigate(by offset: Int) {
         let destination = offset < 0 ? previousTrack : nextTrack
-        guard let destination else { return }
+        guard let destination, !isSaving else { return }
         Task {
-            guard await saveCurrentTrack() else { return }
+            if hasChanges {
+                guard canSave else { return }
+                guard await saveCurrentTrack() else { return }
+            }
             load(destination)
         }
     }
@@ -5762,17 +5784,30 @@ private struct TrackMetadataEditor: View {
             let updated = track.applying(pendingEdit)
             navigationTracks[currentIndex] = updated
             track = updated
+            initialEdit = pendingEdit
+            initialTrackNumber = trackNumber
+            initialDiscNumber = discNumber
+            initialTotalTracks = totalTracks
+            initialTotalDiscs = totalDiscs
         }
         return saved
     }
 
     private func load(_ destination: Track) {
         track = destination
-        edit = TrackMetadataEdit(track: destination)
-        discNumber = destination.discNumber.map(String.init) ?? ""
+        let nextEdit = TrackMetadataEdit(track: destination)
+        edit = nextEdit
+        initialEdit = nextEdit
+        let discStr = destination.discNumber.map(String.init) ?? ""
+        discNumber = discStr
+        initialDiscNumber = discStr
         totalDiscs = ""
-        trackNumber = destination.trackNumber.map(String.init) ?? ""
+        initialTotalDiscs = ""
+        let trkStr = destination.trackNumber.map(String.init) ?? ""
+        trackNumber = trkStr
+        initialTrackNumber = trkStr
         totalTracks = ""
+        initialTotalTracks = ""
         metadataCandidates = []
         selectedCandidateID = nil
         metadataLookupMessage = nil
@@ -5934,6 +5969,7 @@ private struct BatchTrackMetadataEditor: View {
     @ObservedObject var model: LibraryViewModel
     let tracks: [Track]
     @Environment(\.dismiss) private var dismiss
+    @State private var selectedTab: EditorTab = .basic
     @State private var artist: String
     @State private var album: String
     @State private var albumArtist: String
@@ -5941,6 +5977,18 @@ private struct BatchTrackMetadataEditor: View {
     @State private var year: String
     @State private var isCompilation: Bool
     @State private var discNumber: String
+    @State private var totalDiscs: String
+    @State private var totalTracks: String
+    @State private var composer: String = ""
+    @State private var lyricist: String = ""
+    @State private var arranger: String = ""
+    @State private var conductor: String = ""
+    @State private var publisher: String = ""
+    @State private var bpm: String = ""
+    @State private var grouping: String = ""
+    @State private var copyright: String = ""
+    @State private var url: String = ""
+    @State private var comment: String = ""
     @State private var artworkData: Data?
     @State private var artworkImage: NSImage?
     @State private var artworkPasteError: String?
@@ -5952,6 +6000,18 @@ private struct BatchTrackMetadataEditor: View {
     private let initialYear: String
     private let initialIsCompilation: Bool
     private let initialDiscNumber: String
+    private let initialTotalDiscs: String
+    private let initialTotalTracks: String
+    private let initialComposer: String = ""
+    private let initialLyricist: String = ""
+    private let initialArranger: String = ""
+    private let initialConductor: String = ""
+    private let initialPublisher: String = ""
+    private let initialBpm: String = ""
+    private let initialGrouping: String = ""
+    private let initialCopyright: String = ""
+    private let initialUrl: String = ""
+    private let initialComment: String = ""
 
     init(model: LibraryViewModel, tracks: [Track]) {
         self.model = model
@@ -5971,6 +6031,8 @@ private struct BatchTrackMetadataEditor: View {
         initialYear = initYear
         initialIsCompilation = initComp
         initialDiscNumber = initDisc
+        initialTotalDiscs = ""
+        initialTotalTracks = ""
 
         _artist = State(initialValue: initArtist)
         _album = State(initialValue: initAlbum)
@@ -5979,77 +6041,155 @@ private struct BatchTrackMetadataEditor: View {
         _year = State(initialValue: initYear)
         _isCompilation = State(initialValue: initComp)
         _discNumber = State(initialValue: initDisc)
+        _totalDiscs = State(initialValue: "")
+        _totalTracks = State(initialValue: "")
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(model.text("曲情報を一括編集", "Bulk Edit Song Info"))
                     .font(.title2.bold())
                 Text(model.text(
                     "変更したい項目を入力し、下の「保存」ボタンを押してください。選択した\(tracks.count)曲にまとめて反映されます。",
                     "Enter values to change and click 'Save' to update all \(tracks.count) selected songs."
                 ))
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(20)
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+            .padding(.bottom, 8)
+
+            Picker("", selection: $selectedTab) {
+                ForEach(EditorTab.allCases) { tab in
+                    Text(tab.title(isJapanese: model.language == .japanese)).tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 20)
+            .padding(.bottom, 12)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    GroupBox(model.text("変更する曲情報", "Song Information to Change")) {
-                        VStack(spacing: 10) {
-                            batchField(model.text("アーティスト", "Artist"), value: $artist)
-                            batchField(model.text("アルバム", "Album"), value: $album)
-                            batchField(model.text("アルバムアーティスト", "Album Artist"), value: $albumArtist)
-                            batchField(model.text("ジャンル", "Genre"), value: $genre)
-                            batchField(model.text("リリース年", "Release Year"), value: $year)
-                            batchNumberField(model.text("ディスク番号", "Disc Number"), value: $discNumber)
+                    switch selectedTab {
+                    case .basic:
+                        GroupBox(model.text("基本情報", "Basic Info")) {
+                            VStack(spacing: 10) {
+                                batchField(model.text("アーティスト (TPE1)", "Artist (TPE1)"), value: $artist)
+                                batchField(model.text("アルバム (TALB)", "Album (TALB)"), value: $album)
+                                batchField(model.text("アルバムアーティスト (TPE2)", "Album Artist (TPE2)"), value: $albumArtist)
+                                batchField(model.text("ジャンル (TCON)", "Genre (TCON)"), value: $genre)
+                                batchField(model.text("リリース年 (TYER)", "Release Year (TYER)"), value: $year)
+
+                                HStack(spacing: 12) {
+                                    Text(model.text("ディスク番号", "Disc Number"))
+                                        .frame(width: 145, alignment: .leading)
+                                    HStack(spacing: 4) {
+                                        TextField(model.text("番号", "No."), text: $discNumber)
+                                            .textFieldStyle(.roundedBorder)
+                                            .frame(width: 70)
+                                        Text("/")
+                                            .foregroundStyle(.secondary)
+                                        TextField(model.text("総数", "Total"), text: $totalDiscs)
+                                            .textFieldStyle(.roundedBorder)
+                                            .frame(width: 70)
+                                    }
+                                    Spacer()
+                                }
+
+                                HStack(spacing: 12) {
+                                    Text(model.text("トラック総数", "Total Tracks"))
+                                        .frame(width: 145, alignment: .leading)
+                                    HStack(spacing: 4) {
+                                        Text(model.text("各曲番号 /", "Each track /"))
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        TextField(model.text("総数", "Total"), text: $totalTracks)
+                                            .textFieldStyle(.roundedBorder)
+                                            .frame(width: 70)
+                                    }
+                                    Spacer()
+                                }
+
+                                HStack(spacing: 12) {
+                                    Text(model.text("コンピレーション", "Compilation"))
+                                        .frame(width: 145, alignment: .leading)
+                                    Toggle(model.text("コンピレーションアルバム (TCMP)", "Compilation Album (TCMP)"), isOn: $isCompilation)
+                                        .toggleStyle(.switch)
+                                    Spacer()
+                                }
+                            }
+                            .padding(.top, 4)
+                        }
+
+                        GroupBox(model.text("アルバムジャケット", "Album Artwork")) {
                             HStack(spacing: 12) {
-                                Text(model.text("コンピレーション", "Compilation"))
-                                    .frame(width: 145, alignment: .leading)
-                                Toggle(model.text("コンピレーションアルバム", "Compilation Album"), isOn: $isCompilation)
-                                    .toggleStyle(.switch)
+                                if let artworkImage {
+                                    Image(nsImage: artworkImage)
+                                        .resizable()
+                                        .scaledToFit()
+                                        .frame(width: 58, height: 58)
+                                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                                }
+                                Button(model.text("画像を選択…", "Choose Image…"), action: chooseArtwork)
+                                    .disabled(isRunning)
+                                Button(model.text("クリップボードから貼り付け", "Paste from Clipboard"), action: pasteArtworkFromClipboard)
+                                    .disabled(isRunning)
+                                    .help(model.text("クリップボードの画像を貼り付け（⌘V）", "Paste an image from the clipboard (⌘V)"))
+                                if artworkData != nil {
+                                    Button(model.text("解除", "Clear")) {
+                                        artworkData = nil
+                                        artworkImage = nil
+                                    }
+                                    .buttonStyle(.link)
+                                    .disabled(isRunning)
+                                }
                                 Spacer()
                             }
-                        }
-                        .padding(.top, 4)
-                    }
-
-                    GroupBox(model.text("アルバムジャケット", "Album Artwork")) {
-                    HStack(spacing: 12) {
-                        if let artworkImage {
-                            Image(nsImage: artworkImage)
-                                .resizable()
-                                .scaledToFit()
-                                .frame(width: 58, height: 58)
-                                .clipShape(RoundedRectangle(cornerRadius: 6))
-                        }
-                        Button(model.text("画像を選択…", "Choose Image…"), action: chooseArtwork)
-                            .disabled(isRunning)
-                        Button(model.text("クリップボードから貼り付け", "Paste from Clipboard"), action: pasteArtworkFromClipboard)
-                            .disabled(isRunning)
-                            .help(model.text("クリップボードの画像を貼り付け（⌘V）", "Paste an image from the clipboard (⌘V)"))
-                        if artworkData != nil {
-                            Button(model.text("解除", "Clear")) {
-                                artworkData = nil
-                                artworkImage = nil
+                            .padding(.top, 4)
+                            Text(model.text(
+                                "画像をコピーして⌘Vを押すか、貼り付けボタンを使用できます。",
+                                "Copy an image and press ⌘V, or use the paste button."
+                            ))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            if let artworkPasteError {
+                                Text(artworkPasteError).font(.caption).foregroundStyle(.red)
                             }
-                            .buttonStyle(.link)
-                            .disabled(isRunning)
                         }
-                        Spacer()
-                    }
-                    .padding(.top, 4)
-                    Text(model.text(
-                        "画像をコピーして⌘Vを押すか、貼り付けボタンを使用できます。",
-                        "Copy an image and press ⌘V, or use the paste button."
-                    ))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    if let artworkPasteError {
-                        Text(artworkPasteError).font(.caption).foregroundStyle(.red)
-                    }
+
+                    case .credits:
+                        GroupBox(model.text("クレジット・制作", "Credits & Production")) {
+                            VStack(spacing: 10) {
+                                batchField(model.text("作曲者 (TCOM)", "Composer (TCOM)"), value: $composer)
+                                batchField(model.text("作詞者 (TEXT)", "Lyricist (TEXT)"), value: $lyricist)
+                                batchField(model.text("編曲者 (TPE4)", "Arranger (TPE4)"), value: $arranger)
+                                batchField(model.text("指揮者 (TPE3)", "Conductor (TPE3)"), value: $conductor)
+                                batchField(model.text("出版社・レーベル (TPUB)", "Publisher / Label (TPUB)"), value: $publisher)
+                            }
+                            .padding(.top, 4)
+                        }
+
+                    case .details:
+                        GroupBox(model.text("詳細・ワーク情報", "Details & Work")) {
+                            VStack(spacing: 10) {
+                                batchField(model.text("BPM / テンポ (TBPM)", "BPM / Tempo (TBPM)"), value: $bpm)
+                                batchField(model.text("グループ化 / ワーク名 (TIT1)", "Grouping / Work (TIT1)"), value: $grouping)
+                                batchField(model.text("著作権情報 (TCOP)", "Copyright (TCOP)"), value: $copyright)
+                                batchField(model.text("関連WebURL (WXXX)", "Related Web URL (WXXX)"), value: $url)
+                            }
+                            .padding(.top, 4)
+                        }
+
+                    case .commentLyrics:
+                        GroupBox(model.text("コメント", "Comments")) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                batchField(model.text("コメント (COMM)", "Comment (COMM)"), value: $comment)
+                            }
+                            .padding(.top, 4)
+                        }
                     }
 
                     if unsupportedArtworkCount > 0 {
@@ -6064,7 +6204,7 @@ private struct BatchTrackMetadataEditor: View {
                             "Compilation (TCMP) can be written only to MP3. The selection contains \(unsupportedCompilationCount) non-MP3 songs."
                         ))
                     }
-                    if !isValidNumberInput(discNumber) {
+                    if !isValidNumberInput(discNumber) || !isValidNumberInput(totalDiscs) || !isValidNumberInput(totalTracks) {
                         warningText(model.text("番号には0以上の整数を入力してください。", "Enter a whole number of zero or greater."))
                     }
                     Text(model.text(
@@ -6084,7 +6224,7 @@ private struct BatchTrackMetadataEditor: View {
                 .padding(14)
                 .background(.bar)
         }
-        .frame(width: 720, height: 620)
+        .frame(width: 720, height: 640)
         .interactiveDismissDisabled(isRunning)
         .onPasteCommand(of: [.image]) { _ in
             guard !isRunning, !isFinished else { return }
@@ -6098,28 +6238,10 @@ private struct BatchTrackMetadataEditor: View {
         value: Binding<String>
     ) -> some View {
         HStack(spacing: 12) {
-            Text(title).frame(width: 145, alignment: .leading)
+            Text(title).frame(width: 175, alignment: .leading)
             TextField("", text: value)
                 .textFieldStyle(.roundedBorder)
         }
-    }
-
-    @ViewBuilder
-    private func batchNumberField(
-        _ title: String,
-        value: Binding<String>
-    ) -> some View {
-        HStack(spacing: 12) {
-            Text(title).frame(width: 145, alignment: .leading)
-            TextField("", text: value)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 90)
-            Spacer()
-        }
-    }
-
-    private func apply(_ changes: BatchMetadataChanges) {
-        model.updateMetadata(for: tracks, changes: changes)
     }
 
     private func applyAll() {
@@ -6134,6 +6256,24 @@ private struct BatchTrackMetadataEditor: View {
             changes.discNumber = parsedNumber(discNumber)
             changes.changesDiscNumber = true
         }
+        if totalDiscs != initialTotalDiscs && isValidNumberInput(totalDiscs) {
+            changes.totalDiscs = parsedNumber(totalDiscs)
+            changes.changesTotalDiscs = true
+        }
+        if totalTracks != initialTotalTracks && isValidNumberInput(totalTracks) {
+            changes.totalTracks = parsedNumber(totalTracks)
+            changes.changesTotalTracks = true
+        }
+        if composer != initialComposer { changes.composer = composer }
+        if lyricist != initialLyricist { changes.lyricist = lyricist }
+        if arranger != initialArranger { changes.arranger = arranger }
+        if conductor != initialConductor { changes.conductor = conductor }
+        if publisher != initialPublisher { changes.publisher = publisher }
+        if bpm != initialBpm { changes.bpm = bpm }
+        if grouping != initialGrouping { changes.grouping = grouping }
+        if copyright != initialCopyright { changes.copyright = copyright }
+        if url != initialUrl { changes.url = url }
+        if comment != initialComment { changes.comment = comment }
         if let artworkData {
             changes.artworkData = artworkData
         }
@@ -6149,6 +6289,18 @@ private struct BatchTrackMetadataEditor: View {
         year != initialYear ||
         isCompilation != initialIsCompilation ||
         (discNumber != initialDiscNumber && isValidNumberInput(discNumber)) ||
+        (totalDiscs != initialTotalDiscs && isValidNumberInput(totalDiscs)) ||
+        (totalTracks != initialTotalTracks && isValidNumberInput(totalTracks)) ||
+        composer != initialComposer ||
+        lyricist != initialLyricist ||
+        arranger != initialArranger ||
+        conductor != initialConductor ||
+        publisher != initialPublisher ||
+        bpm != initialBpm ||
+        grouping != initialGrouping ||
+        copyright != initialCopyright ||
+        url != initialUrl ||
+        comment != initialComment ||
         artworkData != nil
     }
 
@@ -6192,7 +6344,7 @@ private struct BatchTrackMetadataEditor: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
-                .disabled(!hasAnyPendingChange || !isValidNumberInput(discNumber))
+                .disabled(!hasAnyPendingChange || !isValidNumberInput(discNumber) || !isValidNumberInput(totalDiscs) || !isValidNumberInput(totalTracks))
             }
         }
     }
